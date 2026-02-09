@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="https://app.openhome.com/static/media/logo.png" alt="OpenHome" width="80" />
+  <img src="logo1.png" alt="OpenHome" width="120" />
 </p>
 
 <h1 align="center">OpenHome Abilities</h1>
