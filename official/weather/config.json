@@ -1,0 +1,6 @@
+{
+  "unique_name": "weather",
+  "matching_hotwords": ["what's the weather", "weather report", "check the weather", "how's the weather"],
+  "maintainer": "openhome",
+  "status": "official"
+}

@@ -1,0 +1,6 @@
+{
+  "unique_name": "sound_generator",
+  "matching_hotwords": ["make a sound", "create a sound", "sound effect", "generate a sound"],
+  "maintainer": "openhome",
+  "status": "official"
+}

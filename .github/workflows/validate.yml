@@ -1,0 +1,48 @@
+name: Validate Abilities
+
+on:
+  pull_request:
+    paths:
+      - 'community/**'
+      - 'official/**'
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Find changed Ability folders
+        id: changed
+        run: |
+          # Get list of changed files in this PR
+          CHANGED=$(git diff --name-only ${{ github.event.pull_request.base.sha }} HEAD)
+          
+          # Extract unique ability folders (community/xyz or official/xyz)
+          FOLDERS=$(echo "$CHANGED" | grep -oP '^(community|official)/[^/]+' | sort -u)
+          
+          if [ -z "$FOLDERS" ]; then
+            echo "No ability folders changed."
+            echo "folders=" >> $GITHUB_OUTPUT
+          else
+            echo "Changed folders: $FOLDERS"
+            echo "folders=$FOLDERS" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Validate changed Abilities
+        if: steps.changed.outputs.folders != ''
+        run: |
+          FAILED=0
+          for folder in ${{ steps.changed.outputs.folders }}; do
+            echo ""
+            echo "=========================================="
+            echo "Validating: $folder"
+            echo "=========================================="
+            python validate_ability.py "$folder" || FAILED=1
+          done
+          exit $FAILED
