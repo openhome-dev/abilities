@@ -10,9 +10,31 @@ Thanks for wanting to contribute! This guide will get you from idea to merged PR
 2. Copy `templates/basic-template/` to `community/your-ability-name/`
 3. Build your Ability (edit `main.py`)
 4. Test it in the [OpenHome Live Editor](https://app.openhome.com/dashboard/abilities)
-5. Open a Pull Request
+5. Open a Pull Request **against `dev`**
 
 That's it. We'll review it and get it merged.
+
+---
+
+## Branching & Merging Strategy
+
+We use a **simplified Git Flow** model. All contributions follow this flow:
+
+```
+feature/your-ability-name  →  dev  →  main
+```
+
+| Branch | Purpose | Who Merges |
+|--------|---------|------------|
+| `main` | Stable, production-ready. Always deployable. | Maintainers only |
+| `dev` | Integration and testing. All PRs target this branch. | Maintainers after review |
+| `feature/*` or `add-*` | Your working branch for a single Ability or change. | You push; maintainers merge to `dev` |
+
+**Rules:**
+
+- **Never open a PR directly to `main`.** All PRs must target `dev`.
+- `dev` is merged to `main` by maintainers after validation and testing.
+- Keep your feature branch up to date with `dev` before opening a PR (rebase or merge).
 
 ---
 
@@ -33,12 +55,40 @@ docs/            ← Guides and API reference.
 
 ### 1. Fork and Clone
 
+Fork the repository on GitHub, then clone your fork:
+
 ```bash
 git clone https://github.com/YOUR_USERNAME/abilities.git
 cd abilities
 ```
 
-### 2. Pick a Template
+Set up the upstream remote to stay in sync with the original repo:
+
+```bash
+git remote add upstream https://github.com/OpenHome/abilities.git
+```
+
+Then make sure you have the `dev` branch locally and start from it:
+
+```bash
+git fetch upstream
+git checkout dev
+git pull upstream dev
+```
+
+> **Why upstream?** This ensures you're always branching from the latest `dev` on the original repo, not a potentially stale `dev` on your fork.
+
+### 2. Create Your Feature Branch
+
+Branch off `dev` — not `main`:
+
+```bash
+git checkout -b add-your-ability-name dev
+```
+
+Use a descriptive branch name like `add-dad-jokes`, `add-pomodoro-timer`, or `fix-weather-error-handling`.
+
+### 3. Pick a Template
 
 Choose the template closest to what you're building:
 
@@ -54,7 +104,7 @@ Copy it:
 cp -r templates/basic-template community/your-ability-name
 ```
 
-### 3. Build Your Ability
+### 4. Build Your Ability
 
 Edit `main.py`. Every Ability must:
 
@@ -67,7 +117,7 @@ Edit `main.py`. Every Ability must:
 
 > **Note:** Trigger words are configured in the OpenHome dashboard, not in code. The `register_capability` boilerplate reads a platform-managed `config.json` at runtime — you never create or edit that file.
 
-### 4. Write Your README
+### 5. Write Your README
 
 Create `community/your-ability-name/README.md` using this format:
 
@@ -98,7 +148,7 @@ Brief description of the conversation flow.
 > **AI:** "Another response..."
 ```
 
-### 5. Test It
+### 6. Test It
 
 - Zip your Ability folder
 - Go to [app.openhome.com](https://app.openhome.com) → Abilities → Add Custom Ability
@@ -106,16 +156,51 @@ Brief description of the conversation flow.
 - Set trigger words in the dashboard
 - Make sure all exit paths work (say "stop", "exit", etc.)
 
-### 6. Submit Your PR
+### 7. Sync with `dev` Before Submitting
+
+Before you push, make sure your branch is current with the latest `dev` from upstream:
 
 ```bash
-git checkout -b add-your-ability-name
+git fetch upstream
+git rebase upstream/dev
+```
+
+If you prefer merge over rebase:
+
+```bash
+git fetch upstream
+git merge upstream/dev
+```
+
+Resolve any conflicts, then continue.
+
+### 8. Submit Your PR
+
+```bash
 git add community/your-ability-name/
 git commit -m "Add your-ability-name community ability"
 git push origin add-your-ability-name
 ```
 
-Open a Pull Request and fill out the PR template.
+Open a Pull Request on GitHub:
+
+- **Base branch: `dev`** (not `main`)
+- **Compare branch: `add-your-ability-name`**
+- Fill out the PR template completely
+
+> ⚠️ PRs targeting `main` will be closed and you'll be asked to re-open against `dev`.
+
+---
+
+## What Happens After You Open a PR
+
+1. **Automated checks run** — `validate-ability`, `path-check`, `security-scan`, and linting must all pass.
+2. **A maintainer reviews** — typically within 3–5 business days.
+3. **Feedback round** — you may be asked to make changes. Push additional commits to the same branch; the PR updates automatically.
+4. **Merge to `dev`** — once approved, a maintainer squash-merges your PR into `dev`.
+5. **Promotion to `main`** — periodically, the maintainer team validates `dev` and merges it into `main`. Your Ability becomes available on the Marketplace at that point.
+
+You don't need to do anything after step 4. The `dev → main` promotion is handled by maintainers.
 
 ---
 
@@ -125,6 +210,7 @@ Every community PR is reviewed for:
 
 ### Must Pass (Hard Requirements)
 
+- [ ] PR targets the **`dev` branch** (not `main`)
 - [ ] Files are in `community/your-ability-name/` (not in `official/`)
 - [ ] `main.py` follows the SDK pattern (extends `MatchingCapability`, has `register_capability` + `call`)
 - [ ] `README.md` is present with description, suggested trigger words, and setup instructions
@@ -154,6 +240,8 @@ Every community PR is reviewed for:
 
 | Don't | Do Instead |
 |-------|-----------|
+| Open a PR to `main` | Target `dev` — always |
+| Branch off `main` | Branch off `dev` |
 | Submit to `official/` | Submit to `community/` |
 | Use `print()` | Use `self.worker.editor_logging_handler.info()` |
 | Use `asyncio.sleep()` | Use `self.worker.session_tasks.sleep()` |
@@ -162,6 +250,7 @@ Every community PR is reviewed for:
 | Forget `resume_normal_flow()` | Call it on every exit path — loops, breaks, errors |
 | Write long spoken responses | Keep it short — 1-2 sentences per speak() call |
 | Import `redis`, `connection_manager`, etc. | Use CapabilityWorker APIs |
+| Push directly to `dev` or `main` | Push to your feature branch, open a PR |
 
 ---
 
