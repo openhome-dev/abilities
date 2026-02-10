@@ -5,7 +5,7 @@
   <strong>Open-source voice AI plugins for OpenHome — build, share, and remix.</strong>
 </p>
 
-<p align="center">
+<!-- <p align="center">
   <a href="https://app.openhome.com">Dashboard</a> •
   <a href="https://docs.openhome.com">Docs</a> •
   <a href="https://discord.gg/openhome">Discord</a> 
@@ -15,8 +15,27 @@
   <img src="https://img.shields.io/badge/license-MIT-blue" alt="License" />
   <img src="https://img.shields.io/badge/python-3.10+-blue" alt="Python" />
   <img src="https://img.shields.io/badge/PRs-welcome-brightgreen" alt="PRs Welcome" />
+</p> -->
+<p align="center">
+  <a href="https://github.com/openhome-dev/abilities/stargazers">
+    <img src="https://img.shields.io/github/stars/openhome-dev/abilities?style=social" alt="Stars">
+  </a>
+  <a href="https://github.com/openhome-dev/abilities/network/members">
+    <img src="https://img.shields.io/github/forks/openhome-dev/abilities?style=social" alt="Forks">
+  </a>
+  <a href="https://github.com/openhome-dev/abilities/graphs/contributors">
+    <img src="https://img.shields.io/github/contributors/openhome-dev/abilities" alt="Contributors">
+  </a>
+  <a href="https://github.com/openhome-dev/abilities/issues">
+    <img src="https://img.shields.io/github/issues/openhome-dev/abilities" alt="Issues">
+  </a>
+  <a href="LICENSE">
+    <img src="https://img.shields.io/github/license/openhome-dev/abilities" alt="License">
+  </a>
+  <a href="https://discord.gg/openhome">
+    <img src="https://img.shields.io/discord/YOUR_SERVER_ID?label=Discord&logo=discord" alt="Discord">
+  </a>
 </p>
-
 ---
 
 ## What Are Abilities?
