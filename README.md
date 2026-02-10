@@ -155,7 +155,6 @@ We welcome community Abilities! Here's the short version:
 
 Exceptional community Abilities can be promoted to Official status. We look for:
 
-- **Adoption** — 50+ installs on the Marketplace
 - **Stability** — No critical bugs for 30+ days
 - **Quality** — Clean code, good voice UX
 - **Maintenance** — Author is responsive
