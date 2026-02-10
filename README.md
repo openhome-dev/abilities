@@ -1,6 +1,3 @@
-<p align="center">
-  <img src="assets/logo.png" alt="OpenHome" width="120" />
-</p>
 
 <h1 align="center">OpenHome Abilities</h1>
 
