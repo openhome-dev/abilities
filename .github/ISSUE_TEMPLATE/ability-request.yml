@@ -1,0 +1,42 @@
+name: ✨ Ability Request
+description: Suggest a new ability or improvement to an existing one
+title: "[Ability Request] "
+labels: ["enhancement", "ability-request"]
+body:
+  - type: dropdown
+    id: type
+    attributes:
+      label: Request Type
+      options:
+        - New Ability idea
+        - Improvement to existing Ability
+        - New Template request
+    validations:
+      required: true
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+      description: Describe the ability you'd like to see
+      placeholder: |
+        What would this ability do?
+        What would users say to trigger it?
+        What APIs would it need (if any)?
+    validations:
+      required: true
+
+  - type: textarea
+    id: use-case
+    attributes:
+      label: Use Case
+      description: Why would this be useful?
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: contribution
+    attributes:
+      label: Would you like to build this?
+      options:
+        - label: I'm willing to submit a PR for this ability
