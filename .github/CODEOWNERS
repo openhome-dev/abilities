@@ -1,0 +1,38 @@
+# ============================================================
+# OpenHome Abilities — CODEOWNERS
+# ============================================================
+# This file controls who MUST review PRs based on file paths.
+# Combined with "Require review from Code Owners" branch protection,
+# this effectively restricts where community members can contribute.
+# ============================================================
+
+# ── Default: core team owns everything ──
+*                                   @openhome-dev/core-maintainers
+
+# ── Official abilities: core team ONLY ──
+/official/                          @openhome-dev/core-maintainers
+/official/**                        @openhome-dev/core-maintainers
+
+# ── Community abilities: reviewers team can approve ──
+/community/                         @openhome-dev/ability-reviewers
+/community/**                       @openhome-dev/ability-reviewers
+
+# ── Templates: core team only ──
+/templates/                         @openhome-dev/core-maintainers
+/templates/**                       @openhome-dev/core-maintainers
+
+# ── Documentation: reviewers can approve ──
+/docs/                              @openhome-dev/ability-reviewers
+/docs/**                            @openhome-dev/ability-reviewers
+
+# ── CI/CD and repo config: core team ONLY ──
+/.github/                           @openhome-dev/core-maintainers
+/.github/**                         @openhome-dev/core-maintainers
+/validate_ability.py                @openhome-dev/core-maintainers
+
+# ── Root files: core team ONLY ──
+/README.md                          @openhome-dev/core-maintainers
+/LICENSE                            @openhome-dev/core-maintainers
+/CONTRIBUTING.md                    @openhome-dev/core-maintainers
+/CODE_OF_CONDUCT.md                 @openhome-dev/core-maintainers
+/CONTRIBUTORS.md                    @openhome-dev/core-maintainers
