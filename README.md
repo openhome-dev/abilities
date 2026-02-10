@@ -8,7 +8,7 @@
 <p align="center">
   <a href="https://app.openhome.com">Dashboard</a> •
   <a href="https://docs.openhome.com">Docs</a> •
-  <a href="https://discord.gg/openhome">Discord</a> •
+  <a href="https://discord.gg/openhome">Discord</a> 
 </p>
 
 <p align="center">
