@@ -1,0 +1,89 @@
+name: Security Scan
+
+on:
+  push:
+    branches: [main, dev]
+  pull_request:
+    branches: [main, dev]
+
+jobs:
+  bandit:
+    name: Bandit Python Security Scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Bandit
+        run: pip install bandit
+
+      - name: Run Bandit
+        run: bandit -r official/ community/ templates/ -f json -o bandit-report.json --severity-level medium || true
+
+      - name: Display results
+        if: always()
+        run: bandit -r official/ community/ templates/ --severity-level medium
+
+  secrets:
+    name: Secret Detection
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: TruffleHog Secret Scan
+        uses: trufflesecurity/trufflehog@main
+        with:
+          extra_args: --only-verified
+
+  dangerous-patterns:
+    name: Dangerous Pattern Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check for prohibited patterns
+        run: |
+          echo "Checking for dangerous patterns in Ability code..."
+          FOUND=0
+
+          # Check for eval/exec
+          if grep -rn "eval\s*(" official/ community/ templates/ --include="*.py"; then
+            echo "::error::Found eval() usage"
+            FOUND=1
+          fi
+
+          if grep -rn "exec\s*(" official/ community/ templates/ --include="*.py"; then
+            echo "::error::Found exec() usage"
+            FOUND=1
+          fi
+
+          # Check for subprocess
+          if grep -rn "subprocess\." official/ community/ templates/ --include="*.py"; then
+            echo "::error::Found subprocess usage"
+            FOUND=1
+          fi
+
+          # Check for os.system
+          if grep -rn "os\.system\s*(" official/ community/ templates/ --include="*.py"; then
+            echo "::error::Found os.system() usage"
+            FOUND=1
+          fi
+
+          # Check for pickle
+          if grep -rn "pickle\.loads\s*(" official/ community/ templates/ --include="*.py"; then
+            echo "::error::Found pickle.loads() usage"
+            FOUND=1
+          fi
+
+          if [ $FOUND -eq 1 ]; then
+            echo "::error::Dangerous patterns detected. See above for details."
+            exit 1
+          fi
+
+          echo "No dangerous patterns found."
