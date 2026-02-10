@@ -1,0 +1,43 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+dist/
+build/
+*.egg
+.eggs/
+
+# Virtual environments
+venv/
+env/
+.venv/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Secrets (belt and suspenders)
+.env
+.env.local
+*.key
+*.pem
+
+# Zip files (users build these locally, don't commit)
+*.zip
+
+# Test / Coverage
+.coverage
+htmlcov/
+.pytest_cache/
+
+# Bandit reports
+bandit-report.json
