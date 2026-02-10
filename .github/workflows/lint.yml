@@ -1,0 +1,30 @@
+name: Lint
+
+on:
+  pull_request:
+    branches: [dev, main]
+    paths:
+      - '**.py'
+
+jobs:
+  lint:
+    name: lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      
+      - name: Install linters
+        run: pip install flake8 black isort
+
+      - name: Run Black (format check)
+        run: black --check --diff community/ official/ templates/
+
+      - name: Run Flake8
+        run: flake8 community/ official/ templates/ --max-line-length=120 --ignore=E501,W503
+
+      - name: Run isort (import order)
+        run: isort --check-only --diff community/ official/ templates/
