@@ -17,7 +17,7 @@ For interactive Abilities with ongoing multi-turn conversations.
 2. Replace the processing logic inside the `while True` loop
 3. Add your own exit words if needed (or keep the defaults)
 4. Add state tracking — add instance variables to the class for anything you need to remember between turns
-5. Update `config.json` with your ability name and trigger words
+5. Upload to OpenHome and set your trigger words in the dashboard
 
 ## Flow
 

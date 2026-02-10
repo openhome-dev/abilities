@@ -8,7 +8,7 @@ Thanks for wanting to contribute! This guide will get you from idea to merged PR
 
 1. Fork this repo
 2. Copy `templates/basic-template/` to `community/your-ability-name/`
-3. Build your Ability (edit `main.py` and `config.json`)
+3. Build your Ability (edit `main.py`)
 4. Test it in the [OpenHome Live Editor](https://app.openhome.com)
 5. Open a Pull Request
 
@@ -54,32 +54,20 @@ Copy it:
 cp -r templates/basic-template community/your-ability-name
 ```
 
-### 3. Set Up config.json
-
-```json
-{
-  "unique_name": "your_ability_name",
-  "matching_hotwords": ["trigger phrase one", "another trigger"]
-}
-```
-
-**Tips for trigger words:**
-- Use natural phrases someone would actually say ("tell me a joke", not "activate joke module")
-- Include 2-5 variations
-- Avoid single common words that might false-trigger ("play", "go", "start")
-
-### 4. Build Your Ability
+### 3. Build Your Ability
 
 Edit `main.py`. Every Ability must:
 
 - [ ] Extend `MatchingCapability`
-- [ ] Have `register_capability()` that loads from `config.json` (use the exact pattern from templates)
+- [ ] Have `register_capability()` (copy the boilerplate exactly from the template)
 - [ ] Have `call()` that sets up worker + capability_worker and launches async logic
 - [ ] Call `self.capability_worker.resume_normal_flow()` on **every exit path**
 - [ ] Handle errors with try/except
 - [ ] Use `self.worker.editor_logging_handler` for logging (never `print()`)
 
-### 5. Write Your README
+> **Note:** Trigger words are configured in the OpenHome dashboard, not in code. The `register_capability` boilerplate reads a platform-managed `config.json` at runtime — you never create or edit that file.
+
+### 4. Write Your README
 
 Create `community/your-ability-name/README.md` using this format:
 
@@ -92,7 +80,7 @@ Create `community/your-ability-name/README.md` using this format:
 ## What It Does
 One or two sentences explaining what this Ability does.
 
-## Trigger Words
+## Suggested Trigger Words
 - "trigger phrase one"
 - "another trigger"
 
@@ -110,14 +98,15 @@ Brief description of the conversation flow.
 > **AI:** "Another response..."
 ```
 
-### 6. Test It
+### 5. Test It
 
 - Zip your Ability folder
 - Go to [app.openhome.com](https://app.openhome.com) → Abilities → Add Custom Ability
 - Upload and test in the Live Editor
+- Set trigger words in the dashboard
 - Make sure all exit paths work (say "stop", "exit", etc.)
 
-### 7. Submit Your PR
+### 6. Submit Your PR
 
 ```bash
 git checkout -b add-your-ability-name
@@ -137,9 +126,8 @@ Every community PR is reviewed for:
 ### Must Pass (Hard Requirements)
 
 - [ ] Files are in `community/your-ability-name/` (not in `official/`)
-- [ ] `config.json` is present with `unique_name` and `matching_hotwords`
 - [ ] `main.py` follows the SDK pattern (extends `MatchingCapability`, has `register_capability` + `call`)
-- [ ] `README.md` is present with description, trigger words, and setup instructions
+- [ ] `README.md` is present with description, suggested trigger words, and setup instructions
 - [ ] `resume_normal_flow()` is called on every exit path
 - [ ] No `print()` statements (use `editor_logging_handler`)
 - [ ] No blocked imports (`redis`, `connection_manager`, `user_config`, `open()`)

@@ -22,35 +22,11 @@ cp -r abilities/templates/basic-template my-ability
 cd my-ability
 ```
 
-You now have two files:
-
-```
-my-ability/
-├── main.py
-└── config.json
-```
+You now have one file to edit: `main.py`.
 
 ---
 
-## Step 2: Configure Your Trigger Words
-
-Edit `config.json`:
-
-```json
-{
-  "unique_name": "my_ability",
-  "matching_hotwords": ["my trigger phrase", "another way to trigger"]
-}
-```
-
-**Tips:**
-- Use natural phrases someone would actually say out loud
-- Include 2-5 variations for reliability
-- Avoid single common words that might false-trigger
-
----
-
-## Step 3: Write Your Logic
+## Step 2: Write Your Logic
 
 Edit `main.py`. The template gives you a working starting point. Here's what you can customize:
 
@@ -74,21 +50,24 @@ async def run(self):
     self.capability_worker.resume_normal_flow()
 ```
 
+> **Note:** The `register_capability` method in the template is required boilerplate — copy it exactly. The platform handles `config.json` automatically at runtime; you never need to create or edit it.
+
 See [patterns.md](patterns.md) for more examples — API calls, loops, audio playback, etc.
 
 ---
 
-## Step 4: Zip and Upload
+## Step 3: Zip and Upload
 
-1. Select both files (`main.py` and `config.json`) and compress them into a `.zip`
+1. Zip your `main.py` (or the whole folder)
 2. Go to [app.openhome.com](https://app.openhome.com)
 3. Navigate to **Abilities** → **Add Custom Ability**
 4. Upload your `.zip` file
 5. Fill in the name and description
+6. Set your **trigger words** — the phrases that will activate your Ability
 
 ---
 
-## Step 5: Test in the Live Editor
+## Step 4: Test in the Live Editor
 
 After uploading, click **Live Editor** on your Ability. Here you can:
 
@@ -100,7 +79,7 @@ After uploading, click **Live Editor** on your Ability. Here you can:
 
 ---
 
-## Step 6: Trigger It
+## Step 5: Trigger It
 
 Start a conversation with any Personality. Say one of your trigger phrases, and your Ability will activate.
 

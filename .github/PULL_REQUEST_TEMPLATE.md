@@ -2,9 +2,9 @@
 
 <!-- One or two sentences -->
 
-## Trigger Words
+## Suggested Trigger Words
 
-<!-- List the hotwords that activate this Ability -->
+<!-- List the hotwords you recommend for activating this Ability (users set these in the dashboard) -->
 - 
 - 
 
@@ -31,8 +31,8 @@
 ## Checklist
 
 - [ ] Files are in `community/my-ability-name/`
-- [ ] `config.json` has `unique_name`, `matching_hotwords`, `maintainer`, `status`
-- [ ] `README.md` included with description, triggers, and setup
+- [ ] `main.py` follows SDK pattern (extends `MatchingCapability`, has `register_capability` + `call`)
+- [ ] `README.md` included with description, suggested triggers, and setup
 - [ ] `resume_normal_flow()` called on every exit path
 - [ ] No `print()` — using `editor_logging_handler`
 - [ ] No hardcoded API keys — using placeholders

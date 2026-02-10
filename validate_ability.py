@@ -7,8 +7,7 @@ Usage:
     python validate_ability.py official/weather/
 
 Checks:
-    - Required files exist (main.py, config.json, README.md)
-    - config.json has required fields
+    - Required files exist (main.py, README.md)
     - main.py follows SDK patterns
     - No blocked imports or patterns
     - resume_normal_flow() is called
@@ -28,9 +27,7 @@ import re
 # CONFIGURATION
 # ============================================================================
 
-REQUIRED_FILES = ["main.py", "config.json", "README.md"]
-
-REQUIRED_CONFIG_KEYS = ["unique_name", "matching_hotwords"]
+REQUIRED_FILES = ["main.py", "README.md"]
 
 BLOCKED_IMPORTS = [
     "redis",
@@ -87,30 +84,6 @@ def validate_ability(path: str) -> ValidationResult:
     for f in REQUIRED_FILES:
         if not os.path.isfile(os.path.join(path, f)):
             result.error(f"Missing required file: {f}")
-
-    # --- Validate config.json ---
-    config_path = os.path.join(path, "config.json")
-    if os.path.isfile(config_path):
-        try:
-            with open(config_path) as f:
-                config = json.load(f)
-
-            for key in REQUIRED_CONFIG_KEYS:
-                if key not in config:
-                    result.error(f"config.json missing required key: '{key}'")
-
-            if "matching_hotwords" in config:
-                hotwords = config["matching_hotwords"]
-                if not isinstance(hotwords, list) or len(hotwords) == 0:
-                    result.error("matching_hotwords must be a non-empty list")
-
-            if "unique_name" in config:
-                name = config["unique_name"]
-                if not re.match(r"^[a-z][a-z0-9_]*$", name):
-                    result.warn("unique_name should be lowercase snake_case (e.g., 'my_ability')")
-
-        except json.JSONDecodeError as e:
-            result.error(f"config.json is not valid JSON: {e}")
 
     # --- Validate main.py ---
     main_path = os.path.join(path, "main.py")

@@ -14,8 +14,8 @@ The simplest Ability pattern. Use this when you need a quick one-shot interactio
 
 1. Copy this folder to `community/your-ability-name/`
 2. Rename the class in `main.py`
-3. Update `config.json` with your ability name and trigger words
-4. Replace the logic in `run()` with your own
+3. Replace the logic in `run()` with your own
+4. Upload to OpenHome and set your trigger words in the dashboard
 5. That's it!
 
 ## Flow

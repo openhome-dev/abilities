@@ -27,15 +27,9 @@
 
 Abilities are **modular voice AI plugins** that extend what OpenHome Personalities can do. They're triggered by spoken phrases and can do anything — call APIs, play audio, run quizzes, control devices, have multi-turn conversations.
 
-Each Ability is just **two files**:
+Each Ability is just **one file**: `main.py` — your Python logic.
 
-```
-my-ability/
-├── main.py        ← Your Python logic
-└── config.json    ← Name + trigger phrases
-```
-
-That's it. Write your logic, zip it, upload it to OpenHome, and your Personality can do something new.
+Write your code, zip it, upload it to OpenHome, set your trigger words in the dashboard, and your Personality can do something new.
 
 ---
 
@@ -48,16 +42,7 @@ git clone https://github.com/openhome-dev/abilities.git
 cp -r abilities/templates/basic-template my-first-ability
 ```
 
-**2. Edit `config.json`**
-
-```json
-{
-  "unique_name": "my_first_ability",
-  "matching_hotwords": ["help me out", "give me advice"]
-}
-```
-
-**3. Edit `main.py`** — here's the simplest possible Ability:
+**2. Edit `main.py`** — here's the simplest possible Ability:
 
 ```python
 import json
@@ -98,14 +83,17 @@ class MyFirstCapability(MatchingCapability):
         self.capability_worker.resume_normal_flow()
 ```
 
-**4. Upload to OpenHome**
+> **Note:** The `register_capability` method is required boilerplate — copy it exactly. The platform handles `config.json` automatically; you never need to create or edit it.
+
+**3. Upload to OpenHome**
 
 - Zip your folder
 - Go to [app.openhome.com](https://app.openhome.com) → Abilities → Add Custom Ability
 - Upload the zip
+- Set your **trigger words** in the dashboard (the phrases that activate your Ability)
 - Test it in the Live Editor
 
-**5. Trigger it** — Say one of your hotwords in a conversation and your Ability takes over.
+**4. Trigger it** — Say one of your trigger words in a conversation and your Ability takes over.
 
 📖 **Full guide:** [docs/getting-started.md](docs/getting-started.md)
 
@@ -115,13 +103,15 @@ class MyFirstCapability(MatchingCapability):
 
 Maintained by the OpenHome team. Tested, stable, and supported.
 
-| Ability | Description | Trigger Words | API Required | Docs |
-|---------|-------------|---------------|--------------|------|
+| Ability | Description | Example Triggers | API Required | Docs |
+|---------|-------------|------------------|--------------|------|
 | [Basic Advisor](official/basic-advisor/) | Daily life advice | "give me advice", "help me" | None | [README](official/basic-advisor/README.md) |
 | [Quiz Game](official/quiz-game/) | AI-generated trivia | "start a quiz", "quiz me" | None | [README](official/quiz-game/README.md) |
 | [Sound Generator](official/sound-generator/) | AI sound effects | "make a sound", "create a sound" | ElevenLabs | [README](official/sound-generator/README.md) |
 | [Weather](official/weather/) | Current weather by location | "what's the weather" | None | [README](official/weather/README.md) |
 | [Music Player](official/music-player/) | Play music from URL or file | "play music", "play a song" | None | [README](official/music-player/README.md) |
+
+> **Trigger words** are configured in the OpenHome dashboard when you install an Ability, not in the code.
 
 ---
 
@@ -129,9 +119,9 @@ Maintained by the OpenHome team. Tested, stable, and supported.
 
 Built by the community. Reviewed for security and SDK compliance before merging.
 
-| Ability | Description | Author | Trigger Words | API Required |
-|---------|-------------|--------|---------------|--------------|
-| *Your Ability here* | [Contribute one →](CONTRIBUTING.md) | | | |
+| Ability | Description | Author | API Required |
+|---------|-------------|--------|--------------|
+| *Your Ability here* | [Contribute one →](CONTRIBUTING.md) | | |
 
 > **Note:** Community Abilities are reviewed for security and SDK compliance. OpenHome does not guarantee ongoing maintenance. See [Contributing](CONTRIBUTING.md) for details.
 
