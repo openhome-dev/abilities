@@ -1,0 +1,79 @@
+name: Community PR Path Check
+
+on:
+  pull_request:
+    branches: [dev, main]
+
+jobs:
+  path-check:
+    name: path-check
+    runs-on: ubuntu-latest
+    if: >
+      github.event.pull_request.author_association != 'MEMBER' &&
+      github.event.pull_request.author_association != 'OWNER'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check community PR only touches allowed paths
+        run: |
+          echo "🔍 Checking files changed in this PR..."
+          
+          CHANGED_FILES=$(git diff --name-only origin/${{ github.base_ref }}...HEAD)
+          echo "Changed files:"
+          echo "$CHANGED_FILES"
+          
+          VIOLATION=false
+          
+          while IFS= read -r file; do
+            # Allow changes to community/ folder
+            if [[ "$file" == community/* ]]; then
+              echo "✅ $file (community folder — allowed)"
+              continue
+            fi
+            
+            # Allow changes to CONTRIBUTORS.md (they can add themselves)
+            if [[ "$file" == "CONTRIBUTORS.md" ]]; then
+              echo "✅ $file (contributors list — allowed)"
+              continue
+            fi
+            
+            # Allow changes to docs/ folder
+            if [[ "$file" == docs/* ]]; then
+              echo "✅ $file (docs folder — allowed)"
+              continue
+            fi
+            
+            # Everything else is a violation for community PRs
+            echo "❌ $file (NOT ALLOWED for community contributions)"
+            VIOLATION=true
+          done <<< "$CHANGED_FILES"
+          
+          if [ "$VIOLATION" = true ]; then
+            echo ""
+            echo "============================================"
+            echo "🚫 BLOCKED: Community PRs can only modify:"
+            echo "   • community/your-ability-name/"
+            echo "   • docs/"
+            echo "   • CONTRIBUTORS.md"
+            echo ""
+            echo "If you need to modify other files, please"
+            echo "open an issue first to discuss with maintainers."
+            echo "============================================"
+            exit 1
+          fi
+          
+          echo ""
+          echo "✅ All changed files are in allowed paths!"
+
+  # Always pass for org members (they can touch any path)
+  path-check-member:
+    name: path-check
+    runs-on: ubuntu-latest
+    if: >
+      github.event.pull_request.author_association == 'MEMBER' ||
+      github.event.pull_request.author_association == 'OWNER'
+    steps:
+      - run: echo "✅ Org member — all paths allowed"
