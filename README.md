@@ -5,7 +5,7 @@
   <strong>Open-source voice AI plugins for OpenHome — build, share, and remix.</strong>
 </p>
 
-<!-- <p align="center">
+<p align="center">
   <a href="https://app.openhome.com">Dashboard</a> •
   <a href="https://docs.openhome.com">Docs</a> •
   <a href="https://discord.gg/openhome">Discord</a> 
@@ -15,7 +15,7 @@
   <img src="https://img.shields.io/badge/license-MIT-blue" alt="License" />
   <img src="https://img.shields.io/badge/python-3.10+-blue" alt="Python" />
   <img src="https://img.shields.io/badge/PRs-welcome-brightgreen" alt="PRs Welcome" />
-</p> -->
+</p> 
 <p align="center">
   <a href="https://github.com/openhome-dev/abilities/stargazers">
     <img src="https://img.shields.io/github/stars/openhome-dev/abilities?style=social" alt="Stars">
