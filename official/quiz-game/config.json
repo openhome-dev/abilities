@@ -1,6 +1,4 @@
 {
   "unique_name": "quiz_game",
-  "matching_hotwords": ["start a quiz", "quiz me", "trivia game", "play a quiz"],
-  "maintainer": "openhome",
-  "status": "official"
+  "matching_hotwords": ["start a quiz", "quiz me", "trivia game", "play a quiz"]
 }

@@ -34,8 +34,8 @@ docs/            ← Guides and API reference.
 ### 1. Fork and Clone
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/openhome-abilities.git
-cd openhome-abilities
+git clone https://github.com/YOUR_USERNAME/abilities.git
+cd abilities
 ```
 
 ### 2. Pick a Template
@@ -59,9 +59,7 @@ cp -r templates/basic-template community/your-ability-name
 ```json
 {
   "unique_name": "your_ability_name",
-  "matching_hotwords": ["trigger phrase one", "another trigger"],
-  "maintainer": "github:your-username",
-  "status": "community"
+  "matching_hotwords": ["trigger phrase one", "another trigger"]
 }
 ```
 
@@ -139,7 +137,7 @@ Every community PR is reviewed for:
 ### Must Pass (Hard Requirements)
 
 - [ ] Files are in `community/your-ability-name/` (not in `official/`)
-- [ ] `config.json` is present with `unique_name`, `matching_hotwords`, `maintainer`, `status`
+- [ ] `config.json` is present with `unique_name` and `matching_hotwords`
 - [ ] `main.py` follows the SDK pattern (extends `MatchingCapability`, has `register_capability` + `call`)
 - [ ] `README.md` is present with description, trigger words, and setup instructions
 - [ ] `resume_normal_flow()` is called on every exit path

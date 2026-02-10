@@ -1,6 +1,4 @@
 {
   "unique_name": "basic_advisor",
-  "matching_hotwords": ["give me advice", "help me out", "I need advice", "daily advisor"],
-  "maintainer": "openhome",
-  "status": "official"
+  "matching_hotwords": ["give me advice", "help me out", "I need advice", "daily advisor"]
 }

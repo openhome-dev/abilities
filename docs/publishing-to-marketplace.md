@@ -35,6 +35,6 @@ Once your Ability is working, you can publish it to the OpenHome Marketplace so 
 
 If your Ability is also in this repo, add a link in your Marketplace description:
 
-> View source code and contribute: [GitHub →](https://github.com/openhome-xyz/openhome-abilities)
+> View source code and contribute: [GitHub →](https://github.com/openhome-dev/abilities)
 
 This builds trust and invites improvements.

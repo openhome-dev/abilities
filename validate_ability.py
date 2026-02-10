@@ -109,13 +109,6 @@ def validate_ability(path: str) -> ValidationResult:
                 if not re.match(r"^[a-z][a-z0-9_]*$", name):
                     result.warn("unique_name should be lowercase snake_case (e.g., 'my_ability')")
 
-            # Check community submissions have maintainer/status
-            if "community" in path:
-                if "maintainer" not in config:
-                    result.warn("Community abilities should have a 'maintainer' field (e.g., 'github:username')")
-                if config.get("status") != "community":
-                    result.warn("Community abilities should have '\"status\": \"community\"' in config.json")
-
         except json.JSONDecodeError as e:
             result.error(f"config.json is not valid JSON: {e}")
 

@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="logo1.png" alt="OpenHome" width="120" />
+  <img src="assets/logo.png" alt="OpenHome" width="120" />
 </p>
 
 <h1 align="center">OpenHome Abilities</h1>
@@ -44,8 +44,8 @@ That's it. Write your logic, zip it, upload it to OpenHome, and your Personality
 **1. Pick a template**
 
 ```bash
-git clone https://github.com/openhome-xyz/openhome-abilities.git
-cp -r openhome-abilities/templates/basic-template my-first-ability
+git clone https://github.com/openhome-dev/abilities.git
+cp -r abilities/templates/basic-template my-first-ability
 ```
 
 **2. Edit `config.json`**

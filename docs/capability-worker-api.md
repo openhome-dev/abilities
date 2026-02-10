@@ -22,7 +22,7 @@ Converts text to speech using a **specific Voice ID**. Use when your Ability nee
 await self.capability_worker.text_to_speech("Welcome!", "pNInz6obpgDQGcFmaJgB")
 ```
 
-See the [Voice ID catalog](https://github.com/openhome-xyz/openhome-abilities#voice-id-reference) for available voices.
+See the [Voice ID catalog](https://github.com/openhome-dev/abilities#voice-id-reference) for available voices.
 
 ---
 

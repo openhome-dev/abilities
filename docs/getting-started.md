@@ -17,8 +17,8 @@ This guide walks you through building, testing, and uploading a custom Ability t
 Clone this repo (or download just the template folder):
 
 ```bash
-git clone https://github.com/openhome-xyz/openhome-abilities.git
-cp -r openhome-abilities/templates/basic-template my-ability
+git clone https://github.com/openhome-dev/abilities.git
+cp -r abilities/templates/basic-template my-ability
 cd my-ability
 ```
 

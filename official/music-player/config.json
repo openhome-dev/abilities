@@ -1,6 +1,4 @@
 {
   "unique_name": "music_player",
-  "matching_hotwords": ["play music", "play a song", "play some music", "music player"],
-  "maintainer": "openhome",
-  "status": "official"
+  "matching_hotwords": ["play music", "play a song", "play some music", "music player"]
 }
