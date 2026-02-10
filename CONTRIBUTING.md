@@ -187,7 +187,7 @@ When promoted:
 
 ## Getting Help
 
-- **Stuck on code?** → Ask in [GitHub Discussions](../../discussions) or [Discord](https://discord.gg/openhome)
+- **Stuck on code?** → Ask in [Discord](https://discord.gg/openhome)
 - **Found a bug in an Ability?** → [Open an issue](../../issues/new?template=bug-report.md)
 - **Have an idea for an Ability?** → [Suggest it](../../issues/new?template=ability-idea.md)
 - **SDK question?** → Check [docs/capability-worker-api.md](docs/capability-worker-api.md)
