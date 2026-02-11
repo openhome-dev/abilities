@@ -1,0 +1,50 @@
+name: Update Contributors
+
+on:
+  pull_request:
+    branches: [dev]
+    types: [closed]
+    paths:
+      - 'community/**'
+
+jobs:
+  update-contributors:
+    if: github.event.pull_request.merged == true
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: dev
+
+      - name: Add contributor
+        run: |
+          USERNAME="${{ github.event.pull_request.user.login }}"
+          ABILITY_DIR=$(git diff --name-only ${{ github.event.pull_request.base.sha }}...${{ github.event.pull_request.merge_commit_sha }} \
+            | grep -E '^community/' \
+            | cut -d'/' -f1-2 \
+            | sort -u \
+            | head -1)
+          
+          ABILITY_NAME=$(basename "$ABILITY_DIR")
+          
+          # Check if already listed
+          if grep -q "@$USERNAME" CONTRIBUTORS.md; then
+            echo "✅ $USERNAME already in CONTRIBUTORS.md"
+            exit 0
+          fi
+          
+          # Remove the "Be the first!" line if present
+          sed -i '/*Be the first!/d' CONTRIBUTORS.md
+          
+          # Add contributor before the closing of Community Contributors
+          echo "- **[@$USERNAME](https://github.com/$USERNAME)** — $ABILITY_NAME ([link]($ABILITY_DIR/))" >> CONTRIBUTORS.md
+
+      - name: Commit changes
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add CONTRIBUTORS.md
+          git diff --cached --quiet || git commit -m "docs: add @${{ github.event.pull_request.user.login }} to contributors"
+          git push
