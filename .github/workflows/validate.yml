@@ -28,83 +28,14 @@ jobs:
           CHANGED_DIRS=$(git diff --name-only origin/${{ github.base_ref }}...HEAD \
             | grep -E '^(community|official)/' \
             | cut -d'/' -f1-2 \
-            | sort -u)
+            | sort -u \
+            | tr '\n' ' ')
           echo "dirs=$CHANGED_DIRS" >> $GITHUB_OUTPUT
           echo "Changed ability directories:"
           echo "$CHANGED_DIRS"
 
-      - name: Validate ability structure
-        run: |
-          EXIT_CODE=0
-          
-          for dir in ${{ steps.changed.outputs.dirs }}; do
-            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-            echo "Validating: $dir"
-            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-            
-            # Check main.py exists
-            if [ ! -f "$dir/main.py" ]; then
-              echo "❌ Missing main.py in $dir"
-              EXIT_CODE=1
-            else
-              echo "✅ main.py found"
-            fi
-            
-            # Check README.md exists
-            if [ ! -f "$dir/README.md" ]; then
-              echo "❌ Missing README.md in $dir"
-              EXIT_CODE=1
-            else
-              echo "✅ README.md found"
-            fi
-            
-            # Syntax check main.py
-            if [ -f "$dir/main.py" ]; then
-              python -m py_compile "$dir/main.py" 2>&1
-              if [ $? -eq 0 ]; then
-                echo "✅ main.py syntax valid"
-              else
-                echo "❌ main.py has syntax errors"
-                EXIT_CODE=1
-              fi
-            fi
-            
-            # Check for required class pattern
-            if [ -f "$dir/main.py" ]; then
-              if grep -q "MatchingCapability" "$dir/main.py"; then
-                echo "✅ Extends MatchingCapability"
-              else
-                echo "❌ main.py must extend MatchingCapability"
-                EXIT_CODE=1
-              fi
-              
-              if grep -q "register_capability" "$dir/main.py"; then
-                echo "✅ register_capability method found"
-              else
-                echo "❌ main.py must implement register_capability"
-                EXIT_CODE=1
-              fi
-            fi
-            
-            # Security: check for dangerous imports
-            if [ -f "$dir/main.py" ]; then
-              DANGEROUS=$(grep -nE '(subprocess|os\.system|eval\(|exec\(|__import__)' "$dir/main.py" || true)
-              if [ -n "$DANGEROUS" ]; then
-                echo "⚠️  SECURITY WARNING — Potentially dangerous code found:"
-                echo "$DANGEROUS"
-                echo "⚠️  Manual review required by core-maintainers"
-              else
-                echo "✅ No dangerous patterns detected"
-              fi
-            fi
-            
-            echo ""
-          done
-          
-          exit $EXIT_CODE
-
       - name: Run validate_ability.py (if exists)
         run: |
           if [ -f "validate_ability.py" ]; then
-            python validate_ability.py
+            python validate_ability.py ${{ steps.changed.outputs.dirs }}
           fi
