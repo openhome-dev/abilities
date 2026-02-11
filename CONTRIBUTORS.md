@@ -12,5 +12,6 @@ Thank you to everyone who has contributed to OpenHome Abilities! 🎉
 Contributors are added here when their PR is merged.
 Format: - **@username** — Ability name (link to folder)
 -->
+- **[@Rizwan-algoryc](https://github.com/Rizwan-algoryc)** — Ability Name ([slow-music](community/slow-music/))
 
 *Be the first! [Submit an Ability →](CONTRIBUTING.md)*
