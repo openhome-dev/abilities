@@ -12,6 +12,13 @@ jobs:
       github.event.pull_request.author_association != 'MEMBER' &&
       github.event.pull_request.author_association != 'OWNER'
     steps:
+      - name: Block PRs targeting main
+        if: github.base_ref == 'main'
+        run: |
+          echo "🚫 Community PRs must target 'dev', not 'main'."
+          echo "   Please close this PR and re-open against 'dev'."
+          exit 1
+
       - name: Checkout
         uses: actions/checkout@v4
         with:
@@ -22,31 +29,33 @@ jobs:
           echo "🔍 Checking files changed in this PR..."
           
           CHANGED_FILES=$(git diff --name-only origin/${{ github.base_ref }}...HEAD)
+          
+          if [ -z "$CHANGED_FILES" ]; then
+            echo "✅ No files changed."
+            exit 0
+          fi
+          
           echo "Changed files:"
           echo "$CHANGED_FILES"
           
           VIOLATION=false
           
           while IFS= read -r file; do
-            # Allow changes to community/ folder
             if [[ "$file" == community/* ]]; then
               echo "✅ $file (community folder — allowed)"
               continue
             fi
             
-            # Allow changes to CONTRIBUTORS.md (they can add themselves)
             if [[ "$file" == "CONTRIBUTORS.md" ]]; then
               echo "✅ $file (contributors list — allowed)"
               continue
             fi
             
-            # Allow changes to docs/ folder
             if [[ "$file" == docs/* ]]; then
               echo "✅ $file (docs folder — allowed)"
               continue
             fi
             
-            # Everything else is a violation for community PRs
             echo "❌ $file (NOT ALLOWED for community contributions)"
             VIOLATION=true
           done <<< "$CHANGED_FILES"
@@ -68,12 +77,11 @@ jobs:
           echo ""
           echo "✅ All changed files are in allowed paths!"
 
-  # Always pass for org members (they can touch any path)
   path-check-member:
     name: path-check
     runs-on: ubuntu-latest
     if: >
       github.event.pull_request.author_association == 'MEMBER' ||
-      github.event.pull_request.author_association == 'OWNER'
+      github.event.pull_request.author_association == 'OWNER' 
     steps:
       - run: echo "✅ Org member — all paths allowed"
