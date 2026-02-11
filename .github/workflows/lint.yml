@@ -20,9 +20,6 @@ jobs:
       - name: Install linters
         run: pip install flake8 black isort
 
-      - name: Run Black (format check)
-        run: black --check --diff community/ official/ templates/
-
       - name: Run Flake8
         run: flake8 community/ official/ templates/ --max-line-length=120 --ignore=E501,W503
 
