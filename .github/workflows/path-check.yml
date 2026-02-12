@@ -12,76 +12,59 @@ jobs:
       github.event.pull_request.author_association != 'MEMBER' &&
       github.event.pull_request.author_association != 'OWNER'
     steps:
-      - name: Block PRs targeting main
-        if: github.base_ref == 'main'
-        run: |
-          echo "🚫 Community PRs must target 'dev', not 'main'."
-          echo "   Please close this PR and re-open against 'dev'."
-          exit 1
-
       - name: Checkout
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: Check community PR only touches allowed paths
+      - name: Check community PR only touches community folder
         run: |
           echo "🔍 Checking files changed in this PR..."
-          
+
           CHANGED_FILES=$(git diff --name-only origin/${{ github.base_ref }}...HEAD)
-          
+
           if [ -z "$CHANGED_FILES" ]; then
             echo "✅ No files changed."
             exit 0
           fi
-          
+
           echo "Changed files:"
           echo "$CHANGED_FILES"
-          
+          echo ""
+
           VIOLATION=false
-          
+
           while IFS= read -r file; do
             if [[ "$file" == community/* ]]; then
-              echo "✅ $file (community folder — allowed)"
+              echo "✅ $file"
               continue
             fi
-            
-            if [[ "$file" == "CONTRIBUTORS.md" ]]; then
-              echo "✅ $file (contributors list — allowed)"
-              continue
-            fi
-            
-            if [[ "$file" == docs/* ]]; then
-              echo "✅ $file (docs folder — allowed)"
-              continue
-            fi
-            
-            echo "❌ $file (NOT ALLOWED for community contributions)"
+
+            echo "❌ $file (NOT ALLOWED)"
             VIOLATION=true
           done <<< "$CHANGED_FILES"
-          
+
           if [ "$VIOLATION" = true ]; then
             echo ""
             echo "============================================"
-            echo "🚫 BLOCKED: Community PRs can only modify:"
+            echo "🚫 BLOCKED: Community PRs can ONLY modify:"
             echo "   • community/your-ability-name/"
-            echo "   • docs/"
-            echo "   • CONTRIBUTORS.md"
             echo ""
-            echo "If you need to modify other files, please"
-            echo "open an issue first to discuss with maintainers."
+            echo "   You cannot modify any other files."
+            echo "   If you need changes elsewhere, open an"
+            echo "   issue to discuss with maintainers."
             echo "============================================"
             exit 1
           fi
-          
+
           echo ""
-          echo "✅ All changed files are in allowed paths!"
+          echo "✅ All changed files are inside community/ folder!"
 
   path-check-member:
     name: path-check
     runs-on: ubuntu-latest
     if: >
       github.event.pull_request.author_association == 'MEMBER' ||
-      github.event.pull_request.author_association == 'OWNER' 
+      github.event.pull_request.author_association == 'OWNER'
     steps:
       - run: echo "✅ Org member — all paths allowed"
