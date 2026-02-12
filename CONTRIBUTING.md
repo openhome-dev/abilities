@@ -65,7 +65,7 @@ cd abilities
 Set up the upstream remote to stay in sync with the original repo:
 
 ```bash
-git remote add upstream https://github.com/OpenHome/abilities.git
+git remote add upstream https://github.com/OpenHome-dev/abilities.git
 ```
 
 Then make sure you have the `dev` branch locally and start from it:
