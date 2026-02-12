@@ -1,4 +1,4 @@
-# CapabilityWorker API Reference
+# CapabilityWorker 
 
 The `CapabilityWorker` is the core SDK class for all I/O inside an Ability. Access it via `self.capability_worker` after initializing in `call()`.
 
