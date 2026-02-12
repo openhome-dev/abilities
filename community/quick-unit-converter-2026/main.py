@@ -4,10 +4,11 @@ from src.agent.capability import MatchingCapability
 from src.main import AgentWorker
 from src.agent.capability_worker import CapabilityWorker
 
-# Voice ID for "American, Mid-aged, Male, News" 
+# Voice ID for "American, Mid-aged, Male, News"
 VOICE_ID = "29vD33N1CtxCmqQRPOHJ"
 
-class QuickUnitConverter2026Capability(MatchingCapability):
+
+class UnitConverterCapability(MatchingCapability):
     worker: AgentWorker = None
     capability_worker: CapabilityWorker = None
 
@@ -32,22 +33,17 @@ class QuickUnitConverter2026Capability(MatchingCapability):
     async def unit_converter_logic(self):
         try:
             self.worker.editor_logging_handler.info("Unit Converter Started.")
-            
             # 1. Startup: Keep it short
             await self.capability_worker.text_to_speech("Ready.", VOICE_ID)
-
             while True:
                 # 2. Wait for user response
                 user_input = await self.capability_worker.user_response()
-                
                 if not user_input or len(user_input.strip()) == 0:
                     continue
-
                 # 3. Exit Handling
                 if any(word in user_input.lower() for word in ["exit", "stop", "quit", "done"]):
                     await self.capability_worker.text_to_speech("Goodbye.", VOICE_ID)
                     break
-
                 # 4. Strict LLM Prompt for Zero-Fluff results
                 system_prompt = (
                     "STRICT ROLE: Silent mathematical engine. "
@@ -56,19 +52,15 @@ class QuickUnitConverter2026Capability(MatchingCapability):
                     "RULE: No filler. No weather comments. No 'Sure'. "
                     "RULE: Use the word 'point' for decimals (e.g., '0 point 4 7')."
                 )
-                
                 # Generate result
                 answer = self.capability_worker.text_to_text_response(
                     prompt_text=user_input,
                     system_prompt=system_prompt
                 )
-
                 # 5. Clean and Speak
                 # Split to ensure we only take the math sentence
                 clean_answer = answer.split('?')[0].split('!')[0].strip()
-                
                 await self.capability_worker.text_to_speech(f"{clean_answer}. Anything else?", VOICE_ID)
-
         except Exception as e:
             self.worker.editor_logging_handler.error(f"Ability Error: {str(e)}")
         finally:
