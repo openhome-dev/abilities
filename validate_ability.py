@@ -27,7 +27,7 @@ import re
 # CONFIGURATION
 # ============================================================================
 
-REQUIRED_FILES = ["main.py", "README.md"]
+REQUIRED_FILES = ["main.py", "README.md", "__init__.py"]
 
 BLOCKED_IMPORTS = [
     "redis",
