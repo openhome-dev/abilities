@@ -10,18 +10,101 @@ jobs:
   lint:
     name: lint
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
     steps:
       - uses: actions/checkout@v4
-      
+        with:
+          fetch-depth: 0
+
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-      
+
       - name: Install linters
-        run: pip install flake8 black isort
+        run: pip install flake8 isort
+
+      - name: Get changed Python files
+        id: changed
+        run: |
+          FILES=$(git diff --name-only origin/${{ github.base_ref }}...HEAD -- '*.py' \
+            | grep -E '^(community|official|templates)/' \
+            | tr '\n' ' ' || true)
+
+          if [ -z "$FILES" ]; then
+            echo "skip=true" >> $GITHUB_OUTPUT
+            echo "No Python files changed — skipping"
+          else
+            echo "skip=false" >> $GITHUB_OUTPUT
+            echo "files=$FILES" >> $GITHUB_OUTPUT
+            echo "🔍 Linting: $FILES"
+          fi
 
       - name: Run Flake8
-        run: flake8 community/ official/ templates/ --max-line-length=120 --ignore=E501,W503
+        if: steps.changed.outputs.skip == 'false'
+        id: flake8
+        continue-on-error: true
+        run: |
+          OUTPUT=$(flake8 ${{ steps.changed.outputs.files }} \
+            --max-line-length=120 --ignore=E501,W503 2>&1) || true
+          echo "$OUTPUT"
+          echo "$OUTPUT" > flake8_output.txt
+          if [ -n "$OUTPUT" ]; then
+            echo "has_errors=true" >> $GITHUB_OUTPUT
+          else
+            echo "has_errors=false" >> $GITHUB_OUTPUT
+          fi
 
-      - name: Run isort (import order)
-        run: isort --check-only --diff community/ official/ templates/
+      - name: Run isort
+        if: steps.changed.outputs.skip == 'false'
+        id: isort
+        continue-on-error: true
+        run: |
+          OUTPUT=$(isort --check-only --diff ${{ steps.changed.outputs.files }} 2>&1) || true
+          echo "$OUTPUT"
+          echo "$OUTPUT" > isort_output.txt
+          if [ -n "$OUTPUT" ]; then
+            echo "has_errors=true" >> $GITHUB_OUTPUT
+          else
+            echo "has_errors=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Comment on PR
+        if: steps.flake8.outputs.has_errors == 'true' || steps.isort.outputs.has_errors == 'true'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const flake8 = fs.readFileSync('flake8_output.txt', 'utf8').trim();
+            const isort = fs.readFileSync('isort_output.txt', 'utf8').trim();
+
+            let body = '## 🔍 Lint Results\n\n';
+            body += `**Files checked:** \`${{ steps.changed.outputs.files }}\`\n\n`;
+
+            if (flake8) {
+              body += '### ❌ Flake8 Errors\n```\n' + flake8 + '\n```\n\n';
+            } else {
+              body += '### ✅ Flake8 — Passed\n\n';
+            }
+
+            if (isort) {
+              body += '### ❌ Import Order (isort)\n```diff\n' + isort + '\n```\n\n';
+            } else {
+              body += '### ✅ isort — Passed\n\n';
+            }
+
+            body += '> Fix these issues and push again. The lint will re-run automatically.';
+
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body: body
+            });
+
+      - name: Fail if errors
+        if: steps.flake8.outputs.has_errors == 'true' || steps.isort.outputs.has_errors == 'true'
+        run: |
+          echo "❌ Lint failed — check the PR comment for details"
+          exit 1
