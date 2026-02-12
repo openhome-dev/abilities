@@ -8,7 +8,7 @@ Thanks for wanting to contribute! This guide will get you from idea to merged PR
 
 1. Fork this repo
 2. Copy `templates/basic-template/` to `community/your-ability-name/`
-3. Build your Ability (edit `main.py`)
+3. Build your Ability (edit `main.py`) and README.md
 4. Test it in the [OpenHome Live Editor](https://app.openhome.com/dashboard/abilities)
 5. Open a Pull Request **against `dev`**
 
@@ -65,7 +65,7 @@ cd abilities
 Set up the upstream remote to stay in sync with the original repo:
 
 ```bash
-git remote add upstream https://github.com/OpenHome/abilities.git
+git remote add upstream https://github.com/OpenHome-dev/abilities.git
 ```
 
 Then make sure you have the `dev` branch locally and start from it:
