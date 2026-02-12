@@ -1,8 +1,9 @@
 import json
 import os
+
 from src.agent.capability import MatchingCapability
-from src.main import AgentWorker
 from src.agent.capability_worker import CapabilityWorker
+from src.main import AgentWorker
 
 
 class RedditDailyDigestCapability(MatchingCapability):
@@ -29,7 +30,7 @@ class RedditDailyDigestCapability(MatchingCapability):
     async def run(self):
         try:
             await self.capability_worker.speak(
-                "Here’s your Reddit technology digest."
+                "Here's your Reddit technology digest."
             )
 
             await self._generate_digest()
@@ -47,7 +48,6 @@ class RedditDailyDigestCapability(MatchingCapability):
 
                 user_input_lower = user_input.lower()
 
-                # Improved exit handling (contains check)
                 if any(word in user_input_lower for word in exit_words):
                     await self.capability_worker.speak("Alright. Talk soon.")
                     break
@@ -82,13 +82,11 @@ class RedditDailyDigestCapability(MatchingCapability):
                 headlines_prompt
             )
 
-            # Safe splitting
             if "|||" in raw_headlines:
                 self.stories = [h.strip() for h in raw_headlines.split("|||")]
             else:
                 self.stories = [raw_headlines.strip()]
 
-            # Ensure at least 3 items to prevent index errors
             while len(self.stories) < 3:
                 self.stories.append("More trending tech discussion on Reddit.")
 
@@ -110,13 +108,13 @@ class RedditDailyDigestCapability(MatchingCapability):
 
         except Exception:
             await self.capability_worker.speak(
-                "I couldn’t generate the digest right now."
+                "I couldn't generate the digest right now."
             )
 
     async def _expand_story(self, index):
         if index >= len(self.stories):
             await self.capability_worker.speak(
-                "That story isn’t available."
+                "That story isn't available."
             )
             return
 
@@ -140,5 +138,5 @@ class RedditDailyDigestCapability(MatchingCapability):
 
         except Exception:
             await self.capability_worker.speak(
-                "I couldn’t expand that story."
+                "I couldn't expand that story."
             )
