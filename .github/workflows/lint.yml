@@ -1,7 +1,7 @@
 name: Lint
 
 on:
-  pull_request:
+  pull_request_target:
     branches: [dev, main]
     paths:
       - '**.py'
@@ -16,6 +16,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: ${{ github.event.pull_request.head.sha }}
           fetch-depth: 0
 
       - uses: actions/setup-python@v5
@@ -28,25 +29,70 @@ jobs:
       - name: Get changed Python files
         id: changed
         run: |
-          FILES=$(git diff --name-only origin/${{ github.base_ref }}...HEAD -- '*.py' \
-            | grep -E '^(community|official|templates)/' \
-            | tr '\n' ' ' || true)
+          git fetch origin ${{ github.base_ref }}
+          ALL_FILES=$(git diff --name-only origin/${{ github.base_ref }}...HEAD -- '*.py' \
+            | grep -E '^(community|official|templates)/' || true)
 
-          if [ -z "$FILES" ]; then
+          if [ -z "$ALL_FILES" ]; then
             echo "skip=true" >> $GITHUB_OUTPUT
             echo "No Python files changed — skipping"
-          else
-            echo "skip=false" >> $GITHUB_OUTPUT
-            echo "files=$FILES" >> $GITHUB_OUTPUT
-            echo "🔍 Linting: $FILES"
+            exit 0
           fi
 
+          # Separate __init__.py from other files
+          INIT_FILES=""
+          LINT_FILES=""
+
+          while IFS= read -r file; do
+            if [[ "$(basename "$file")" == "__init__.py" ]]; then
+              INIT_FILES="$INIT_FILES $file"
+            else
+              LINT_FILES="$LINT_FILES $file"
+            fi
+          done <<< "$ALL_FILES"
+
+          INIT_FILES=$(echo "$INIT_FILES" | xargs)
+          LINT_FILES=$(echo "$LINT_FILES" | xargs)
+
+          echo "skip=false" >> $GITHUB_OUTPUT
+          echo "lint_files=$LINT_FILES" >> $GITHUB_OUTPUT
+          echo "init_files=$INIT_FILES" >> $GITHUB_OUTPUT
+
+          echo "🔍 Lint files: ${LINT_FILES:-none}"
+          echo "📦 __init__.py files: ${INIT_FILES:-none}"
+
+      # ── __init__.py must be empty check ──────────────────────────
+      - name: Check __init__.py files are empty
+        if: steps.changed.outputs.skip == 'false' && steps.changed.outputs.init_files != ''
+        id: init_check
+        run: |
+          INIT_FILES="${{ steps.changed.outputs.init_files }}"
+          > init_violations.txt
+          has_violations=false
+
+          for file in $INIT_FILES; do
+            if [ ! -f "$file" ]; then
+              continue
+            fi
+
+            # Strip whitespace/blank lines and check if anything remains
+            CONTENT=$(sed '/^\s*$/d' "$file")
+
+            if [ -n "$CONTENT" ]; then
+              echo "$file" >> init_violations.txt
+              has_violations=true
+            fi
+          done
+
+          echo "has_violations=$has_violations" >> $GITHUB_OUTPUT
+
+      # ── Flake8 (skip __init__.py) ───────────────────────────────
       - name: Run Flake8
-        if: steps.changed.outputs.skip == 'false'
+        if: steps.changed.outputs.skip == 'false' && steps.changed.outputs.lint_files != ''
         id: flake8
         continue-on-error: true
         run: |
-          OUTPUT=$(flake8 ${{ steps.changed.outputs.files }} \
+          OUTPUT=$(flake8 ${{ steps.changed.outputs.lint_files }} \
             --max-line-length=120 --ignore=E501,W503 2>&1) || true
           echo "$OUTPUT"
           echo "$OUTPUT" > flake8_output.txt
@@ -56,12 +102,13 @@ jobs:
             echo "has_errors=false" >> $GITHUB_OUTPUT
           fi
 
+      # ── isort (skip __init__.py) ────────────────────────────────
       - name: Run isort
-        if: steps.changed.outputs.skip == 'false'
+        if: steps.changed.outputs.skip == 'false' && steps.changed.outputs.lint_files != ''
         id: isort
         continue-on-error: true
         run: |
-          OUTPUT=$(isort --check-only --diff ${{ steps.changed.outputs.files }} 2>&1) || true
+          OUTPUT=$(isort --check-only --diff ${{ steps.changed.outputs.lint_files }} 2>&1) || true
           echo "$OUTPUT"
           echo "$OUTPUT" > isort_output.txt
           if [ -n "$OUTPUT" ]; then
@@ -70,41 +117,106 @@ jobs:
             echo "has_errors=false" >> $GITHUB_OUTPUT
           fi
 
+      # ── Create empty fallback files if steps were skipped ───────
+      - name: Ensure output files exist
+        if: steps.changed.outputs.skip == 'false'
+        run: |
+          touch flake8_output.txt isort_output.txt init_violations.txt
+
+      # ── PR Comment ──────────────────────────────────────────────
       - name: Comment on PR
-        if: steps.flake8.outputs.has_errors == 'true' || steps.isort.outputs.has_errors == 'true'
+        if: always() && steps.changed.outputs.skip == 'false'
         uses: actions/github-script@v7
         with:
           script: |
             const fs = require('fs');
+
             const flake8 = fs.readFileSync('flake8_output.txt', 'utf8').trim();
             const isort = fs.readFileSync('isort_output.txt', 'utf8').trim();
+            const initViolations = fs.readFileSync('init_violations.txt', 'utf8').trim();
 
-            let body = '## 🔍 Lint Results\n\n';
-            body += `**Files checked:** \`${{ steps.changed.outputs.files }}\`\n\n`;
+            const flake8Err = '${{ steps.flake8.outputs.has_errors }}' === 'true';
+            const isortErr = '${{ steps.isort.outputs.has_errors }}' === 'true';
+            const initErr = '${{ steps.init_check.outputs.has_violations }}' === 'true';
+            const lintFiles = '${{ steps.changed.outputs.lint_files }}';
+            const initFiles = '${{ steps.changed.outputs.init_files }}';
 
-            if (flake8) {
-              body += '### ❌ Flake8 Errors\n```\n' + flake8 + '\n```\n\n';
-            } else {
-              body += '### ✅ Flake8 — Passed\n\n';
+            const allPassed = !flake8Err && !isortErr && !initErr;
+
+            let body = '<!-- lint-check-result -->\n';
+            body += '## 🔍 Lint Results\n\n';
+
+            // ── __init__.py check ──
+            if (initFiles) {
+              if (initErr) {
+                body += '### ❌ `__init__.py` Must Be Empty\n\n';
+                body += 'The following `__init__.py` files must be **completely empty** (no code, no comments, no imports):\n\n';
+                body += '```\n' + initViolations + '\n```\n\n';
+                body += '> `__init__.py` in ability folders is only used as a package marker. Remove all content from these files.\n\n';
+              } else {
+                body += '### ✅ `__init__.py` — Empty as expected\n\n';
+              }
             }
 
-            if (isort) {
-              body += '### ❌ Import Order (isort)\n```diff\n' + isort + '\n```\n\n';
+            // ── Flake8 ──
+            if (lintFiles) {
+              body += `**Files linted:** \`${lintFiles}\`\n\n`;
+              if (flake8Err) {
+                body += '### ❌ Flake8 Errors\n```\n' + flake8 + '\n```\n\n';
+              } else {
+                body += '### ✅ Flake8 — Passed\n\n';
+              }
+
+              // ── isort ──
+              if (isortErr) {
+                body += '### ❌ Import Order (isort)\n```diff\n' + isort + '\n```\n\n';
+              } else {
+                body += '### ✅ isort — Passed\n\n';
+              }
             } else {
-              body += '### ✅ isort — Passed\n\n';
+              body += '_No non-init Python files to lint._\n\n';
             }
 
-            body += '> Fix these issues and push again. The lint will re-run automatically.';
+            // ── Footer ──
+            if (allPassed) {
+              body += '> ✅ All checks passed!';
+            } else {
+              body += '> Fix these issues and push again. The lint will re-run automatically.';
+            }
 
-            await github.rest.issues.createComment({
+            // ── Upsert comment ──
+            const { data: comments } = await github.rest.issues.listComments({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              issue_number: context.issue.number,
-              body: body
+              issue_number: context.issue.number
             });
 
+            const existing = comments.find(c =>
+              c.user.type === 'Bot' && c.body.includes('<!-- lint-check-result -->')
+            );
+
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: existing.id,
+                body: body
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body: body
+              });
+            }
+
+      # ── Fail the workflow if any check failed ──────────────────
       - name: Fail if errors
-        if: steps.flake8.outputs.has_errors == 'true' || steps.isort.outputs.has_errors == 'true'
+        if: |
+          steps.flake8.outputs.has_errors == 'true' ||
+          steps.isort.outputs.has_errors == 'true' ||
+          steps.init_check.outputs.has_violations == 'true'
         run: |
           echo "❌ Lint failed — check the PR comment for details"
           exit 1
