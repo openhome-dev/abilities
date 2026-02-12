@@ -1,8 +1,9 @@
 import json
 import os
+
 from src.agent.capability import MatchingCapability
-from src.main import AgentWorker
 from src.agent.capability_worker import CapabilityWorker
+from src.main import AgentWorker
 
 # Voice ID for "American, Mid-aged, Male, News"
 VOICE_ID = "29vD33N1CtxCmqQRPOHJ"
