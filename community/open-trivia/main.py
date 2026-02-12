@@ -9,13 +9,11 @@ from src.main import AgentWorker
 TRIVIA_VOICE_ID = "29vD33N1CtxCmqQRPOHJ"
 
 
-class QuestionResult:
+class OpenTriviaCapability(MatchingCapability):
+
     EXIT = "exit"
     NEXT = "next"
     REPEAT = "repeat"
-
-
-class OpenTriviaCapability(MatchingCapability):
 
     worker: AgentWorker = None
     capability_worker: CapabilityWorker = None
@@ -307,16 +305,16 @@ Generate a short natural spoken response.
             await self.capability_worker.speak(
                 "Alright, we'll stop here. Thanks for playing Open Trivia."
             )
-            return QuestionResult.EXIT
+            return self.EXIT
 
         if intent == "repeat":
-            return QuestionResult.REPEAT
+            return self.REPEAT
 
         if intent == "change_question":
             await self.capability_worker.speak(
                 "Sure, let's try a different one."
             )
-            return QuestionResult.NEXT
+            return self.NEXT
 
         # Default: treat as answer
         selected = self.interpret_answer(question, options, user_input)
@@ -325,7 +323,7 @@ Generate a short natural spoken response.
             await self.capability_worker.speak(
                 "I didn't quite catch that. Let's try that question again."
             )
-            return QuestionResult.REPEAT
+            return self.REPEAT
 
         is_correct = selected == correct
         spoken_correct = f"{correct}. {options[correct]}"
@@ -357,13 +355,13 @@ Generate a short natural spoken response.
         first = await self.capability_worker.user_response()
 
         if self._is_yes(first):
-            return QuestionResult.NEXT
+            return self.NEXT
 
         if self._is_no(first):
             await self.capability_worker.speak(
                 "Thanks for playing Open Trivia. See you next time."
             )
-            return QuestionResult.EXIT
+            return self.EXIT
 
         # Clarify once only
         await self.capability_worker.speak(
@@ -373,12 +371,12 @@ Generate a short natural spoken response.
         second = await self.capability_worker.user_response()
 
         if self._is_yes(second):
-            return QuestionResult.NEXT
+            return self.NEXT
 
         await self.capability_worker.speak(
             "Alright, we'll stop here. Thanks for playing."
         )
-        return QuestionResult.EXIT
+        return self.EXIT
 
     # =====================================================
     # QUESTION HANDLER
@@ -388,7 +386,7 @@ Generate a short natural spoken response.
 
         data = self.generate_question()
         if not data:
-            return QuestionResult.EXIT
+            return self.EXIT
 
         question = data["question"]
         options = data["options"]
@@ -417,7 +415,7 @@ Generate a short natural spoken response.
                 user_input
             )
 
-            if result == QuestionResult.REPEAT:
+            if result == self.REPEAT:
                 continue
 
             return result
@@ -445,10 +443,10 @@ Generate a short natural spoken response.
 
             result = await self.handle_question()
 
-            if result == QuestionResult.EXIT:
+            if result == self.EXIT:
                 break
 
-            if result == QuestionResult.NEXT:
+            if result == self.NEXT:
                 continue
 
         self.capability_worker.resume_normal_flow()
