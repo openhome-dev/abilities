@@ -1,0 +1,4 @@
+{
+  "unique_name": "api_template",
+  "matching_hotwords": ["look something up", "search for"]
+}
