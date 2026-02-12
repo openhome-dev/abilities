@@ -3,9 +3,8 @@ import os
 from typing import Any, Dict, Optional
 
 from src.agent.capability import MatchingCapability
-from src.main import AgentWorker
 from src.agent.capability_worker import CapabilityWorker
-
+from src.main import AgentWorker
 
 TRIVIA_VOICE_ID = "29vD33N1CtxCmqQRPOHJ"
 
@@ -137,7 +136,6 @@ User message:
 "{user_input}"
 """
 
-
         raw = self.capability_worker.text_to_text_response(prompt)
         parsed = self._safe_json(raw)
 
@@ -229,8 +227,6 @@ User message:
 
         return None
 
-
-
     def generate_question(self) -> Optional[Dict[str, Any]]:
         """Uses LLM to generate a new trivia question."""
 
@@ -281,7 +277,6 @@ User message:
 
         data["correct_answer"] = correct
         return data
-
 
     def generate_feedback(self, question, correct_answer, explanation, correct):
         """Uses LLM to generate natural host-style feedback."""
