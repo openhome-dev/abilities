@@ -2,11 +2,9 @@ import json
 import os
 
 import requests
-
 from src.agent.capability import MatchingCapability
 from src.agent.capability_worker import CapabilityWorker
 from src.main import AgentWorker
-
 
 # ── Default location (New York) — user can change via voice ──────────
 DEFAULT_LAT = 40.71
