@@ -1,7 +1,7 @@
 # Unit Converter
 
 ![Community](https://img.shields.io/badge/OpenHome-Community-orange?style=flat-square)
-![Author](https://img.shields.io/badge/Author-@yourusername-lightgrey?style=flat-square)
+![Author](https://img.shields.io/badge/Author-@pipinstallshan-lightgrey?style=flat-square)
 
 ## What It Does
 Voice-first unit conversion for cooking, travel, and everyday questions. Ask in natural language, get instant answers.
