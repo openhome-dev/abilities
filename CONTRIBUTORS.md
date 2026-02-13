@@ -8,8 +8,6 @@ Thank you to everyone who has contributed to OpenHome Abilities! 🎉
 
 ## Community Contributors
 
-## Community Contributors
-
 <!-- 
 Contributors are added here when their PR is merged.
 Format: - **@username** — ability-name ([ability-name](community/ability-name/))
