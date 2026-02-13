@@ -10,12 +10,13 @@ from src.agent.capability_worker import CapabilityWorker
 
 
 # Replace with your own API key from https://www.alphavantage.co/support/#api-key
-API_KEY = "XXXXXXXXXXX"
+API_KEY = "xxxxxxxxxxxxxxx"
 BASE_URL = "https://www.alphavantage.co/query"
 
 EXIT_WORDS: list[str] = [
     "done", "exit", "stop", "quit", "bye", "goodbye",
     "nothing else", "all good", "nope", "no thanks", "i'm good",
+    "thanks", "thank you", "thank", "no", "that's all", "that's it",
 ]
 
 
@@ -315,9 +316,9 @@ class MarketPulseAbility(MatchingCapability):
 
         else:
             await self.capability_worker.speak(
-                "Let me grab the gold price for you."
+                "I didn't catch that. You can ask about gold, silver, or currency rates."
             )
-            result = await asyncio.to_thread(self._fetch_spot_price, "GOLD")
+            return
 
         if result:
             await self.capability_worker.speak(result)
