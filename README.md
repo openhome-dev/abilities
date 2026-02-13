@@ -184,6 +184,7 @@ When promoted, the Ability moves to `official/`, gets the blue badge on Marketpl
 | [Publishing to Marketplace](docs/publishing-to-marketplace.md) | How to ship your Ability to users |
 | [Promotion Path](docs/promotion.md) | How community Abilities become official |
 | [OpenHome SDK Reference](docs/OpenHome_SDK_Reference.md) | Complete guide to SDK
+| [Building Great OpenHome Abilities](docs/Building_Great_OpenHome_Abilities.md) | Guide to buil great OpenHome abilities
 ---
 
 ## 📜 License
