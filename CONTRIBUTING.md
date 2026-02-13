@@ -21,20 +21,20 @@ That's it. We'll review it and get it merged.
 We use a **simplified Git Flow** model. All contributions follow this flow:
 
 ```
-feature/your-ability-name  →  dev  →  main
+ability/your-ability-name  →  dev  →  main
 ```
 
 | Branch | Purpose | Who Merges |
 |--------|---------|------------|
 | `main` | Stable, production-ready. Always deployable. | Maintainers only |
 | `dev` | Integration and testing. All PRs target this branch. | Maintainers after review |
-| `feature/*` or `add-*` | Your working branch for a single Ability or change. | You push; maintainers merge to `dev` |
+| `ability/*` or `add-*` | Your working branch for a single Ability or change. | You push; maintainers merge to `dev` |
 
 **Rules:**
 
 - **Never open a PR directly to `main`.** All PRs must target `dev`.
 - `dev` is merged to `main` by maintainers after validation and testing.
-- Keep your feature branch up to date with `dev` before opening a PR (rebase or merge).
+- Keep your ability branch up to date with `dev` before opening a PR (rebase or merge).
 
 ---
 
@@ -78,7 +78,7 @@ git pull upstream dev
 
 > **Why upstream?** This ensures you're always branching from the latest `dev` on the original repo, not a potentially stale `dev` on your fork.
 
-### 2. Create Your Feature Branch
+### 2. Create Your Ability Branch
 
 Branch off `dev` — not `main`:
 
@@ -116,6 +116,24 @@ Edit `main.py`. Every Ability must:
 - [ ] Use `self.worker.editor_logging_handler` for logging (never `print()`)
 
 > **Note:** Trigger words are configured in the OpenHome dashboard, not in code. The `register_capability` boilerplate reads a platform-managed `config.json` at runtime — you never create or edit that file.
+
+#### 📚 Resources
+
+- **[CapabilityWorker Reference](docs/capability-worker.md)** — All available functions for ability creation (`speak`, `user_response`, `run_io_loop`, file helpers, audio helpers, etc.)
+
+#### 🚫 Blocked Imports & Keywords (Quick Reference)
+
+| Blocked | Why | Use Instead |
+|---|---|---|
+| `print()` | Bypasses structured logging | `self.worker.editor_logging_handler` |
+| `open()` (raw) | Unmanaged filesystem access | `self.capability_worker.read_file()` / `write_file()` |
+| `redis` | Direct datastore coupling | Platform-provided helpers |
+| `connection_manager` | Breaks isolation & multi-tenant safety | `CapabilityWorker` APIs |
+| `user_config` | Can leak/mutate global state | `CapabilityWorker` / `worker` APIs |
+| `exec()` | Insecure dynamic code execution | ❌ Not allowed |
+| `pickle/dill/shelve/marshal` | Insecure deserialization | ❌ Not allowed |
+
+> **Full list →** [docs.openhome.com — Blocked Imports and Keywords](https://docs.openhome.com/how_to_build_an_ability#blocked-imports-and-keywords)
 
 ### 5. Write Your README
 
@@ -250,7 +268,7 @@ Every community PR is reviewed for:
 | Forget `resume_normal_flow()` | Call it on every exit path — loops, breaks, errors |
 | Write long spoken responses | Keep it short — 1-2 sentences per speak() call |
 | Import `redis`, `connection_manager`, etc. | Use CapabilityWorker APIs |
-| Push directly to `dev` or `main` | Push to your feature branch, open a PR |
+| Push directly to `dev` or `main` | Push to your ability branch, open a PR |
 
 ---
 
