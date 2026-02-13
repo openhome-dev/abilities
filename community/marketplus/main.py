@@ -10,7 +10,7 @@ from src.agent.capability_worker import CapabilityWorker
 
 
 # Replace with your own API key from https://www.alphavantage.co/support/#api-key
-API_KEY = "7X3NYVCIRCLCF4DE"
+API_KEY = "XXXXXXXXXXX"
 BASE_URL = "https://www.alphavantage.co/query"
 
 EXIT_WORDS: list[str] = [

@@ -106,8 +106,7 @@ sequenceDiagram
 ```
 marketplus/
 ├── main.py          # Ability logic (MarketPulseAbility class)
-├── config.json      # Trigger words and unique name
-├── __init__.py      # Empty (required for Python package)
+├── __init__.py    
 └── README.md        # This file
 ```
 
@@ -146,128 +145,6 @@ In your ability's settings, add these hotwords:
 ```
 market, market plus, marketplus
 ```
-
----
-
-## 🧠 How It Works
-
-### LLM Intent Router
-
-Instead of fragile keyword matching, the ability sends user input to the LLM for classification. The prompt explicitly handles messy voice transcription (e.g., `"goal"` → gold, `"process"` → price):
-
-```mermaid
-graph LR
-    A["Raw STT: 'Is current goal to process?'"] --> B["LLM Classifier"]
-    B --> C["{'intent': 'gold_price'}"]
-    C --> D["Fetch gold spot price"]
-```
-
-### Supported Intents
-
-| Intent | Description | API Used |
-|---|---|---|
-| `gold_price` | Gold price in USD | `GOLD_SILVER_SPOT` (1 call) |
-| `silver_price` | Silver price in USD | `GOLD_SILVER_SPOT` (1 call) |
-| `spot_in_currency` | Gold/silver in non-USD currency | `GOLD_SILVER_SPOT` + LLM (1 call) |
-| `exchange_rate` | Fiat currency pair rate | `CURRENCY_EXCHANGE_RATE` (1 call) |
-| `unknown` | Fallback → gold in USD | `GOLD_SILVER_SPOT` (1 call) |
-
-### Quick Mode vs Full Mode
-
-```mermaid
-graph TD
-    A{"Trigger context has clear intent?"} -->|Yes| B["⚡ Quick Mode"]
-    A -->|No| C["💬 Full Mode"]
-    
-    B --> D["Answer immediately"]
-    D --> E["'Need anything else?'"]
-    E -->|Yes| F["Handle 1 follow-up"]
-    E -->|No/silence| G["Exit silently"]
-    
-    C --> H["Greet user"]
-    H --> I["🔄 Multi-turn loop"]
-    I --> J["Handle query"]
-    J --> K["'Anything else?'"]
-    K -->|User asks more| I
-    K -->|Exit word| L["'Got it, signing off.'"]
-    K -->|2x idle| M["'I'll sign off.'"]
-```
-
-### Error Handling & Retry
-
-When the API fails, the ability doesn't just move on — it asks the user:
-
-```
-"I couldn't get that info. Want me to try again?"
-```
-
-If the user says "yes", it retries automatically.
-
-Three error types are handled:
-
-| Alpha Vantage Response | What the User Hears |
-|---|---|
-| `{"Note": "..."}` | "Rate limit hit. Try again in a minute." |
-| `{"Information": "..."}` | "Daily API limit reached. Try again tomorrow." |
-| `{"Error Message": "..."}` | "Something went wrong with the API." |
-
----
-
-## 🔧 Technical Details
-
-| Property | Value |
-|---|---|
-| **SDK** | OpenHome Ability SDK (`MatchingCapability`) |
-| **API** | Alpha Vantage (free tier: 25 calls/day) |
-| **Timeouts** | 10 seconds on all `requests.get()` |
-| **Async** | `asyncio.to_thread()` for blocking API calls |
-| **LLM Calls** | `text_to_text_response()` (synchronous, no `await`) |
-| **Exit Safety** | `try/finally` ensures `resume_normal_flow()` always fires |
-| **Logging** | `editor_logging_handler` (no `print()`) |
-
----
-
-## 🐛 Troubleshooting
-
-### "Daily API limit reached"
-The free Alpha Vantage key allows only **25 requests per day**. Options:
-- Wait until tomorrow
-- Upgrade to a [premium key](https://www.alphavantage.co/premium/)
-
-### "Critical Import Error" after upload
-This means the server cached a broken version. Fix:
-1. **Delete** the old ability from the dashboard
-2. **Create a new ability** with a different name
-3. Re-upload the `marketplus/` folder
-
-### Ability not triggering
-- Verify trigger words in **Installed Abilities** on the dashboard
-- Make sure `config.json` has the correct `matching_hotwords`
-- Ensure the ability is **active** (not paused)
-
-### LLM misclassifies intent
-Voice transcription is messy. If a query keeps being misclassified:
-- Speak more clearly and pause between words
-- Use explicit phrases like "gold price" or "dollar to euro"
-- The fallback always defaults to gold price in USD
-
----
-
-## 📋 Best Practices Checklist
-
-This ability follows all patterns from the [Building Great OpenHome Abilities](https://openhome.xyz) guide:
-
-- [x] `resume_normal_flow()` on every exit path (`try/finally`)
-- [x] No `print()` — uses `editor_logging_handler`
-- [x] `asyncio.to_thread()` for blocking `requests` calls
-- [x] All API calls have `timeout=10`
-- [x] Exit word detection in the multi-turn loop
-- [x] Filler speech before slow API calls
-- [x] `text_to_text_response()` without `await`
-- [x] Retry prompt on API failure
-- [x] Short, voice-friendly `speak()` strings (1–2 sentences)
-- [x] LLM intent router instead of keyword matching
-- [x] Trigger context reading for Quick Mode
 
 ---
 
