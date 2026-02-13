@@ -37,7 +37,7 @@ jobs:
 
           sed -i '/*Be the first!/d' CONTRIBUTORS.md
 
-          echo "- **[@$USERNAME](https://github.com/$USERNAME)** — $ABILITY_NAME ([link]($ABILITY_DIR/))" >> CONTRIBUTORS.md
+          echo "- **[@$USERNAME](https://github.com/$USERNAME)** — $ABILITY_NAME ([$ABILITY_NAME]($ABILITY_DIR/))" >> CONTRIBUTORS.md
 
       - name: Commit and push
         run: |
