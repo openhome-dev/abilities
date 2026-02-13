@@ -1,11 +1,12 @@
 import json
 import os
-import re
-import requests
+
 from typing import Dict, List, Optional
+
+import requests
 from src.agent.capability import MatchingCapability
-from src.main import AgentWorker
 from src.agent.capability_worker import CapabilityWorker
+from src.main import AgentWorker
 
 
 COINLORE_BASE = "https://api.coinlore.net"
@@ -30,6 +31,7 @@ MATCHING_HOTWORDS = [
     "just tell me the price",
     "tell me the price",
 ]
+
 
 class CryptoAiCapability(MatchingCapability):
     worker: AgentWorker = None
@@ -209,25 +211,25 @@ class CryptoAiCapability(MatchingCapability):
     def calculate_rsi(self, closes: List[float], period: int = 14) -> Optional[float]:
         if len(closes) < period + 1:
             return None
-        
+
         try:
-            changes = [closes[i] - closes[i-1] for i in range(1, len(closes))]
-            
+            changes = [closes[i] - closes[i - 1] for i in range(1, len(closes))]
+
             gains = [max(change, 0) for change in changes]
             losses = [max(-change, 0) for change in changes]
-            
+
             avg_gain = sum(gains[-period:]) / period
             avg_loss = sum(losses[-period:]) / period
-            
+
             if avg_loss == 0:
                 return 100.0
-            
+
             rs = avg_gain / avg_loss
             rsi = 100 - (100 / (1 + rs))
-            
+
             self._log_info(f"[CryptoInsight] RSI calculated: {rsi:.1f}")
             return rsi
-            
+
         except Exception as e:
             self._log_error(f"[CryptoInsight] RSI calculation error: {e}")
             return None
@@ -235,7 +237,7 @@ class CryptoAiCapability(MatchingCapability):
     def calculate_sma(self, closes: List[float], period: int) -> Optional[float]:
         if len(closes) < period:
             return None
-        
+
         try:
             sma = sum(closes[-period:]) / period
             self._log_info(f"[CryptoInsight] SMA-{period} calculated: {sma:.2f}")
@@ -282,33 +284,33 @@ class CryptoAiCapability(MatchingCapability):
             return "CoinLore is rate limiting requests. Please try again in a minute."
         if price_data["price"] is None:
             return None
-        
+
         current_price = price_data["price"]
         change_24h = price_data.get("change_24h") or 0
-        
+
         if self.worker:
             await self.worker.session_tasks.sleep(1.0)
         closes = self.fetch_ohlc_data(coinlore_id, days=14)
-        
+
         price_str = self.format_price(current_price)
         change_str = self.format_change(change_24h)
-        
+
         response_parts = [
             f"{display_name} is trading at {price_str}, {change_str} in 24 hours."
         ]
-        
+
         if closes and len(closes) >= 15:
             rsi = self.calculate_rsi(closes, period=14)
             if rsi is not None:
                 rsi_interpretation = self.interpret_rsi(rsi)
                 response_parts.append(f"RSI is {rsi:.0f}, suggesting {rsi_interpretation}.")
-        
+
         if closes and len(closes) >= 7:
             sma_7 = self.calculate_sma(closes, period=7)
             if sma_7 is not None:
                 trend = self.interpret_trend(current_price, sma_7, period=7)
                 response_parts.append(f"Price is {trend}.")
-        
+
         return " ".join(response_parts)
 
     async def run(self):
@@ -334,6 +336,7 @@ class CryptoAiCapability(MatchingCapability):
                     "Try Bitcoin, Ethereum, gold, or another cryptocurrency or gold-backed token."
                 )
                 return
+
             coinlore_id, display_name = resolved
             await self.capability_worker.speak(f"Let me check {display_name} for you.")
             analysis = await self.analyze_crypto(coinlore_id, display_name)
@@ -343,7 +346,7 @@ class CryptoAiCapability(MatchingCapability):
                 await self.capability_worker.speak(
                     f"Sorry, I couldn't get data for {display_name}. Try again in a moment."
                 )
-            
+
         except Exception as e:
             self._log_error(f"[CryptoInsight] Unexpected error: {e}")
             if self.capability_worker:
