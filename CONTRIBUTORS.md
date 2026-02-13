@@ -18,3 +18,4 @@ Format: - **@username** — ability-name ([ability-name](community/ability-name/
 - **[@engrumair842-arch](https://github.com/engrumair842-arch)** — reddit-daily-digest ([reddit-daily-digest](community/reddit-daily-digest/))
 - **[@samsonadmasu](https://github.com/samsonadmasu)** — voice-unit-converter ([voice-unit-converter](community/voice-unit-converter/))
 - **[@hassan1731996](https://github.com/hassan1731996)** — daily-briefing ([daily-briefing](community/daily-briefing/))
+- **[@BhargavTelu](https://github.com/BhargavTelu)** — grocery-list-manager ([grocery-list-manager](community/grocery-list-manager/))
