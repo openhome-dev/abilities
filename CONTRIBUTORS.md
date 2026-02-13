@@ -8,12 +8,13 @@ Thank you to everyone who has contributed to OpenHome Abilities! 🎉
 
 ## Community Contributors
 
+## Community Contributors
+
 <!-- 
 Contributors are added here when their PR is merged.
-Format: - **@username** — Ability name (link to folder)
+Format: - **@username** — ability-name ([ability-name](community/ability-name/))
 -->
-- **[@Rizwan-algoryc](https://github.com/Rizwan-algoryc)** — Ability Name ([slow-music](community/slow-music/))
-- **[@engrumair842-arch](https://github.com/engrumair842-arch)** — Ability Name ([reddit-daily-digest](community/reddit-daily-digest/))
-- **[@Samson Admasu](https://github.com/samsonadmasu)** — Ability Name ([voice-unit-converter](community/voice-unit-converter/)) 
-
-- **[@hassan1731996](https://github.com/hassan1731996)** — daily-briefing ([link](community/daily-briefing/))
+- **[@Rizwan-algoryc](https://github.com/Rizwan-algoryc)** — slow-music ([slow-music](community/slow-music/))
+- **[@engrumair842-arch](https://github.com/engrumair842-arch)** — reddit-daily-digest ([reddit-daily-digest](community/reddit-daily-digest/))
+- **[@samsonadmasu](https://github.com/samsonadmasu)** — voice-unit-converter ([voice-unit-converter](community/voice-unit-converter/))
+- **[@hassan1731996](https://github.com/hassan1731996)** — daily-briefing ([daily-briefing](community/daily-briefing/))
