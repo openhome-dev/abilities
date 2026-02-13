@@ -16,4 +16,4 @@ Format: - **@username** — Ability name (link to folder)
 - **[@engrumair842-arch](https://github.com/engrumair842-arch)** — Ability Name ([reddit-daily-digest](community/reddit-daily-digest/))
 - **[@Samson Admasu](https://github.com/samsonadmasu)** — Ability Name ([voice-unit-converter](community/voice-unit-converter/)) 
 
-*Be the first! [Submit an Ability →](CONTRIBUTING.md)*
+- **[@hassan1731996](https://github.com/hassan1731996)** — daily-briefing ([link](community/daily-briefing/))
