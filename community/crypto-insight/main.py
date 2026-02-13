@@ -1,13 +1,11 @@
 import json
 import os
-
 from typing import Dict, List, Optional
 
 import requests
 from src.agent.capability import MatchingCapability
 from src.agent.capability_worker import CapabilityWorker
 from src.main import AgentWorker
-
 
 COINLORE_BASE = "https://api.coinlore.net"
 COINLORE_TICKER_URL = f"{COINLORE_BASE}/api/ticker/"
