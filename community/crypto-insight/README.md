@@ -42,7 +42,7 @@ All `requests` calls use a 10-second timeout. CoinLore is free and does not requ
 
 ## Trigger Words
 
-Suggested phrases (configurable in `config.json` and in the OpenHome dashboard when installing the ability):
+Suggested phrases (defined in `main.py` as `MATCHING_HOTWORDS`; also configurable in the OpenHome dashboard when installing the ability):
 
 - Crypto insight, crypto ai, check crypto  
 - What’s bitcoin doing, crypto price, check ethereum  
@@ -63,5 +63,5 @@ You can say the asset in the same phrase (e.g. “Ethereum price”, “Gold pri
 
 ## Files
 
-- `main.py` — Ability logic (trigger handling, LLM normalization, CoinLore resolution, price/chart fetch, RSI/SMA, speech).
-- `config.json` — `unique_name`, `matching_hotwords` (used by the platform for triggering).
+- `main.py` — Ability logic (trigger handling, LLM normalization, CoinLore resolution, price/chart fetch, RSI/SMA, speech). Defines `unique_name` and `MATCHING_HOTWORDS` for the platform.
+- `__init__.py` — Empty; marks the ability package.
