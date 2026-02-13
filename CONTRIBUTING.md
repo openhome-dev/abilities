@@ -295,9 +295,9 @@ When promoted:
 ## Getting Help
 
 - **Stuck on code?** → Ask in [Discord](https://discord.gg/openhome)
-- **Found a bug in an Ability?** → [Open an issue](../../issues/new?template=bug-report.md)
-- **Have an idea for an Ability?** → [Suggest it](../../issues/new?template=ability-idea.md)
-- **SDK question?** → Check [docs/capability-worker-api.md](docs/capability-worker-api.md)
+- **Found a bug in an Ability?** → [Open an issue](https://github.com/openhome-dev/abilities/issues/new?template=bug-report.yml)
+- **Have an idea for an Ability?** → [Suggest it](https://github.com/openhome-dev/abilities/issues/new?template=ability-request.yml) also visit Discussions to vote on ablities or suggest some good abilities ideas [Discussion](https://github.com/openhome-dev/abilities/discussions/categories/ability-ideas)
+- **SDK question?** → Check [docs/OpenHome_SDK_Reference.md](docs/OpenHome_SDK_Reference.md)
 
 ---
 
