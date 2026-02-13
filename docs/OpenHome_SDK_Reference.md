@@ -764,7 +764,7 @@ Use with `text_to_speech(text, voice_id)` to give your Ability its own voice.
 | `D38z5RcWu1voky8WS1ja` | Irish | Male | Sailor | Games |
 | `IKne3meq5aSn9XLyUdCD` | Australian | Male | Casual | Conversation |
 
-Full catalog with 40+ voices available in the OpenHome dashboard.
+Full catalog with 40+ voices available in the [OpenHome Dashboard](https://app.openhome.com/dashboard/home).
 
 ---
 
@@ -809,4 +809,4 @@ Also avoid: `exec()`, `eval()`, `pickle`, `dill`, `shelve`, `marshal`, hardcoded
 ---
 
 *Last updated: February 2026*
-*Found an undocumented method? Report it on Discord so we can add it here.*
+*Found an undocumented method? Report it on [Discord](https://discord.gg/openhome) so we can add it here.*
