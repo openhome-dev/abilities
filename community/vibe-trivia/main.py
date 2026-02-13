@@ -51,7 +51,6 @@ ANSWER_JUDGE_PROMPT = (
 class VibeTriviaCapability(MatchingCapability):
     model_config = {"extra": "allow", "arbitrary_types_allowed": True}
 
-    #{{register capability}}
     worker: AgentWorker | None = None
     capability_worker: CapabilityWorker | None = None
     initial_request: str | None = None
@@ -107,7 +106,7 @@ class VibeTriviaCapability(MatchingCapability):
         start = cleaned.find("[")
         end = cleaned.rfind("]")
         if start != -1 and end != -1 and end > start:
-            return cleaned[start : end + 1]
+            return cleaned[start:end+1]
         return cleaned
 
     def _validate_questions(self, data: Any) -> list[dict]:
