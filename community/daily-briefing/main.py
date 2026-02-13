@@ -11,6 +11,12 @@ DEFAULT_LAT = 40.71
 DEFAULT_LON = -74.01
 DEFAULT_CITY = "New York"
 
+# ── 3rd-party API keys (all free, no keys required) ─────────────────
+# Uncomment and set these if you switch to a key-based provider:
+# WEATHER_API_KEY = "your-weather-api-key-here"
+# QUOTE_API_KEY = "your-quote-api-key-here"
+# FACT_API_KEY = "your-fact-api-key-here"
+
 # ── Free API endpoints (no keys needed) ──────────────────────────────
 WEATHER_URL = "https://api.open-meteo.com/v1/forecast"
 QUOTE_URL = "https://zenquotes.io/api/today"
