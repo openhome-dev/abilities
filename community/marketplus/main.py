@@ -11,7 +11,7 @@ from src.agent.capability_worker import CapabilityWorker
 
 
 # Replace with your own API key from https://www.alphavantage.co/support/#api-key
-API_KEY = "XXXXXXXXXXXXX"
+API_KEY = "XXXXXXXXXXXXXXX"
 BASE_URL = "https://www.alphavantage.co/query"
 FRANKFURTER_URL = "https://api.frankfurter.app/latest"
 
@@ -22,7 +22,7 @@ EXIT_WORDS: list[str] = [
 ]
 
 
-class SimpleUnitConverterCapability(MatchingCapability):
+class MarketPulseAbility(MatchingCapability):
     """OpenHome ability for real-time currency exchange rates and commodity prices."""
 
     worker: Optional[AgentWorker] = None
