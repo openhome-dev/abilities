@@ -1,14 +1,13 @@
-import json
-import os
-import re
 import requests
-from typing import ClassVar, List
+
 from src.agent.capability import MatchingCapability
-from src.main import AgentWorker
 from src.agent.capability_worker import CapabilityWorker
+from src.main import AgentWorker
 
 # Voice ID for "American, Mid-aged, Male, News" (used for strict decimal pronunciation)
 VOICE_ID = "29vD33N1CtxCmqQRPOHJ"
+
+class StockCapability(MatchingCapability):
 
 
 class StockCapability(MatchingCapability):
