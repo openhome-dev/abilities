@@ -48,14 +48,11 @@ class StockCapability(MatchingCapability):
 
     async def save_portfolio(self, stocks: List[str]):
         """Follows the NEW pattern: Read -> Modify -> Delete -> Write."""
-        # 1. Prepare data
         data_to_save = {"list": stocks}
 
-        # 2. DELETE the old file (Crucial because write_file appends)
         if await self.capability_worker.check_if_file_exists(self.FILENAME, self.PERSIST):
             await self.capability_worker.delete_file(self.FILENAME, self.PERSIST)
 
-        # 3. WRITE the fresh JSON object
         await self.capability_worker.write_file(self.FILENAME, json.dumps(data_to_save), self.PERSIST)
         self.worker.editor_logging_handler.info(f"Portfolio saved to persistent storage: {stocks}")
 
@@ -110,7 +107,7 @@ class StockCapability(MatchingCapability):
 
     def _make_tts_friendly_phrase(self, raw):
         """
-        Convert strings for TTS.
+        Convert strings like "AAPL is $417.44" -> "AAPL is 417 point 4 4 dollars"
         """
         if isinstance(raw, (list, tuple)):
             raw_str = " | ".join(map(str, raw))
@@ -136,6 +133,7 @@ class StockCapability(MatchingCapability):
             def repl2(m):
                 num = m.group("number")
                 return f"{self._format_decimal_for_tts(num)} dollars"
+
             replaced = loose_money.sub(repl2, raw_str)
 
         return replaced.strip()
