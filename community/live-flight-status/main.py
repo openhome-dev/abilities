@@ -17,7 +17,7 @@ from src.main import AgentWorker
 # For testing, paste your key here.
 # Before final submission, revert to:
 # AIRLABS_API_KEY = "REPLACE_WITH_YOUR_KEY"
-AIRLABS_API_KEY = "4e86e577-3e92-43af-90b2-ca826424896e"
+AIRLABS_API_KEY = "REPLACE_WITH_YOUR_KEY"
 
 AIRLABS_FLIGHT_URL = "https://airlabs.co/api/v9/flight"
 AIRLABS_SCHEDULES_URL = "https://airlabs.co/api/v9/schedules"
