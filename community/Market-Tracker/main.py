@@ -1,11 +1,13 @@
 import json
 import os
 import re
-import requests
 from typing import ClassVar, List
+
+import requests
+
 from src.agent.capability import MatchingCapability
-from src.main import AgentWorker
 from src.agent.capability_worker import CapabilityWorker
+from src.main import AgentWorker
 
 # Voice ID for "American, Mid-aged, Male, News" (used for strict decimal pronunciation)
 VOICE_ID = "29vD33N1CtxCmqQRPOHJ"
@@ -41,7 +43,7 @@ class StockCapability(MatchingCapability):
             try:
                 data = json.loads(raw_content)
                 return [str(s) for s in data.get("list", [])]
-            except:
+            except Exception:
                 return []
         return []
 
@@ -127,7 +129,10 @@ class StockCapability(MatchingCapability):
             raw_str = str(raw)
 
         # Pattern captures optional $ sign and a numeric value (integer or decimal)
-        pattern = re.compile(r"(?P<prefix>\b[A-Z0-9\.\-]+?\b)\s+is\s+\$?(?P<number>\d+(?:\.\d+)?)", flags=re.IGNORECASE)
+        pattern = re.compile(
+            r"(?P<prefix>\b[A-Z0-9\.\-]+?\b)\s+is\s+\$?(?P<number>\d+(?:\.\d+)?)",
+            flags=re.IGNORECASE,
+        )
 
         def repl(m):
             ticker = m.group("prefix")
@@ -140,9 +145,11 @@ class StockCapability(MatchingCapability):
         # If nothing matched the pattern, try a looser match for $numbers directly
         if replaced == raw_str:
             loose_money = re.compile(r"\$?(?P<number>\d+\.\d+)")
+
             def repl2(m):
                 num = m.group("number")
                 return f"{self._format_decimal_for_tts(num)} dollars"
+
             replaced = loose_money.sub(repl2, raw_str)
 
         # Final cleanup: ensure punctuation is spaced for TTS pauses
@@ -167,7 +174,8 @@ class StockCapability(MatchingCapability):
         first_sentence = ". ".join(p.rstrip(".") for p in phrases[:mid]) + "."
         second_sentence = (
             ". ".join(p.rstrip(".") for p in phrases[mid:]) + "."
-            if len(phrases[mid:]) > 0 else ""
+            if len(phrases[mid:]) > 0
+            else ""
         )
 
         if second_sentence:
@@ -182,7 +190,7 @@ class StockCapability(MatchingCapability):
             user_msg = ""
             if history:
                 msg_obj = history[-1]
-                user_msg = msg_obj.content if hasattr(msg_obj, 'content') else str(msg_obj)
+                user_msg = msg_obj.content if hasattr(msg_obj, "content") else str(msg_obj)
 
             # 2. EXTRACT TICKERS (Fuzzy logic for APL/Apple -> AAPL)
             extraction_prompt = f"""
@@ -190,7 +198,12 @@ class StockCapability(MatchingCapability):
             Map 'Apple' to 'AAPL', 'Tesla' to 'TSLA'.
             Return ONLY tickers separated by commas. If none, return 'NONE'.
             """
-            raw_tickers = self.capability_worker.text_to_text_response(extraction_prompt).strip().upper().replace('"', '')
+            raw_tickers = (
+                self.capability_worker.text_to_text_response(extraction_prompt)
+                .strip()
+                .upper()
+                .replace('"', "")
+            )
             extracted_list = [t.strip() for t in raw_tickers.split(",") if t.strip() and t != "NONE"]
 
             # 3. LOAD PERSISTENT PORTFOLIO
@@ -230,7 +243,9 @@ class StockCapability(MatchingCapability):
                         await self.capability_worker.speak(msg)
                     else:
                         await self.capability_worker.speak(f"None of {', '.join(extracted_list)} were in your portfolio.")
-                    self.worker.editor_logging_handler.info(f"Removal attempted. Removed: {removed_items}, Not found: {not_found}")
+                    self.worker.editor_logging_handler.info(
+                        f"Removal attempted. Removed: {removed_items}, Not found: {not_found}"
+                    )
                     return
                 else:
                     # No tickers parsed from the message
