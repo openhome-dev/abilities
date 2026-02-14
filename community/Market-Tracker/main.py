@@ -1,11 +1,13 @@
 import json
 import os
 import re
-import requests
 from typing import ClassVar, List
+
+import requests
+
 from src.agent.capability import MatchingCapability
-from src.main import AgentWorker
 from src.agent.capability_worker import CapabilityWorker
+from src.main import AgentWorker
 
 # Voice ID for "American, Mid-aged, Male, News" (used for strict decimal pronunciation)
 VOICE_ID = "29vD33N1CtxCmqQRPOHJ"
@@ -24,7 +26,8 @@ class StockCapability(MatchingCapability):
 
     @classmethod
     def register_capability(cls) -> "MatchingCapability":
-        with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.json")) as file:
+        config_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.json")
+        with open(config_path, encoding="utf-8") as file:
             data = json.load(file)
         return cls(unique_name=data["unique_name"], matching_hotwords=data["matching_hotwords"])
 
@@ -41,7 +44,7 @@ class StockCapability(MatchingCapability):
             try:
                 data = json.loads(raw_content)
                 return [str(s) for s in data.get("list", [])]
-            except:
+            except Exception:
                 return []
         return []
 
@@ -56,15 +59,11 @@ class StockCapability(MatchingCapability):
 
         # 3. WRITE the fresh JSON object
         await self.capability_worker.write_file(self.FILENAME, json.dumps(data_to_save), self.PERSIST)
-        self.worker.editor_logging_handler.info(f"Portfolio saved to persistent storage: {stocks}")
+        self.worker.editor_logging_handler.info(f"Portfolio saved: {stocks}")
 
     # --- REAL-TIME DATA ENGINE ---
     def fetch_real_price(self, symbol: str) -> str:
-        """
-        Always returns a string. If Finnhub returns a numeric price, return
-        a formatted string. If we fall back to llm_search and it returns a list,
-        join it into a string.
-        """
+        """Fetch stock price or use LLM fallback."""
         symbol = str(symbol).strip().upper().replace('"', '')
         try:
             url = f"https://finnhub.io/api/v1/quote?symbol={symbol}&token={self.FINNHUB_TOKEN}"
@@ -74,19 +73,14 @@ class StockCapability(MatchingCapability):
             except Exception:
                 data = {}
 
-            price = None
-            if isinstance(data, dict):
-                price = data.get("c")
-
+            price = data.get("c") if isinstance(data, dict) else None
             self.worker.editor_logging_handler.info(f"FETCHING REAL DATA for {symbol}: {price}")
 
             if price is not None and price != 0:
-                # Keep the numeric form in the raw result so we can deterministically format for TTS later.
                 return f"{symbol} is ${float(price):.2f}"
 
-            # Backup using native LLM Search — coerce to string safely
+            # Backup using native LLM Search
             llm_result = self.capability_worker.llm_search(f"current stock price for {symbol} ticker")
-            # If llm_result is a list, join into a single string; else convert to str
             if isinstance(llm_result, list):
                 llm_result = " ".join(map(str, llm_result))
             elif llm_result is None:
@@ -98,14 +92,9 @@ class StockCapability(MatchingCapability):
 
     # --- Helpers to force "point" pronunciation and digit separation ---
     def _format_decimal_for_tts(self, number_str: str) -> str:
-        """
-        Convert a numeric string like '417.44' -> '417 point 4 4'
-        If input contains no decimal, returns it unchanged.
-        """
         if "." not in number_str:
             return number_str
         int_part, frac_part = number_str.split(".", 1)
-        # Remove any leading zeros on integer part only for clean speech, keep '0' if zero
         try:
             int_part_clean = str(int(int_part))
         except Exception:
@@ -114,20 +103,15 @@ class StockCapability(MatchingCapability):
         return f"{int_part_clean} point {frac_digits}"
 
     def _make_tts_friendly_phrase(self, raw):
-        """
-        Convert strings like:
-          "AAPL is $417.44" -> "AAPL is 417 point 4 4 dollars"
-          "TSLA is $0.47"   -> "TSLA is 0 point 4 7 dollars"
-        Be defensive: if `raw` is a list or not a string, coerce to a single string.
-        """
-        # Defensive normalization: if raw is list/tuple, join; else str()
         if isinstance(raw, (list, tuple)):
             raw_str = " | ".join(map(str, raw))
         else:
             raw_str = str(raw)
 
-        # Pattern captures optional $ sign and a numeric value (integer or decimal)
-        pattern = re.compile(r"(?P<prefix>\b[A-Z0-9\.\-]+?\b)\s+is\s+\$?(?P<number>\d+(?:\.\d+)?)", flags=re.IGNORECASE)
+        pattern = re.compile(
+            r"(?P<prefix>\b[A-Z0-9\.\-]+?\b)\s+is\s+\$?(?P<number>\d+(?:\.\d+)?)", 
+            flags=re.IGNORECASE
+        )
 
         def repl(m):
             ticker = m.group("prefix")
@@ -137,7 +121,6 @@ class StockCapability(MatchingCapability):
 
         replaced = pattern.sub(repl, raw_str)
 
-        # If nothing matched the pattern, try a looser match for $numbers directly
         if replaced == raw_str:
             loose_money = re.compile(r"\$?(?P<number>\d+\.\d+)")
             def repl2(m):
@@ -145,21 +128,12 @@ class StockCapability(MatchingCapability):
                 return f"{self._format_decimal_for_tts(num)} dollars"
             replaced = loose_money.sub(repl2, raw_str)
 
-        # Final cleanup: ensure punctuation is spaced for TTS pauses
-        replaced = replaced.strip()
-        return replaced
+        return replaced.strip()
 
     def _build_briefing_from_results(self, results: List[str]) -> str:
-        """
-        Deterministically build a short briefing (max 2 sentences) from the raw results list,
-        converting decimals to 'point' pronunciation and ensuring a stable TTS-friendly output.
-        """
-        # Defensive: ensure each result is a string before processing
         phrases = [self._make_tts_friendly_phrase(str(r)) for r in results]
-
         if not phrases:
             return ""
-
         if len(phrases) == 1:
             return phrases[0].rstrip(".") + "."
 
@@ -169,76 +143,55 @@ class StockCapability(MatchingCapability):
             ". ".join(p.rstrip(".") for p in phrases[mid:]) + "."
             if len(phrases[mid:]) > 0 else ""
         )
-
-        if second_sentence:
-            return f"{first_sentence} {second_sentence}".strip()
-        return first_sentence.strip()
+        return f"{first_sentence} {second_sentence}".strip()
 
     # --- MAIN CONVERSATION ---
     async def run_main(self):
         try:
-            # 1. READ HISTORY
             history = self.worker.agent_memory.full_message_history
             user_msg = ""
             if history:
                 msg_obj = history[-1]
                 user_msg = msg_obj.content if hasattr(msg_obj, 'content') else str(msg_obj)
 
-            # 2. EXTRACT TICKERS (Fuzzy logic for APL/Apple -> AAPL)
-            extraction_prompt = f"""
-            Extract stock tickers from: '{user_msg}'. 
-            Map 'Apple' to 'AAPL', 'Tesla' to 'TSLA'.
-            Return ONLY tickers separated by commas. If none, return 'NONE'.
-            """
-            raw_tickers = self.capability_worker.text_to_text_response(extraction_prompt).strip().upper().replace('"', '')
+            extraction_prompt = (
+                f"Extract stock tickers from: '{user_msg}'. "
+                "Map 'Apple' to 'AAPL', 'Tesla' to 'TSLA'. "
+                "Return ONLY tickers separated by commas. If none, return 'NONE'."
+            )
+            raw_tickers = self.capability_worker.text_to_text_response(extraction_prompt)
+            raw_tickers = raw_tickers.strip().upper().replace('"', '')
             extracted_list = [t.strip() for t in raw_tickers.split(",") if t.strip() and t != "NONE"]
 
-            # 3. LOAD PERSISTENT PORTFOLIO
             portfolio = await self.get_portfolio()
-
-            # 4. HANDLE REMOVAL (supports "remove", "delete", "delet")
             lower_msg = user_msg.lower()
+
+            # Handle Removal
             if any(word in lower_msg for word in ["remove", "delete", "delet"]):
-                # Remove all / clear
-                if "remove all" in lower_msg or "delete all" in lower_msg or "clear" in lower_msg:
+                if any(x in lower_msg for x in ["remove all", "delete all", "clear"]):
                     if portfolio:
                         portfolio = []
                         await self.save_portfolio(portfolio)
-                        await self.capability_worker.speak("All stocks have been removed from your permanent list.")
+                        await self.capability_worker.speak("All stocks removed.")
                     else:
                         await self.capability_worker.speak("Your portfolio is already empty.")
-                    self.worker.editor_logging_handler.info("Performed 'remove all' on portfolio.")
                     return
 
-                # Remove specific tickers if any were extracted
                 if extracted_list:
                     removed_any = False
-                    not_found = []
-                    removed_items = []
                     for t in extracted_list:
                         if t in portfolio:
                             portfolio.remove(t)
                             removed_any = True
-                            removed_items.append(t)
-                        else:
-                            not_found.append(t)
                     if removed_any:
                         await self.save_portfolio(portfolio)
-                        msg = f"Removed {', '.join(removed_items)} from your permanent list."
-                        if not_found:
-                            msg += f" Note: {', '.join(not_found)} were not in your portfolio."
-                        await self.capability_worker.speak(msg)
+                        await self.capability_worker.speak(f"Removed {', '.join(extracted_list)}.")
                     else:
-                        await self.capability_worker.speak(f"None of {', '.join(extracted_list)} were in your portfolio.")
-                    self.worker.editor_logging_handler.info(f"Removal attempted. Removed: {removed_items}, Not found: {not_found}")
-                    return
-                else:
-                    # No tickers parsed from the message
-                    await self.capability_worker.speak("Tell me which stocks to remove, for example: 'remove AAPL' or 'remove Apple'.")
+                        await self.capability_worker.speak("Those were not in your list.")
                     return
 
-            # 5. HANDLE ADDITION
-            if "add" in user_msg.lower() and extracted_list:
+            # Handle Addition
+            if "add" in lower_msg and extracted_list:
                 added_any = False
                 for t in extracted_list:
                     if t not in portfolio:
@@ -246,32 +199,23 @@ class StockCapability(MatchingCapability):
                         added_any = True
                 if added_any:
                     await self.save_portfolio(portfolio)
-                await self.capability_worker.speak(f"Got it. I've added {', '.join(extracted_list)} to your permanent list.")
+                await self.capability_worker.speak(f"Added {', '.join(extracted_list)}.")
 
-            # 6. GENERATE BRIEFING (prices + strict decimal pronunciation)
+            # Generate Briefing
             tickers_to_check = list(set(portfolio + extracted_list))
-
             if not tickers_to_check:
-                await self.capability_worker.speak("Your portfolio is empty. Tell me to add a stock to get started.")
+                await self.capability_worker.speak("Your portfolio is empty.")
             else:
                 await self.capability_worker.speak("Checking the latest market prices.")
-
-                # Gather raw results
                 results = [self.fetch_real_price(s) for s in tickers_to_check]
-
-                # Build deterministic, TTS-friendly briefing that forces 'point' pronunciation
                 briefing_for_tts = self._build_briefing_from_results(results)
-
-                # Speak the final strict briefing using the voice that handles digits well
                 try:
-                    # Use text_to_speech if available (preferred for precise pronunciation control)
                     await self.capability_worker.text_to_speech(briefing_for_tts, VOICE_ID)
                 except Exception:
-                    # Fallback to speak() in environments without text_to_speech
                     await self.capability_worker.speak(briefing_for_tts)
 
         except Exception as e:
             self.worker.editor_logging_handler.error(f"Error: {e}")
-            await self.capability_worker.speak("I had a problem connecting to the market data.")
+            await self.capability_worker.speak("I had a problem connecting to data.")
         finally:
             self.capability_worker.resume_normal_flow()
