@@ -1,14 +1,12 @@
+import asyncio
 import json
 import os
-import re
-import asyncio
 from typing import Optional
 
 import requests
 from src.agent.capability import MatchingCapability
-from src.main import AgentWorker
 from src.agent.capability_worker import CapabilityWorker
-
+from src.main import AgentWorker
 
 # Replace with your own API key from https://www.alphavantage.co/support/#api-key
 API_KEY = "XXXXXXXXXXXXXXX"
@@ -16,9 +14,23 @@ BASE_URL = "https://www.alphavantage.co/query"
 FRANKFURTER_URL = "https://api.frankfurter.app/latest"
 
 EXIT_WORDS: list[str] = [
-    "done", "exit", "stop", "quit", "bye", "goodbye",
-    "nothing else", "all good", "nope", "no thanks", "i'm good",
-    "thanks", "thank you", "thank", "no", "that's all", "that's it",
+    "done",
+    "exit",
+    "stop",
+    "quit",
+    "bye",
+    "goodbye",
+    "nothing else",
+    "all good",
+    "nope",
+    "no thanks",
+    "i'm good",
+    "thanks",
+    "thank you",
+    "thank",
+    "no",
+    "that's all",
+    "that's it",
 ]
 
 
@@ -46,7 +58,6 @@ class MarketPulseAbility(MatchingCapability):
         self.capability_worker = CapabilityWorker(self.worker)
         self.worker.session_tasks.create(self.run())
 
-
     def _fetch_exchange_rate(self, from_curr: str, to_curr: str) -> Optional[str]:
         """Fetch a formatted currency exchange rate from Alpha Vantage.
         Falls back to LLM for approximate rate if the API is unavailable.
@@ -67,7 +78,9 @@ class MarketPulseAbility(MatchingCapability):
             f"Reply with ONLY one short sentence like: '1 {from_curr} equals X.XX {to_curr}.'"
         )
 
-    def _fetch_spot_price_raw(self, metal: str = "GOLD") -> tuple[Optional[float], Optional[str]]:
+    def _fetch_spot_price_raw(
+        self, metal: str = "GOLD"
+    ) -> tuple[Optional[float], Optional[str]]:
         """Fetch the raw spot price for a metal in USD.
 
         Args:
@@ -125,7 +138,9 @@ class MarketPulseAbility(MatchingCapability):
             f"Reply with ONLY one short sentence like: '{name} is approximately XXXX.XX dollars per ounce.'"
         )
 
-    def _fetch_exchange_rate_raw(self, from_curr: str, to_curr: str) -> tuple[Optional[float], Optional[str]]:
+    def _fetch_exchange_rate_raw(
+        self, from_curr: str, to_curr: str
+    ) -> tuple[Optional[float], Optional[str]]:
         """Fetch the raw exchange rate. Tries Alpha Vantage first, then Frankfurter.
 
         Args:
@@ -176,7 +191,9 @@ class MarketPulseAbility(MatchingCapability):
 
         return None, "Both exchange rate APIs unavailable."
 
-    def _fetch_spot_in_currency(self, metal: str = "GOLD", currency: str = "EUR") -> Optional[str]:
+    def _fetch_spot_in_currency(
+        self, metal: str = "GOLD", currency: str = "EUR"
+    ) -> Optional[str]:
         """Fetch spot price in USD and convert to another currency via LLM.
 
         Uses a single API call for the spot price, then asks the LLM to
@@ -204,7 +221,6 @@ class MarketPulseAbility(MatchingCapability):
             f"What is the current approximate {name.lower()} spot price per troy ounce in {currency}? "
             f"Reply with ONLY one short sentence like: '{name} is approximately XXXX.XX {currency} per ounce.'"
         )
-
 
     def classify_intent(self, user_input: str) -> dict:
         """Classify the user's intent from voice-transcribed input using the LLM.
@@ -248,7 +264,6 @@ class MarketPulseAbility(MatchingCapability):
         except json.JSONDecodeError:
             return {"intent": "unknown"}
 
-
     def get_trigger_context(self) -> str:
         """Read the last user message from the Main Flow's conversation history.
 
@@ -263,7 +278,6 @@ class MarketPulseAbility(MatchingCapability):
         except Exception:
             pass
         return ""
-
 
     def _is_exit(self, text: str) -> bool:
         """Check whether the user's input contains an exit phrase (whole-word match)."""
@@ -281,7 +295,6 @@ class MarketPulseAbility(MatchingCapability):
                 if phrase in words:
                     return True
         return False
-
 
     async def handle_query(self, user_input: str) -> None:
         """Classify the user's intent, fetch data from the API, and speak the result.
@@ -316,12 +329,8 @@ class MarketPulseAbility(MatchingCapability):
         elif intent_type == "exchange_rate":
             from_c = intent.get("from_currency") or "USD"
             to_c = intent.get("to_currency") or "EUR"
-            await self.capability_worker.speak(
-                f"Hang on, checking {from_c} to {to_c}."
-            )
-            result = await asyncio.to_thread(
-                self._fetch_exchange_rate, from_c, to_c
-            )
+            await self.capability_worker.speak(f"Hang on, checking {from_c} to {to_c}.")
+            result = await asyncio.to_thread(self._fetch_exchange_rate, from_c, to_c)
 
         else:
             await self.capability_worker.speak(
@@ -341,7 +350,6 @@ class MarketPulseAbility(MatchingCapability):
                 for w in ["yes", "yeah", "retry", "try", "again", "please", "sure"]
             ):
                 await self.handle_query(user_input)
-
 
     async def run(self) -> None:
         """Main entry point. Decides between Quick Mode and Full Mode.
@@ -393,14 +401,11 @@ class MarketPulseAbility(MatchingCapability):
                     await self.capability_worker.speak("Got it, signing off.")
                     break
 
-
                 await self.handle_query(user_input)
                 await self.capability_worker.speak("Anything else?")
 
         except Exception as e:
             self.worker.editor_logging_handler.error(f"[MarketPulse] Error: {e}")
-            await self.capability_worker.speak(
-                "Something went wrong. Try again later."
-            )
+            await self.capability_worker.speak("Something went wrong. Try again later.")
         finally:
             self.capability_worker.resume_normal_flow()
