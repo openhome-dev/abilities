@@ -1,0 +1,10 @@
+{
+  "unique_name": "youtube_search_play",
+  "matching_hotwords": [
+    "play on youtube",
+    "youtube",
+    "play video",
+    "search youtube",
+    "find on youtube"
+  ]
+}
