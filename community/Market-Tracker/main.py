@@ -6,7 +6,7 @@ from src.agent.capability import MatchingCapability
 from src.main import AgentWorker
 from src.agent.capability_worker import CapabilityWorker
 
-# Voice ID for "American, Mid-aged, Male, News"
+# Voice ID for American, Mid-aged, Male, News
 # Used for strict decimal pronunciation
 VOICE_ID = "29vD33N1CtxCmqQRPOHJ"
 
@@ -17,11 +17,12 @@ class StockCapability(MatchingCapability):
 
     FILENAME: ClassVar[str] = "user_portfolio_v16.json"
     PERSIST: ClassVar[bool] = False
-    FINNHUB_TOKEN: ClassVar[str] = "d67pa7hr01qobepis11gd67pa7hr01qobepis120"
+    FINNHUB_TOKEN: ClassVar[str] = (
+        "d67pa7hr01qobepis11gd67pa7hr01qobepis120"
+    )
 
     @classmethod
     def register_capability(cls) -> "MatchingCapability":
-        # Framework-safe version (no os usage allowed)
         with open("config.json") as file:
             data = json.load(file)
 
@@ -317,7 +318,7 @@ class StockCapability(MatchingCapability):
             if not tickers_to_check:
                 await self.capability_worker.speak(
                     "Your portfolio is empty. "
-                    "Tell me to add a stock to get started."
+                    "Tell me to add a stock."
                 )
                 return
 
@@ -345,7 +346,8 @@ class StockCapability(MatchingCapability):
                 f"Error: {error}"
             )
             await self.capability_worker.speak(
-                "I had a problem connecting to the market data."
+                "I had a problem connecting "
+                "to the market data."
             )
         finally:
             self.capability_worker.resume_normal_flow()
