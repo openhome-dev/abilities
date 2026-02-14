@@ -3,9 +3,10 @@
 ![OpenHome Ability](https://img.shields.io/badge/OpenHome-Ability-blueviolet?style=for-the-badge)
 ![Community Author](https://img.shields.io/badge/Community-Author-orange?style=for-the-badge)
 ![Alpha Vantage API](https://img.shields.io/badge/API-Alpha%20Vantage-green?style=for-the-badge)
+![Frankfurter API](https://img.shields.io/badge/API-Frankfurter-teal?style=for-the-badge)
 ![Python 3.11+](https://img.shields.io/badge/Python-3.11%2B-blue?style=for-the-badge&logo=python&logoColor=white)
 
-A voice-first OpenHome Ability that delivers live exchange rates, gold, and silver prices through natural conversation. Powered by the [Alpha Vantage](https://www.alphavantage.co/) API.
+A voice-first OpenHome Ability that delivers live exchange rates, gold, and silver prices through natural conversation. Uses a **3-tier data strategy**: [Alpha Vantage](https://www.alphavantage.co/) → [Frankfurter](https://frankfurter.app/) → LLM fallback.
 
 ---
 
@@ -36,17 +37,16 @@ graph TD
     G --> H["handle_query()"]
     H --> I{"Intent type?"}
 
-    I -->|"gold_price"| J["🥇 GOLD_SILVER_SPOT API"]
-    I -->|"silver_price"| K["🥈 GOLD_SILVER_SPOT API"]
+    I -->|"gold_price"| J["🥇 Alpha Vantage → LLM fallback"]
+    I -->|"silver_price"| K["🥈 Alpha Vantage → LLM fallback"]
     I -->|"spot_in_currency"| L["🥇 Spot API + LLM conversion"]
-    I -->|"exchange_rate"| M["💱 CURRENCY_EXCHANGE_RATE API"]
-    I -->|"unknown"| N["🥇 Default: gold in USD"]
+    I -->|"exchange_rate"| M["💱 Alpha Vantage → Frankfurter → LLM"]
+    I -->|"unknown"| N["❓ Ask user to clarify"]
 
     J --> O["speak() result"]
     K --> O
     L --> O
     M --> O
-    N --> O
 
     F --> P["Greet user"]
     P --> Q["🔄 Multi-turn loop"]
@@ -68,7 +68,8 @@ sequenceDiagram
     participant U as 🎤 User
     participant MP as MarketPulse
     participant LLM as LLM Router
-    participant API as Alpha Vantage
+    participant AV as Alpha Vantage
+    participant FK as Frankfurter
 
     U->>MP: "Market" (trigger word)
     MP->>MP: Read trigger context
@@ -77,21 +78,31 @@ sequenceDiagram
         MP->>LLM: classify_intent("what's gold price?")
         LLM-->>MP: {"intent": "gold_price"}
         MP->>U: "One sec, checking gold prices."
-        MP->>API: GOLD_SILVER_SPOT?symbol=GOLD
-        API-->>MP: {"price": "5034.04"}
-        MP->>U: "Gold is at 5034.04 dollars per ounce."
+        MP->>AV: GOLD_SILVER_SPOT?symbol=GOLD
+        alt API works
+            AV-->>MP: {"price": "5034.04"}
+            MP->>U: "Gold is at 5034.04 dollars per ounce."
+        else API blocked (shared IP limit)
+            AV-->>MP: {"Information": "rate limit..."}
+            MP->>LLM: "What is the approximate gold price?"
+            LLM-->>MP: "Gold is approximately 5040 dollars per ounce."
+            MP->>U: "Gold is approximately 5040 dollars per ounce."
+        end
         MP->>U: "Need anything else on prices?"
     else Full Mode (vague trigger)
         MP->>U: "Market Pulse here. Ask me about exchange rates or gold prices."
         loop Multi-turn conversation
-            U->>MP: "Gold in euro"
-            MP->>LLM: classify_intent("gold in euro")
-            LLM-->>MP: {"intent": "spot_in_currency", "metal": "GOLD", "to_currency": "EUR"}
-            MP->>API: GOLD_SILVER_SPOT?symbol=GOLD
-            API-->>MP: {"price": "5034.04"}
-            MP->>LLM: "Gold is $5034.04. Convert to EUR."
-            LLM-->>MP: "Gold is at 4239.75 EUR per ounce."
-            MP->>U: "Gold is at 4239.75 EUR per ounce."
+            U->>MP: "Dollar to euro"
+            MP->>LLM: classify_intent("dollar to euro")
+            LLM-->>MP: {"intent": "exchange_rate"}
+            MP->>AV: CURRENCY_EXCHANGE_RATE
+            alt API works
+                AV-->>MP: {"rate": "0.84"}
+            else API blocked
+                MP->>FK: Frankfurter /latest?from=USD&to=EUR
+                FK-->>MP: {"rates": {"EUR": 0.84}}
+            end
+            MP->>U: "1 USD equals 0.84 EUR."
             MP->>U: "Anything else?"
         end
     end
@@ -106,7 +117,6 @@ sequenceDiagram
 ```
 marketplus/
 ├── main.py          # Ability logic (MarketPulseAbility class)
-├── __init__.py    
 └── README.md        # This file
 ```
 
@@ -130,13 +140,13 @@ This repo only contains two files you need:
 
 ### 3. Set Your API Key
 
-Get a free key at [alphavantage.co/support](https://www.alphavantage.co/support/#api-key), then replace line 17 in `main.py`:
+Get a free key at [alphavantage.co/support](https://www.alphavantage.co/support/#api-key), then replace line 14 in `main.py`:
 
 ```python
 API_KEY = "YOUR_API_KEY_HERE"
 ```
 
-> **Free tier:** 25 API calls/day. Each query uses 1 call. Gold-in-EUR uses 1 call + LLM conversion (free).
+> **Note:** The free tier is 25 calls/day, and the OpenHome server shares an IP — so the Alpha Vantage quota may be exhausted by other users. The ability automatically falls back to **Frankfurter** (for currencies) or the **LLM** (for metals) when this happens.
 
 ### 4. Set Trigger Words
 

@@ -1,5 +1,6 @@
 import json
 import os
+import re
 import asyncio
 from typing import Optional
 
@@ -10,8 +11,9 @@ from src.agent.capability_worker import CapabilityWorker
 
 
 # Replace with your own API key from https://www.alphavantage.co/support/#api-key
-API_KEY = "xxxxxxxxxxxxxxx"
+API_KEY = "XXXXXXXXXXXXX"
 BASE_URL = "https://www.alphavantage.co/query"
+FRANKFURTER_URL = "https://api.frankfurter.app/latest"
 
 EXIT_WORDS: list[str] = [
     "done", "exit", "stop", "quit", "bye", "goodbye",
@@ -20,7 +22,7 @@ EXIT_WORDS: list[str] = [
 ]
 
 
-class MarketPulseAbility(MatchingCapability):
+class SimpleUnitConverterCapability(MatchingCapability):
     """OpenHome ability for real-time currency exchange rates and commodity prices."""
 
     worker: Optional[AgentWorker] = None
@@ -47,38 +49,23 @@ class MarketPulseAbility(MatchingCapability):
 
     def _fetch_exchange_rate(self, from_curr: str, to_curr: str) -> Optional[str]:
         """Fetch a formatted currency exchange rate from Alpha Vantage.
+        Falls back to LLM for approximate rate if the API is unavailable.
 
         Args:
             from_curr: Source currency code (e.g. 'USD').
             to_curr: Target currency code (e.g. 'EUR').
 
         Returns:
-            A spoken sentence with the rate, or None on failure.
+            A spoken sentence with the rate.
         """
-        try:
-            resp = requests.get(
-                BASE_URL,
-                params={
-                    "function": "CURRENCY_EXCHANGE_RATE",
-                    "from_currency": from_curr,
-                    "to_currency": to_curr,
-                    "apikey": API_KEY,
-                },
-                timeout=10,
-            )
-            if resp.status_code == 200:
-                data = resp.json()
-                if "Realtime Currency Exchange Rate" in data:
-                    rate = data["Realtime Currency Exchange Rate"]["5. Exchange Rate"]
-                    return f"1 {from_curr} equals {float(rate):.2f} {to_curr}."
-                elif "Note" in data:
-                    return "Rate limit hit. Try again in a minute."
-            return None
-        except Exception as e:
-            self.worker.editor_logging_handler.error(
-                f"[MarketPulse] Exchange rate error: {e}"
-            )
-            return None
+        rate, err = self._fetch_exchange_rate_raw(from_curr, to_curr)
+        if rate:
+            return f"1 {from_curr} equals {rate:.2f} {to_curr}."
+        # API unavailable — LLM fallback
+        return self.capability_worker.text_to_text_response(
+            f"What is the current approximate exchange rate from {from_curr} to {to_curr}? "
+            f"Reply with ONLY one short sentence like: '1 {from_curr} equals X.XX {to_curr}.'"
+        )
 
     def _fetch_spot_price_raw(self, metal: str = "GOLD") -> tuple[Optional[float], Optional[str]]:
         """Fetch the raw spot price for a metal in USD.
@@ -106,7 +93,7 @@ class MarketPulseAbility(MatchingCapability):
                 elif "Note" in data:
                     return None, "Rate limit hit. Try again in a minute."
                 elif "Information" in data:
-                    return None, "Daily API limit reached. Try again tomorrow."
+                    return None, "API limit reached."
                 elif "Error Message" in data:
                     self.worker.editor_logging_handler.error(
                         f"[MarketPulse] API error: {data['Error Message']}"
@@ -129,15 +116,17 @@ class MarketPulseAbility(MatchingCapability):
             A spoken sentence with the price, or None on failure.
         """
         price, err = self._fetch_spot_price_raw(metal)
-        if err:
-            return err
+        name = "Gold" if metal == "GOLD" else "Silver"
         if price:
-            name = "Gold" if metal == "GOLD" else "Silver"
             return f"{name} is at {price:.2f} dollars per ounce."
-        return None
+        # API unavailable — LLM fallback
+        return self.capability_worker.text_to_text_response(
+            f"What is the current approximate {name.lower()} spot price per troy ounce in USD? "
+            f"Reply with ONLY one short sentence like: '{name} is approximately XXXX.XX dollars per ounce.'"
+        )
 
     def _fetch_exchange_rate_raw(self, from_curr: str, to_curr: str) -> tuple[Optional[float], Optional[str]]:
-        """Fetch the raw exchange rate between two currencies.
+        """Fetch the raw exchange rate. Tries Alpha Vantage first, then Frankfurter.
 
         Args:
             from_curr: Source currency code (e.g. 'USD').
@@ -146,6 +135,7 @@ class MarketPulseAbility(MatchingCapability):
         Returns:
             Tuple of (rate, error_message). One will always be None.
         """
+        # Tier 1: Alpha Vantage
         try:
             resp = requests.get(
                 BASE_URL,
@@ -162,21 +152,29 @@ class MarketPulseAbility(MatchingCapability):
                 if "Realtime Currency Exchange Rate" in data:
                     rate = data["Realtime Currency Exchange Rate"]["5. Exchange Rate"]
                     return float(rate), None
-                elif "Note" in data:
-                    return None, "Rate limit hit. Try again in a minute."
-                elif "Information" in data:
-                    return None, "Daily API limit reached. Try again tomorrow."
-                elif "Error Message" in data:
-                    self.worker.editor_logging_handler.error(
-                        f"[MarketPulse] API error: {data['Error Message']}"
-                    )
-                    return None, "Something went wrong with the API."
-            return None, f"API returned status {resp.status_code}."
         except Exception as e:
             self.worker.editor_logging_handler.error(
-                f"[MarketPulse] Exchange rate error: {e}"
+                f"[MarketPulse] Alpha Vantage exchange rate error: {e}"
             )
-            return None, None
+
+        # Tier 2: Frankfurter (free, no API key, no rate limit)
+        try:
+            resp = requests.get(
+                FRANKFURTER_URL,
+                params={"from": from_curr, "to": to_curr},
+                timeout=10,
+            )
+            if resp.status_code == 200:
+                data = resp.json()
+                rates = data.get("rates", {})
+                if to_curr in rates:
+                    return float(rates[to_curr]), None
+        except Exception as e:
+            self.worker.editor_logging_handler.error(
+                f"[MarketPulse] Frankfurter exchange rate error: {e}"
+            )
+
+        return None, "Both exchange rate APIs unavailable."
 
     def _fetch_spot_in_currency(self, metal: str = "GOLD", currency: str = "EUR") -> Optional[str]:
         """Fetch spot price in USD and convert to another currency via LLM.
@@ -192,19 +190,20 @@ class MarketPulseAbility(MatchingCapability):
             A spoken sentence with the converted price, or None on failure.
         """
         price_usd, err = self._fetch_spot_price_raw(metal)
-        if err:
-            return err
-        if not price_usd:
-            return None
-        # LLM conversion instead of a second API call
         name = "Gold" if metal == "GOLD" else "Silver"
-        conversion = self.capability_worker.text_to_text_response(
-            f"{name} is ${price_usd:.2f} USD per ounce. "
-            f"Convert this to {currency} using current approximate rates. "
-            f"Reply with ONLY one short sentence like: "
-            f"'{name} is at XXXX.XX {currency} per ounce.'"
+        if price_usd:
+            # Got real price, use LLM just for conversion
+            return self.capability_worker.text_to_text_response(
+                f"{name} is ${price_usd:.2f} USD per ounce. "
+                f"Convert this to {currency} using current approximate rates. "
+                f"Reply with ONLY one short sentence like: "
+                f"'{name} is at XXXX.XX {currency} per ounce.'"
+            )
+        # API unavailable — LLM fallback for full estimate
+        return self.capability_worker.text_to_text_response(
+            f"What is the current approximate {name.lower()} spot price per troy ounce in {currency}? "
+            f"Reply with ONLY one short sentence like: '{name} is approximately XXXX.XX {currency} per ounce.'"
         )
-        return conversion
 
 
     def classify_intent(self, user_input: str) -> dict:
@@ -267,11 +266,21 @@ class MarketPulseAbility(MatchingCapability):
 
 
     def _is_exit(self, text: str) -> bool:
-        """Check whether the user's input contains an exit phrase."""
+        """Check whether the user's input contains an exit phrase (whole-word match)."""
         if not text:
             return False
         lower = text.lower().strip()
-        return any(word in lower for word in EXIT_WORDS)
+        words = lower.split()
+        for phrase in EXIT_WORDS:
+            if " " in phrase:
+                # Multi-word phrase: check substring
+                if phrase in lower:
+                    return True
+            else:
+                # Single word: check whole-word match
+                if phrase in words:
+                    return True
+        return False
 
 
     async def handle_query(self, user_input: str) -> None:
