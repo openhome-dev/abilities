@@ -1,0 +1,10 @@
+{
+  "unique_name": "dad_joke_teller",
+  "matching_hotwords": [
+    "dad joke",
+    "tell me a joke",
+    "joke time",
+    "dad jokes",
+    "make me laugh"
+  ]
+}
