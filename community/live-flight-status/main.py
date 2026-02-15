@@ -31,7 +31,9 @@ STATE_FILE = "live_flight_state.json"  # persistent per-user storage
 EXIT_WORDS = {"stop", "exit", "quit", "done", "cancel", "bye", "goodbye", "leave"}
 REPEAT_PHRASES = {"repeat", "repeat last", "again", "say that again"}
 SAMPLE_PHRASES = {"sample", "examples", "example", "show me flights", "sample flights"}
-DETAIL_PHRASES = {"details", "more details", "more", "tell me more", "extra info", "gate info", "aircraft"}
+DETAIL_PHRASES = {
+    "details", "more details", "more", "tell me more", "extra info", "gate info", "aircraft"
+}
 
 AIRLINE_NAME_TO_IATA = {
     "delta": "DL",
@@ -215,11 +217,7 @@ def _extract_digits_from_text(text: str) -> Optional[str]:
 
 def parse_flight_iata(text: str) -> Optional[str]:
     """
-    Parses:
-    - "AA 6"
-    - "A A six"
-    - "Delta one three three five"
-    - "DL1335"
+    Parses airline and flight number from text.
     """
     t = _clean(text)
     if not t:
@@ -238,15 +236,16 @@ def parse_flight_iata(text: str) -> Optional[str]:
 
 
 class LiveFlightStatusCapability(MatchingCapability):
-    worker: AgentWorker = None
-    capability_worker: CapabilityWorker = None
+    worker: Optional[AgentWorker] = None
+    capability_worker: Optional[CapabilityWorker] = None
 
     last_spoken: str = ""
     state: Dict[str, Any] = {}
 
     @classmethod
     def register_capability(cls) -> "MatchingCapability":
-        with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.json")) as file:
+        config_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.json")
+        with open(config_path) as file:
             data = json.load(file)
         return cls(
             unique_name=data["unique_name"],
@@ -407,7 +406,6 @@ class LiveFlightStatusCapability(MatchingCapability):
             while True:
                 user_text = await self.listen()
 
-                # Exit words first
                 if user_text and _has_exit(user_text):
                     await self.speak_short("Okay. Goodbye.")
                     break
@@ -452,11 +450,13 @@ class LiveFlightStatusCapability(MatchingCapability):
 
                 flight_iata = parse_flight_iata(user_text)
                 if not flight_iata:
-                    await self.speak_short("Try airline letters and a number, like Delta one three three five.")
+                    await self.speak_short(
+                        "Try airline letters and a number, like Delta one three three five."
+                    )
                     continue
 
                 await self.check_and_say(flight_iata)
-                await self.speak_short("Say details for more, or say another flight. Say stop to exit.")
+                await self.speak_short("Say details for more, or say another flight. Say stop.")
 
         finally:
             self.capability_worker.resume_normal_flow()
@@ -499,7 +499,7 @@ class LiveFlightStatusCapability(MatchingCapability):
             await self.speak_short(ln)
 
     async def sample_flow(self) -> None:
-        await self.speak_short("Say an airport code and arrivals or departures. Like A U S arrivals.")
+        await self.speak_short("Say an airport code and arrivals or departures. Like A U S.")
         hint_used = False
 
         while True:
@@ -543,5 +543,5 @@ class LiveFlightStatusCapability(MatchingCapability):
             for item in items[:2]:
                 await self.speak_short(self.summarize_schedule_item(item))
 
-            await self.speak_short("Say sample flights again for more, or say a flight to check.")
+            await self.speak_short("Say sample flights again, or say a flight to check.")
             return
