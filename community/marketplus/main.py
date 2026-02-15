@@ -1,6 +1,6 @@
-import asyncio
 import json
 import os
+import re
 from typing import Optional
 
 import requests
@@ -13,24 +13,40 @@ API_KEY = "XXXXXXXXXXXXXXX"
 BASE_URL = "https://www.alphavantage.co/query"
 FRANKFURTER_URL = "https://api.frankfurter.app/latest"
 
-EXIT_WORDS: list[str] = [
+EXIT_KEYWORDS: list[str] = [
     "done",
     "exit",
     "stop",
     "quit",
     "bye",
     "goodbye",
+    "nope",
+    "no",
+    "cancel",
+    "thanks",
+    "thank",
+]
+
+EXIT_PHRASES: list[str] = [
     "nothing else",
     "all good",
-    "nope",
     "no thanks",
     "i'm good",
-    "thanks",
     "thank you",
-    "thank",
-    "no",
     "that's all",
     "that's it",
+    "sign off",
+    "i'm done",
+    "that's enough",
+    "no more",
+    "we're done",
+]
+
+FORCE_EXIT_PHRASES: list[str] = [
+    "market pulse out",
+    "exit market pulse",
+    "close market pulse",
+    "shut down",
 ]
 
 
@@ -265,91 +281,154 @@ class MarketPulseAbility(MatchingCapability):
             return {"intent": "unknown"}
 
     def get_trigger_context(self) -> str:
-        """Read the last user message from the Main Flow's conversation history.
+        """Get the initial transcription that triggered this ability.
 
-        Returns:
-            The user's last message, or empty string if unavailable.
+        Tries worker.transcription first, then worker.last_transcription.
         """
+        initial_request = None
         try:
-            history = self.worker.agent_memory.full_message_history
-            for msg in reversed(history):
-                if msg.get("role") == "user" and msg.get("content", "").strip():
-                    return msg["content"].strip()
-        except Exception:
+            initial_request = self.worker.transcription
+        except (AttributeError, Exception):
             pass
-        return ""
+
+        if not initial_request:
+            try:
+                initial_request = self.worker.last_transcription
+            except (AttributeError, Exception):
+                pass
+
+        return initial_request.strip() if initial_request else ""
+
+    @staticmethod
+    def _clean_input(text: str) -> str:
+        """Lowercase and strip punctuation from STT transcription.
+
+        Converts 'Exit.' → 'exit', 'Gold, please!' → 'gold please', etc.
+        """
+        if not text:
+            return ""
+        # Lowercase, strip whitespace, remove all punctuation except apostrophes
+        cleaned = text.lower().strip()
+        cleaned = re.sub(r"[^\w\s']", "", cleaned)
+        return cleaned.strip()
 
     def _is_exit(self, text: str) -> bool:
-        """Check whether the user's input contains an exit phrase (whole-word match)."""
-        if not text:
-            return False
-        lower = text.lower().strip()
-        words = lower.split()
-        for phrase in EXIT_WORDS:
-            if " " in phrase:
-                # Multi-word phrase: check substring
-                if phrase in lower:
-                    return True
-            else:
-                # Single word: check whole-word match
-                if phrase in words:
-                    return True
-        return False
+        """Hybrid exit detection: force-exit → keyword match → phrase match.
 
-    async def handle_query(self, user_input: str) -> None:
-        """Classify the user's intent, fetch data from the API, and speak the result.
-
-        If the API call fails, offers the user a retry.
+        Processes cleaned (lowercased, punctuation-stripped) input through
+        three tiers to robustly detect exit intent.
 
         Args:
-            user_input: Raw transcribed text from the user.
+            text: Raw transcribed text from the user.
+
+        Returns:
+            True if the user wants to exit.
         """
+        if not text:
+            return False
+        cleaned = self._clean_input(text)
+        if not cleaned:
+            return False
+
+        # Tier 1: Force-exit phrases (instant shutdown)
+        for phrase in FORCE_EXIT_PHRASES:
+            if phrase in cleaned:
+                return True
+
+        # Tier 2: Single-word keyword match (whole word only)
+        words = cleaned.split()
+        for kw in EXIT_KEYWORDS:
+            if kw in words:
+                return True
+
+        # Tier 3: Multi-word phrase match
+        for phrase in EXIT_PHRASES:
+            if phrase in cleaned:
+                return True
+
+        return False
+
+    def _is_exit_llm(self, text: str) -> bool:
+        """Use the LLM to classify ambiguous exit intent.
+
+        Only called when keyword matching fails but the input is short
+        and doesn't look like a market query.
+
+        Args:
+            text: Cleaned user input.
+
+        Returns:
+            True if the LLM thinks the user wants to exit.
+        """
+        try:
+            result = self.capability_worker.text_to_text_response(
+                "Does this message mean the user wants to END the conversation? "
+                "Reply with ONLY 'yes' or 'no'.\n\n"
+                f'Message: "{text}"'
+            )
+            return result.strip().lower().startswith("yes")
+        except Exception:
+            return False
+
+    async def _process_query(self, user_input: str) -> bool:
+        """Process a single user query. Returns True if successful, False if failed/retry needed."""
         intent = self.classify_intent(user_input)
         intent_type = intent.get("intent", "unknown")
+        result = None
 
         if intent_type == "gold_price":
-            await self.capability_worker.speak("One sec, checking gold prices.")
-            result = await asyncio.to_thread(self._fetch_spot_price, "GOLD")
+            await self.capability_worker.speak("Checking gold prices...")
+            result = self._fetch_spot_price("GOLD")
 
         elif intent_type == "silver_price":
-            await self.capability_worker.speak("One sec, checking silver prices.")
-            result = await asyncio.to_thread(self._fetch_spot_price, "SILVER")
+            await self.capability_worker.speak("Checking silver prices...")
+            result = self._fetch_spot_price("SILVER")
 
         elif intent_type == "spot_in_currency":
             metal = intent.get("metal") or "GOLD"
             currency = intent.get("to_currency") or "EUR"
             name = "gold" if metal == "GOLD" else "silver"
             await self.capability_worker.speak(
-                f"One sec, checking {name} price in {currency}."
+                f"Checking {name} price in {currency}..."
             )
-            result = await asyncio.to_thread(
-                self._fetch_spot_in_currency, metal, currency
-            )
+            result = self._fetch_spot_in_currency(metal, currency)
 
         elif intent_type == "exchange_rate":
             from_c = intent.get("from_currency") or "USD"
             to_c = intent.get("to_currency") or "EUR"
-            await self.capability_worker.speak(f"Hang on, checking {from_c} to {to_c}.")
-            result = await asyncio.to_thread(self._fetch_exchange_rate, from_c, to_c)
+            await self.capability_worker.speak(f"Checking {from_c} to {to_c}...")
+            result = self._fetch_exchange_rate(from_c, to_c)
 
         else:
-            await self.capability_worker.speak(
-                "I didn't catch that. You can ask about gold, silver, or currency rates."
+            # Fallback for unknown queries
+            fallback_response = self.capability_worker.text_to_text_response(
+                f'You are Market Pulse, a professional price-tracking assistant. The user said: "{user_input}". '
+                "If they are greeting you, greet them professionally. "
+                "If they are chatting or asking something else, briefly explain that you track gold, silver, and exchange rates. "
+                "Keep your response concise and professional, under 2 short sentences."
             )
-            return
+            await self.capability_worker.speak(fallback_response)
+            return True
 
         if result:
             await self.capability_worker.speak(result)
-        else:
+            return True
+
+        return False
+
+    async def handle_query_with_retry(self, user_input: str) -> None:
+        """Handle query with one non-recursive retry."""
+        success = await self._process_query(user_input)
+        if not success:
             await self.capability_worker.speak(
-                "I couldn't get that info. Want me to try again?"
+                "I was unable to retrieve that information. Would you like me to try again?"
             )
             retry_input = await self.capability_worker.user_response()
             if retry_input and any(
                 w in retry_input.lower()
                 for w in ["yes", "yeah", "retry", "try", "again", "please", "sure"]
             ):
-                await self.handle_query(user_input)
+                await self._process_query(user_input)
 
     async def run(self) -> None:
         """Main entry point. Decides between Quick Mode and Full Mode.
@@ -358,23 +437,29 @@ class MarketPulseAbility(MatchingCapability):
         immediately and offer one follow-up.
 
         Full Mode: Greet the user and enter a multi-turn conversation
-        loop with idle and exit detection.
+        loop with hybrid exit detection.
         """
         try:
             trigger = self.get_trigger_context()
 
             if trigger:
-                intent = self.classify_intent(trigger)
-                if intent.get("intent") != "unknown":
-                    # Quick Mode
-                    await self.handle_query(trigger)
-                    await self.capability_worker.speak("Need anything else on prices?")
-                    follow_up = await self.capability_worker.user_response()
+                cleaned = self._clean_input(trigger)
+                # Check if the trigger itself is an exit command
+                if cleaned and not self._is_exit(cleaned):
+                    intent = self.classify_intent(cleaned)
+                    if intent.get("intent") != "unknown":
+                        # Quick Mode
+                        await self.handle_query_with_retry(trigger)
+                        await self.capability_worker.speak(
+                            "Do you have any other questions regarding prices?"
+                        )
+                        follow_up = await self.capability_worker.user_response()
 
-                    if follow_up and not self._is_exit(follow_up):
-                        await self.handle_query(follow_up)
+                        if follow_up and not self._is_exit(follow_up):
+                            await self.handle_query_with_retry(follow_up)
 
-                    return
+                        await self.capability_worker.speak("Goodbye.")
+                        return
 
             # Full Mode
             await self.capability_worker.speak(
@@ -382,27 +467,35 @@ class MarketPulseAbility(MatchingCapability):
             )
 
             idle_count = 0
+            max_interactions = 20
 
-            while True:
+            for _ in range(max_interactions):
                 user_input = await self.capability_worker.user_response()
 
                 if not user_input or not user_input.strip():
                     idle_count += 1
                     if idle_count >= 2:
                         await self.capability_worker.speak(
-                            "I'll sign off. Say my trigger word if you need me."
+                            "Signing off. Please activate me if you need assistance."
                         )
                         break
                     continue
 
                 idle_count = 0
 
+                # --- Hybrid exit detection ---
                 if self._is_exit(user_input):
-                    await self.capability_worker.speak("Got it, signing off.")
+                    await self.capability_worker.speak("Goodbye.")
                     break
 
-                await self.handle_query(user_input)
-                await self.capability_worker.speak("Anything else?")
+                # Short ambiguous input — ask LLM if it's an exit
+                cleaned = self._clean_input(user_input)
+                if len(cleaned.split()) <= 4 and self._is_exit_llm(cleaned):
+                    await self.capability_worker.speak("Goodbye.")
+                    break
+
+                await self.handle_query_with_retry(user_input)
+                await self.capability_worker.speak("Is there anything else?")
 
         except Exception as e:
             self.worker.editor_logging_handler.error(f"[MarketPulse] Error: {e}")
