@@ -13,26 +13,26 @@ API_KEY = "XXXXXXXXXXXXXXX"
 BASE_URL = "https://www.alphavantage.co/query"
 FRANKFURTER_URL = "https://api.frankfurter.app/latest"
 
-EXIT_KEYWORDS: list[str] = [
-    "done",
+EXIT_COMMANDS: list[str] = [
     "exit",
     "stop",
     "quit",
-    "bye",
-    "goodbye",
-    "nope",
-    "no",
     "cancel",
-    "thanks",
-    "thank",
 ]
 
-EXIT_PHRASES: list[str] = [
+EXIT_RESPONSES: list[str] = [
+    "no",
+    "nope",
+    "done",
+    "bye",
+    "goodbye",
+    "thanks",
+    "thank",
+    "thank you",
+    "no thanks",
     "nothing else",
     "all good",
-    "no thanks",
     "i'm good",
-    "thank you",
     "that's all",
     "that's it",
     "sign off",
@@ -335,15 +335,19 @@ class MarketPulseAbility(MatchingCapability):
             if phrase in cleaned:
                 return True
 
-        # Tier 2: Single-word keyword match (whole word only)
+        # Tier 2: Exit Commands (Anywhere in the sentence)
         words = cleaned.split()
-        for kw in EXIT_KEYWORDS:
-            if kw in words:
+        for cmd in EXIT_COMMANDS:
+            if cmd in words:
                 return True
 
-        # Tier 3: Multi-word phrase match
-        for phrase in EXIT_PHRASES:
-            if phrase in cleaned:
+        # Tier 3: Exit Responses (Must be exact match or start of sentence)
+        # We check if cleaned input IS one of these, or STARTS with one of them
+        # to allow "No thanks" or "No, I'm good".
+        for resp in EXIT_RESPONSES:
+            if cleaned == resp:
+                return True
+            if cleaned.startswith(f"{resp} "):
                 return True
 
         return False
