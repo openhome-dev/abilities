@@ -2394,7 +2394,7 @@ class OutlookCapability(MatchingCapability):
             try:
                 start_time = self.parse_time_to_datetime(time_str)
                 if not start_time:
-                    return f"I couldn't understand that time. Could you give me something like '4 PM' or '3:30'?"
+                    return "I couldn't understand that time. Could you give me something like '4 PM' or '3:30'?"
 
                 self.pending_create = None
 
@@ -3187,7 +3187,7 @@ Return ONLY the time, no explanation:"""
                 "intent": "cancel",
                 "waiting_for": "event",
             }
-            self.log(f"Set pending_calendar_action for event selection")
+            self.log("Set pending_calendar_action for event selection")
 
             # List their events
             calendar = self.context.get("calendar", [])
