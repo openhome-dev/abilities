@@ -4,8 +4,8 @@ from typing import Optional
 
 import requests
 from src.agent.capability import MatchingCapability
-from src.main import AgentWorker
 from src.agent.capability_worker import CapabilityWorker
+from src.main import AgentWorker
 
 # Exit words — user can say any of these to stop
 EXIT_WORDS = ["stop", "exit", "quit", "done", "no", "enough", "cancel", "that's enough"]
