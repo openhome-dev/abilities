@@ -686,7 +686,6 @@ class OutlookCapability(MatchingCapability):
 
     def classify_trigger_intent(self, trigger_context: dict):
         """Use LLM to classify the trigger intent and determine mode."""
-        messages = trigger_context.get("messages", [])
         trigger = trigger_context.get("trigger", "")
 
         if not trigger:
@@ -919,7 +918,7 @@ class OutlookCapability(MatchingCapability):
 
         try:
             temp_rounded = int(round(float(temp)))
-        except:
+        except (TypeError, ValueError):
             return ""
 
         if "rain" in condition or "drizzle" in condition:
@@ -1199,7 +1198,7 @@ class OutlookCapability(MatchingCapability):
         lower = clean.lower()
         for phrase in preambles:
             if lower.startswith(phrase):
-                clean = clean[len(phrase) :].strip()
+                clean = clean[len(phrase):].strip()
                 clean = clean.lstrip(".,;:").strip()
                 break
         # Also strip trailing punctuation
@@ -1368,7 +1367,7 @@ class OutlookCapability(MatchingCapability):
                 new_start.replace("Z", "+00:00")
             )
             new_end_dt = datetime.datetime.fromisoformat(new_end.replace("Z", "+00:00"))
-        except:
+        except (TypeError, ValueError):
             return conflicts
 
         for event in self.context.get("calendar", []):
@@ -1385,7 +1384,7 @@ class OutlookCapability(MatchingCapability):
 
                 if new_start_dt < evt_end and new_end_dt > evt_start:
                     conflicts.append(event)
-            except:
+            except (TypeError, ValueError):
                 continue
 
         return conflicts
@@ -1730,7 +1729,7 @@ class OutlookCapability(MatchingCapability):
                 starting_event["end"].replace("Z", "+00:00")
             )
             start_duration = int((start_end - start_time).total_seconds() / 60)
-        except:
+        except (TypeError, ValueError):
             return [], "Could not parse event time"
 
         # Get all calendar events sorted by start time
@@ -1751,7 +1750,7 @@ class OutlookCapability(MatchingCapability):
                         "duration": int((evt_end - evt_start).total_seconds() / 60),
                     }
                 )
-            except:
+            except (TypeError, ValueError):
                 continue
 
         all_events.sort(key=lambda e: e["start"])
@@ -1902,7 +1901,7 @@ class OutlookCapability(MatchingCapability):
         try:
             tz = ZoneInfo(self.calendar_timezone)
             now = datetime.datetime.now(tz)
-        except:
+        except Exception:
             now = datetime.datetime.now()
 
         patterns = [
@@ -2176,7 +2175,7 @@ class OutlookCapability(MatchingCapability):
 
                 if conflicts:
                     return f"Extending to {new_duration} minutes would overlap with '{conflicts[0]['title']}'. Want me to push that back or keep the current duration?"
-            except:
+            except (TypeError, ValueError):
                 pass
 
             result, error = self.shorten_event(event, new_duration)
@@ -2394,7 +2393,10 @@ class OutlookCapability(MatchingCapability):
             try:
                 start_time = self.parse_time_to_datetime(time_str)
                 if not start_time:
-                    return "I couldn't understand that time. Could you give me something like '4 PM' or '3:30'?"
+                    return (
+                        "I couldn't understand that time. Could you give me something "
+                        "like '4 PM' or '3:30'?"
+                    )
 
                 self.pending_create = None
 
@@ -2999,7 +3001,7 @@ Return ONLY the time, no explanation:"""
                     self.last_session_timestamp.replace("Z", "+00:00")
                 )
                 since_note = f"I last checked in around {ts.strftime('%I:%M %p').lstrip('0').lower()}. "
-            except:
+            except (TypeError, ValueError):
                 pass
 
         name_part = self.user_name if self.user_name else ""
@@ -3187,7 +3189,7 @@ Return ONLY the time, no explanation:"""
                 "intent": "cancel",
                 "waiting_for": "event",
             }
-            self.log("Set pending_calendar_action for event selection")
+            self.log('Set pending_calendar_action for event selection')
 
             # List their events
             calendar = self.context.get("calendar", [])
@@ -3628,7 +3630,7 @@ Return ONLY the time, no explanation:"""
                 initial_history = self.worker.agent_memory.full_message_history
                 initial_history_len = len(initial_history) if initial_history else 0
                 self.log(f"Initial history length: {initial_history_len}")
-            except:
+            except Exception:
                 pass
 
             # 1. Collect data (calendar, profile, geo) - takes 2-3 seconds
@@ -3650,7 +3652,7 @@ Return ONLY the time, no explanation:"""
                         )
                         trigger_context = self.get_trigger_context()
                         break
-                except:
+                except Exception:
                     pass
 
             # If history didn't update, get what we have anyway
