@@ -4,7 +4,6 @@ import re
 from typing import Any, Dict, List, Optional
 
 import requests
-
 from src.agent.capability import MatchingCapability
 from src.agent.capability_worker import CapabilityWorker
 from src.main import AgentWorker
@@ -456,7 +455,7 @@ class LiveFlightStatusCapability(MatchingCapability):
                     continue
 
                 await self.check_and_say(flight_iata)
-                await self.speak_short("Say details for more, or say another flight. Say stop.")
+                await self.speak_short("Say details for more, or say another flight. Say stop to exit.")
 
         finally:
             self.capability_worker.resume_normal_flow()
@@ -499,7 +498,7 @@ class LiveFlightStatusCapability(MatchingCapability):
             await self.speak_short(ln)
 
     async def sample_flow(self) -> None:
-        await self.speak_short("Say an airport code and arrivals or departures. Like A U S.")
+        await self.speak_short("Say an airport code and arrivals or departures. Like A U S arrivals.")
         hint_used = False
 
         while True:
