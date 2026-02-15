@@ -219,7 +219,7 @@ CRITICAL - change_minutes sign convention:
 
 Common phrases and their CORRECT sign:
 - "push back 30 minutes" → change_minutes: 30 (positive, later)
-- "move back 30 minutes" → change_minutes: 30 (positive, later)  
+- "move back 30 minutes" → change_minutes: 30 (positive, later)
 - "bump back an hour" → change_minutes: 60 (positive, later)
 - "delay by 15 minutes" → change_minutes: 15 (positive, later)
 - "move up 30 minutes" → change_minutes: -30 (negative, earlier)
@@ -2416,7 +2416,7 @@ class OutlookCapability(MatchingCapability):
 
     def extract_meeting_title(self, user_input: str) -> str:
         """Use LLM to extract just the meeting title from user input."""
-        prompt = f"""Extract ONLY the meeting/event title from this user input. 
+        prompt = f"""Extract ONLY the meeting/event title from this user input.
 The user was just asked "What should I call this meeting?" so they're providing a name.
 
 User said: "{user_input}"
