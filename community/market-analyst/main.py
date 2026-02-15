@@ -2,10 +2,9 @@ import json
 import os
 import re
 import textwrap
-from typing import ClassVar, List, Optional
+from typing import ClassVar, List
 
 import requests
-
 from src.agent.capability import MatchingCapability
 from src.agent.capability_worker import CapabilityWorker
 from src.main import AgentWorker
@@ -23,9 +22,7 @@ class StockCapability(MatchingCapability):
     PERSIST: ClassVar[bool] = False  # temp=False means persistent
 
     # YOUR VERIFIED FINNHUB TOKEN
-    FINNHUB_TOKEN: ClassVar[str] = (
-        "d67pa7hr01qobepis11gd67pa7hr01qobepis120"
-    )
+    FINNHUB_TOKEN: ClassVar[str] = "d67pa7hr01qobepis11gd67pa7hr01qobepis120"
 
     @classmethod
     def register_capability(cls) -> "MatchingCapability":
@@ -167,9 +164,11 @@ class StockCapability(MatchingCapability):
 
         if replaced == raw_str:
             loose_money = re.compile(r"\$?(?P<number>\d+\.\d+)")
+
             def repl2(m: re.Match) -> str:
                 num = m.group("number")
                 return f"{self._format_decimal_for_tts(num)} dollars"
+
             replaced = loose_money.sub(repl2, raw_str)
 
         return replaced.strip()
@@ -269,21 +268,29 @@ class StockCapability(MatchingCapability):
                             not_found.append(t)
                     if removed_any:
                         await self.save_portfolio(portfolio)
-                        msg = f"Removed {', '.join(removed_items)} from your permanent list."
+                        msg = (
+                            f"Removed {', '.join(removed_items)} "
+                            "from your permanent list."
+                        )
                         if not_found:
-                            msg += f" Note: {', '.join(not_found)} were not in your portfolio."
+                            msg += (
+                                f" Note: {', '.join(not_found)} "
+                                "were not in your portfolio."
+                            )
                         await self.capability_worker.speak(msg)
                     else:
                         await self.capability_worker.speak(
                             f"None of {', '.join(extracted_list)} were in your portfolio."
                         )
+                    # split the logging string across two source lines to satisfy linters
                     self.worker.editor_logging_handler.info(
-                        f"Removal attempted. Removed: {removed_items}, Not found: {not_found}"
+                        f"Removal attempted. Removed: {removed_items}, "
+                        f"Not found: {not_found}"
                     )
                     return
                 else:
                     await self.capability_worker.speak(
-                        "Tell me which stocks to remove, for example: 'remove AAPL' or 'remove Apple'."
+                        "Tell me which stocks to remove"
                     )
                     return
 
@@ -297,7 +304,8 @@ class StockCapability(MatchingCapability):
                 if added_any:
                     await self.save_portfolio(portfolio)
                 await self.capability_worker.speak(
-                    f"Got it. I've added {', '.join(extracted_list)} to your permanent list."
+                    f"Got it. I've added {', '.join(extracted_list)} "
+                    "to your permanent list."
                 )
 
             # 6. GENERATE BRIEFING (prices + strict decimal pronunciation)
@@ -308,9 +316,7 @@ class StockCapability(MatchingCapability):
                     "Your portfolio is empty. Tell me to add a stock to get started."
                 )
             else:
-                await self.capability_worker.speak(
-                    "Checking the latest market prices."
-                )
+                await self.capability_worker.speak("Checking the latest market prices.")
 
                 # Gather raw results
                 results = [self.fetch_real_price(s) for s in tickers_to_check]

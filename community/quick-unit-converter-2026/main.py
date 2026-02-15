@@ -1,8 +1,9 @@
 import json
 import os
+
 from src.agent.capability import MatchingCapability
-from src.main import AgentWorker
 from src.agent.capability_worker import CapabilityWorker
+from src.main import AgentWorker
 
 # Voice ID for "American, Mid-aged, Male, News"
 VOICE_ID = "29vD33N1CtxCmqQRPOHJ"
@@ -41,7 +42,10 @@ class UnitConverterCapability(MatchingCapability):
                 if not user_input or len(user_input.strip()) == 0:
                     continue
                 # 3. Exit Handling
-                if any(word in user_input.lower() for word in ["exit", "stop", "quit", "done"]):
+                if any(
+                    word in user_input.lower()
+                    for word in ["exit", "stop", "quit", "done"]
+                ):
                     await self.capability_worker.text_to_speech("Goodbye.", VOICE_ID)
                     break
                 # 4. Strict LLM Prompt for Zero-Fluff results
@@ -54,13 +58,14 @@ class UnitConverterCapability(MatchingCapability):
                 )
                 # Generate result
                 answer = self.capability_worker.text_to_text_response(
-                    prompt_text=user_input,
-                    system_prompt=system_prompt
+                    prompt_text=user_input, system_prompt=system_prompt
                 )
                 # 5. Clean and Speak
                 # Split to ensure we only take the math sentence
-                clean_answer = answer.split('?')[0].split('!')[0].strip()
-                await self.capability_worker.text_to_speech(f"{clean_answer}. Anything else?", VOICE_ID)
+                clean_answer = answer.split("?")[0].split("!")[0].strip()
+                await self.capability_worker.text_to_speech(
+                    f"{clean_answer}. Anything else?", VOICE_ID
+                )
         except Exception as e:
             self.worker.editor_logging_handler.error(f"Ability Error: {str(e)}")
         finally:
