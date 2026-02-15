@@ -11,20 +11,20 @@ import hashlib
 import json
 import os
 import re
-from typing import Optional, Dict
+from typing import Dict, Optional
 
 import requests
 from src.agent.capability import MatchingCapability
-from src.main import AgentWorker
 from src.agent.capability_worker import CapabilityWorker
+from src.main import AgentWorker
 
-# RapidAPI Configuration
+# RapidAPI Configuration — replace with your credentials (see README)
 # Get your free API key at: https://rapidapi.com
 # Same key works for both APIs
-RAPIDAPI_KEY = "6426a44151mshd127f11cad8339ap167bb3jsn1e08fc0ffaea"
+RAPIDAPI_KEY = "YOUR_RAPIDAPI_KEY_HERE"
 # Your RapidAPI username (profile name) - required to fix 404 when streaming MP3
 # Find it at: https://rapidapi.com/developer/app - or your profile URL
-RAPIDAPI_USERNAME = "ammyyou112"
+RAPIDAPI_USERNAME = "YOUR_RAPIDAPI_USERNAME_HERE"
 
 # API 1: YouTube Search API (by Elis)
 SEARCH_API_HOST = "youtube-search-api.p.rapidapi.com"
@@ -242,7 +242,7 @@ class YouTubePlayCapability(MatchingCapability):
 
                 if status == "processing":
                     if attempt < MAX_PROCESSING_RETRIES - 1:
-                        await asyncio.sleep(1)
+                        await self.worker.session_tasks.sleep(1)
                     else:
                         self.worker.editor_logging_handler.error(
                             "Audio still processing after max retries"
@@ -280,7 +280,7 @@ class YouTubePlayCapability(MatchingCapability):
                 {"mode": "on"}
             )
             # Brief delay for audio routing to switch before streaming
-            await asyncio.sleep(0.5)
+            await self.worker.session_tasks.sleep(0.5)
 
             # Stream the audio (wrap blocking request in asyncio.to_thread)
             # YouTube MP3 API requires whitelist headers to avoid 404 on secure links
@@ -293,7 +293,7 @@ class YouTubePlayCapability(MatchingCapability):
                 "Referer": "https://www.youtube.com/",
             }
             # Whitelist to fix 404 - append username to User-Agent, add X-RUN with MD5
-            if RAPIDAPI_USERNAME:
+            if RAPIDAPI_USERNAME and "YOUR_" not in RAPIDAPI_USERNAME:
                 stream_headers["User-Agent"] = f"{user_agent} {RAPIDAPI_USERNAME}"
                 stream_headers["X-RUN"] = hashlib.md5(
                     RAPIDAPI_USERNAME.encode("utf-8")
@@ -344,7 +344,7 @@ class YouTubePlayCapability(MatchingCapability):
                     # Pause check - wait until user says "continue"
                     if hasattr(self.worker, "music_mode_pause_event"):
                         while self.worker.music_mode_pause_event.is_set():
-                            await asyncio.sleep(0.1)
+                            await self.worker.session_tasks.sleep(0.1)
                             if (
                                 hasattr(self.worker, "music_mode_stop_event")
                                 and self.worker.music_mode_stop_event.is_set()
@@ -352,7 +352,7 @@ class YouTubePlayCapability(MatchingCapability):
                                 await self.capability_worker.stream_end()
                                 return True
 
-                    chunk = audio_data[chunk_start : chunk_start + CHUNK_SIZE]
+                    chunk = audio_data[chunk_start:chunk_start + CHUNK_SIZE]
                     if chunk:
                         await self.capability_worker.send_audio_data_in_stream(
                             chunk
