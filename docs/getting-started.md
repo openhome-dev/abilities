@@ -89,5 +89,6 @@ Start a conversation with any Personality. Say one of your trigger phrases, and 
 
 - **Want to share it?** See [Contributing](../CONTRIBUTING.md) to submit it to this repo
 - **Want to publish it?** See [Publishing to Marketplace](publishing-to-marketplace.md)
-- **Need more SDK functions?** See [CapabilityWorker API Reference](capability-worker-api.md)
+- **Need more SDK functions?** See [CapabilityWorker Reference](capability-worker.md)
+- **Full SDK reference?** See [OpenHome Ability SDK — Complete Reference](OpenHome_SDK_Reference.md)
 - **Looking for patterns?** See [Patterns Cookbook](patterns.md)
