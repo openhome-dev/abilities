@@ -19,3 +19,4 @@ Format: - **@username** — ability-name ([ability-name](community/ability-name/
 - **[@BhargavTelu](https://github.com/BhargavTelu)** — grocery-list-manager ([grocery-list-manager](community/grocery-list-manager/))
 - **[@ArturKozhushnyi](https://github.com/ArturKozhushnyi)** — coin-flipper ([coin-flipper](community/coin-flipper/))
 - **[@megz2020](https://github.com/megz2020)** — marketplus ([marketplus](community/marketplus/))
+- **[@Rizwan-095](https://github.com/Rizwan-095)** — marketplus ([marketplus](community/marketplus/))
