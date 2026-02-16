@@ -1,7 +1,7 @@
 name: Validate Ability
 
 on:
-  pull_request:
+  pull_request_target:
     branches: [dev, main]
     paths:
       - 'community/**'
@@ -16,10 +16,14 @@ jobs:
     name: validate-ability
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
+      - name: Checkout PR code
         uses: actions/checkout@v4
         with:
+          ref: ${{ github.event.pull_request.head.sha }}
           fetch-depth: 0
+
+      - name: Fetch base branch for diff
+        run: git fetch origin ${{ github.base_ref }}
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -55,7 +59,6 @@ jobs:
             const fs = require('fs');
             let body = '';
 
-            // Read validation output
             try {
               const output = fs.readFileSync('validation_output.txt', 'utf8');
               const passed = '${{ steps.validate.outcome }}' === 'success';
@@ -78,7 +81,6 @@ jobs:
               body = `## ⚠️ Validation script did not produce output.\n\nCheck the workflow logs.`;
             }
 
-            // Find and update existing bot comment, or create new one
             const marker = '<!-- ability-validation-bot -->';
             body = `${marker}\n${body}`;
 
