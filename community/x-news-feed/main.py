@@ -2,7 +2,9 @@ import json
 import os
 import asyncio
 import re
+
 import requests
+
 from src.agent.capability import MatchingCapability
 from src.main import AgentWorker
 from src.agent.capability_worker import CapabilityWorker
@@ -112,7 +114,9 @@ class XNewsFeedCapability(MatchingCapability):
             # Personalize greeting based on first visit
             if self.first_visit:
                 await self.capability_worker.speak(
-                    f"Hey {self.user_name}, welcome to X News! First time here? I'll show you around.")
+                    f"Hey {self.user_name}, welcome to X News! "
+                    "First time here? I'll show you around."
+                )
                 self.first_visit = False
                 await self.save_user_preferences()
 
@@ -146,14 +150,18 @@ class XNewsFeedCapability(MatchingCapability):
 
             if user_input and user_input.strip():
                 self.trigger_phrase = user_input.strip().lower()
-                self.worker.editor_logging_handler.info(f"Captured user input: '{self.trigger_phrase}'")
+                self.worker.editor_logging_handler.info(
+                    f"Captured user input: '{self.trigger_phrase}'"
+                )
                 return
 
             # Method 2: Fallback to regular user_response if wait_for_complete_transcription fails
             user_input = await self.capability_worker.user_response()
             if user_input and user_input.strip():
                 self.trigger_phrase = user_input.strip().lower()
-                self.worker.editor_logging_handler.info(f"Captured user input (fallback): '{self.trigger_phrase}'")
+                self.worker.editor_logging_handler.info(
+                    f"Captured user input (fallback): '{self.trigger_phrase}'"
+                )
                 return
 
             # Method 3: Try to get from history as last resort
@@ -171,7 +179,9 @@ class XNewsFeedCapability(MatchingCapability):
                 except Exception:
                     pass
 
-            self.worker.editor_logging_handler.info(f"Final trigger phrase: '{self.trigger_phrase}'")
+            self.worker.editor_logging_handler.info(
+                f"Final trigger phrase: '{self.trigger_phrase}'"
+            )
 
         except Exception as e:
             self.worker.editor_logging_handler.error(f"Error capturing user input: {e}")
@@ -191,7 +201,9 @@ class XNewsFeedCapability(MatchingCapability):
                 self.worker.editor_logging_handler.info(f"Full mode triggered by: '{phrase}'")
                 return "full"
 
-        self.worker.editor_logging_handler.info(f"Quick mode (trigger: '{self.trigger_phrase[:50]}')")
+        self.worker.editor_logging_handler.info(
+            f"Quick mode (trigger: '{self.trigger_phrase[:50]}')"
+        )
         return "quick"
 
     # ========================================================================
@@ -232,7 +244,12 @@ class XNewsFeedCapability(MatchingCapability):
     # ========================================================================
     # PATIENT INPUT HELPER
     # ========================================================================
-    async def wait_for_input(self, max_attempts: int = 5, wait_seconds: float = 3.0, context: str = "") -> str:
+    async def wait_for_input(
+            self,
+            max_attempts: int = 5,
+            wait_seconds: float = 3.0,
+            context: str = ""
+    ) -> str:
         """Poll for user input patiently. Returns first non-empty response or empty string."""
         for attempt in range(max_attempts):
             await self.worker.session_tasks.sleep(wait_seconds)
@@ -310,7 +327,9 @@ class XNewsFeedCapability(MatchingCapability):
     # ========================================================================
     async def quick_mode(self):
         """Top 3, offer more, patient wait for response."""
-        await self.capability_worker.speak(f"Hey {self.user_name}, here are the top 3 trending topics right now:")
+        await self.capability_worker.speak(
+            f"Hey {self.user_name}, here are the top 3 trending topics right now:"
+        )
         await self.worker.session_tasks.sleep(0.4)
 
         for i, topic in enumerate(self.trending_topics[:3], 1):
@@ -405,7 +424,9 @@ class XNewsFeedCapability(MatchingCapability):
                 await self.capability_worker.speak("Anything else?")
                 continue
 
-            if any(w in user_input_lower for w in ["number", "topic", "tell me about", "more about"]):
+            if any(w in user_input_lower for w in [
+                "number", "topic", "tell me about", "more about"
+            ]):
                 await self.handle_topic_question(user_input_lower)
                 continue
 
