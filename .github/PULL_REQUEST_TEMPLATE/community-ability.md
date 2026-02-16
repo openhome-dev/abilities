@@ -20,4 +20,3 @@ OpenHome: "..."
 - [ ] No hardcoded API keys or secrets
 - [ ] Tested on OpenHome device/simulator
 - [ ] Files only in `community/my-ability-name/`
-- [ ] Added myself to `CONTRIBUTORS.md`
