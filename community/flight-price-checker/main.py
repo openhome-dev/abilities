@@ -172,3 +172,4 @@ class FlightFinderCapability(MatchingCapability):
         self.worker = worker
         self.capability_worker = CapabilityWorker(self.worker)
         self.worker.session_tasks.create(self.flight_loop())
+
