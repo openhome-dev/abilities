@@ -14,7 +14,7 @@ class FlightFinderCapability(MatchingCapability):
     # Do not change
     # {{register capability}}
 
-    API_URL_BASE: ClassVar[str] = "RAPID_API_HOST"
+    API_URL_BASE: ClassVar[str] = "YOUR_HOST"
     API_KEY: ClassVar[str] = "API_KEY"
 
     EXIT_WORDS: ClassVar[Set[str]] = {"stop", "exit", "quit", "done", "cancel", "bye", "goodbye"}
@@ -35,7 +35,7 @@ class FlightFinderCapability(MatchingCapability):
         "haga": "DAC",
         "bangkok": "BKK",
         "dubai": "DXB",
-        "dhargham": "DAC",  # typo fix
+        "dhargham": "DAC",
     }
 
     async def flight_loop(self):
@@ -126,7 +126,6 @@ class FlightFinderCapability(MatchingCapability):
 
                     await self.capability_worker.speak(summary + " Want more details?")
 
-                    # Wait for more details response
                     more = await self.capability_worker.run_io_loop(
                         "Say yes for more details, or no to search again."
                     )
