@@ -1,9 +1,9 @@
 import asyncio
 import datetime
 import json
+import os
 import random
 import re
-import os
 
 import requests
 from src.agent.capability import MatchingCapability
