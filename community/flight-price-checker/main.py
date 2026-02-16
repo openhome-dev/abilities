@@ -1,4 +1,6 @@
 from typing import ClassVar, Set
+import os
+import json
 
 import requests
 
@@ -8,13 +10,23 @@ from src.main import AgentWorker
 
 
 class FlightFinderCapability(MatchingCapability):
+    @classmethod
+    def register_capability(cls) -> "MatchingCapability":
+        config_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.json")
+        with open(config_path) as file:
+            data = json.load(file)
+        return cls(
+            unique_name=data["unique_name"],
+            matching_hotwords=data["matching_hotwords"],
+        )
+
     worker: AgentWorker = None
     capability_worker: CapabilityWorker = None
 
     # Do not change
     # {{register capability}}
 
-    API_URL_BASE: ClassVar[str] = "YOUR_HOST"
+    API_URL_BASE: ClassVar[str] = "YOU_RAPIDAPI_HOST"
     API_KEY: ClassVar[str] = "API_KEY"
 
     EXIT_WORDS: ClassVar[Set[str]] = {"stop", "exit", "quit", "done", "cancel", "bye", "goodbye"}
