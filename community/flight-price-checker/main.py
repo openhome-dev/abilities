@@ -1,6 +1,6 @@
-from typing import ClassVar, Set
-import os
 import json
+import os
+from typing import ClassVar, Set
 
 import requests
 
@@ -26,7 +26,7 @@ class FlightFinderCapability(MatchingCapability):
     # Do not change
     # {{register capability}}
 
-    API_URL_BASE: ClassVar[str] = "YOU_RAPIDAPI_HOST"
+    API_URL_BASE: ClassVar[str] = "YOUR_HOST"
     API_KEY: ClassVar[str] = "API_KEY"
 
     EXIT_WORDS: ClassVar[Set[str]] = {"stop", "exit", "quit", "done", "cancel", "bye", "goodbye"}
