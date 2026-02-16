@@ -1,11 +1,9 @@
-import json
-import os
 from typing import ClassVar, Set
+import json
 import requests
 
 from src.agent.capability import MatchingCapability
 from src.agent.capability_worker import CapabilityWorker
-from src.main import AgentWorker
 
 class FlightFinderCapability(MatchingCapability):
     @classmethod
