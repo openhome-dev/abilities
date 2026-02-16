@@ -284,13 +284,15 @@ class OutlookCapability(MatchingCapability):
     trigger_data: dict = None  # Stores classified trigger intent
 
     # {{register capability}}
-    @classmethod
+   @classmethod
     def register_capability(cls) -> "MatchingCapability":
-        # OpenHome sandbox requires no os/path usage — config.json is available
-        with open("config.json") as file:
+        with open(
+            os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.json")
+        ) as file:
             data = json.load(file)
         return cls(
-            unique_name=data["unique_name"], matching_hotwords=data["matching_hotwords"]
+            unique_name=data["unique_name"],
+            matching_hotwords=data["matching_hotwords"],
         )
 
     def call(self, worker: AgentWorker):
