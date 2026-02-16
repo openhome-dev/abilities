@@ -19,3 +19,6 @@ Format: - **@username** — ability-name ([ability-name](community/ability-name/
 - **[@BhargavTelu](https://github.com/BhargavTelu)** — grocery-list-manager ([grocery-list-manager](community/grocery-list-manager/))
 - **[@ArturKozhushnyi](https://github.com/ArturKozhushnyi)** — coin-flipper ([coin-flipper](community/coin-flipper/))
 - **[@ammyyou112](https://github.com/ammyyou112)** — dad-joke-teller ([dad-joke-teller](community/dad-joke-teller/))
+- **[@megz2020](https://github.com/megz2020)** — marketplus ([marketplus](community/marketplus/))
+- **[@yonaseth12](https://github.com/yonaseth12)** — live-flight-status ([live-flight-status](community/live-flight-status/))
+- **[@alimujtaba478](https://github.com/alimujtaba478)** — x-news-feed ([x-news-feed](community/x-news-feed/))
