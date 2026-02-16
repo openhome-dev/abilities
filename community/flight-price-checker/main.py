@@ -8,11 +8,13 @@ from src.agent.capability import MatchingCapability
 from src.agent.capability_worker import CapabilityWorker
 from src.main import AgentWorker
 
+
 class FlightFinderCapability(MatchingCapability):
     @classmethod
     def register_capability(cls) -> "MatchingCapability":
-        config_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.json")
-        with open(config_path) as file:
+        with open(
+                os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.json")
+        ) as file:
             data = json.load(file)
         return cls(
             unique_name=data["unique_name"],
@@ -25,8 +27,8 @@ class FlightFinderCapability(MatchingCapability):
     # Do not change
     # {{register capability}}
 
-    API_URL_BASE: ClassVar[str] = "RAPID_API_HOST"
-    API_KEY: ClassVar[str] = "API_KEY"
+    API_URL_BASE: ClassVar[str] = "https://kiwi-com-cheap-flights.p.rapidapi.com"
+    API_KEY: ClassVar[str] = "RAPIDAPI_KEY"
 
     EXIT_WORDS: ClassVar[Set[str]] = {"stop", "exit", "quit", "done", "cancel", "bye", "goodbye"}
 
