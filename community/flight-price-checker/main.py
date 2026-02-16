@@ -24,11 +24,10 @@ class FlightFinderCapability(MatchingCapability):
     worker: AgentWorker = None
     capability_worker: CapabilityWorker = None
 
-    # Do not change
     # {{register capability}}
 
     API_URL_BASE: ClassVar[str] = "https://kiwi-com-cheap-flights.p.rapidapi.com"
-    API_KEY: ClassVar[str] = "YOUR_API_KEY"
+    API_KEY: ClassVar[str] = "API_KEY"
 
     EXIT_WORDS: ClassVar[Set[str]] = {"stop", "exit", "quit", "done", "cancel", "bye", "goodbye"}
 
