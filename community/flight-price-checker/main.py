@@ -1,10 +1,10 @@
-import json
 from typing import ClassVar, Set
 
-from src.agent.capability import MatchingCapability
-from src.main import AgentWorker
-from src.agent.capability_worker import CapabilityWorker
 import requests
+
+from src.agent.capability import MatchingCapability
+from src.agent.capability_worker import CapabilityWorker
+from src.main import AgentWorker
 
 
 class FlightFinderCapability(MatchingCapability):
@@ -14,8 +14,8 @@ class FlightFinderCapability(MatchingCapability):
     # Do not change
     # {{register capability}}
 
-    API_URL_BASE: ClassVar[str] = "YOUR_RAPIDAPI_HOST"
-    API_KEY: ClassVar[str] = "YOUR_RAPIDAPI_KEY"
+    API_URL_BASE: ClassVar[str] = "RAPID_API_HOST"
+    API_KEY: ClassVar[str] = "API_KEY"
 
     EXIT_WORDS: ClassVar[Set[str]] = {"stop", "exit", "quit", "done", "cancel", "bye", "goodbye"}
 
@@ -81,14 +81,16 @@ class FlightFinderCapability(MatchingCapability):
                         dest = parts[1].split()[0]
 
                 if not origin or not dest:
-                    await self.capability_worker.speak("Couldn't understand the cities. Try 'Dhaka to Bangkok'?")
+                    await self.capability_worker.speak(
+                        "Couldn't understand the cities. Try 'Dhaka to Bangkok'?"
+                    )
                     continue
 
                 origin_iata = self.IATA_MAP.get(origin) or self._guess_iata(origin)
                 dest_iata = self.IATA_MAP.get(dest) or self._guess_iata(dest)
 
                 if not origin_iata or not dest_iata:
-                    await self.capability_worker.speak("Couldn't find airports for those cities. Try well-known names?")
+                    await self.capability_worker.speak("Couldn't find airports. Try well-known cities?")
                     continue
 
                 url = f"{self.API_URL_BASE}/one-way"
@@ -111,7 +113,7 @@ class FlightFinderCapability(MatchingCapability):
 
                     itineraries = data.get("itineraries", [])
                     if not itineraries:
-                        await self.capability_worker.speak("No flights found for that route. Try other dates?")
+                        await self.capability_worker.speak("No flights found. Try other dates?")
                         continue
 
                     summary = "Cheapest flights: "
@@ -124,30 +126,28 @@ class FlightFinderCapability(MatchingCapability):
 
                     await self.capability_worker.speak(summary + " Want more details?")
 
-                    # Wait for user response to "Want more details?"
-                    more_details = await self.capability_worker.run_io_loop(
-                        "Say yes for more details, or no to search again.")
-                    if "yes" in more_details.lower():
+                    # Wait for more details response
+                    more = await self.capability_worker.run_io_loop(
+                        "Say yes for more details, or no to search again."
+                    )
+                    if "yes" in more.lower():
                         details = "More info: "
                         for i, itin in enumerate(itineraries[:3], 1):
                             price = itin.get("price", {}).get("amount", "unknown")
                             seg = itin.get("sector", {}).get("sectorSegments", [{}])[0]
                             carrier = seg.get("segment", {}).get("carrier", {}).get("name", "unknown")
                             dur = seg.get("segment", {}).get("duration", 0) // 60
-                            bags = "Hand bag included, checked extra."
-                            details += f"Option {i}: ${price}, {dur} min, {carrier}. {bags} "
+                            details += f"Option {i}: ${price}, {dur} min, {carrier}. "
                         await self.capability_worker.speak(details + " Anything else?")
                     else:
                         await self.capability_worker.speak("Okay, happy to search again!")
 
-                except requests.exceptions.HTTPError as http_err:
+                except requests.exceptions.HTTPError:
                     await self.capability_worker.speak("Couldn't reach the flight API right now. Try again later?")
-                except Exception as e:
+                except Exception:
                     await self.capability_worker.speak("Something went wrong while checking prices. Try again?")
-                    if hasattr(self.worker, 'editor_logging_handler'):
-                        self.worker.editor_logging_handler.warning(f"Flight API failed: {str(e)}")
 
-        except Exception as e:
+        except Exception:
             await self.capability_worker.speak("Flight tool error. Ending now.")
 
         finally:
