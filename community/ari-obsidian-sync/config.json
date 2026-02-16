@@ -1,0 +1,4 @@
+{
+  "unique_name": "ari-obsidian-sync",
+  "matching_hotwords": ["sync obsidian", "update notes", "pull vault", "push changes", "check obsidian"]
+}
