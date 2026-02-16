@@ -6,7 +6,7 @@ import requests
 
 from src.agent.capability import MatchingCapability
 from src.agent.capability_worker import CapabilityWorker
-from src.main import AgentWorker   # ← THIS WAS MISSING — now added
+from src.main import AgentWorker
 
 
 class FlightFinderCapability(MatchingCapability):
@@ -27,7 +27,7 @@ class FlightFinderCapability(MatchingCapability):
     # {{register capability}}
 
     API_URL_BASE: ClassVar[str] = "https://kiwi-com-cheap-flights.p.rapidapi.com"
-    API_KEY: ClassVar[str] = "YOUR_KEY"
+    API_KEY: ClassVar[str] = "657d6a1123msh5310915ef793b3fp1110a7jsn70122fe4162e"
 
     EXIT_WORDS: ClassVar[Set[str]] = {"stop", "exit", "quit", "done", "cancel", "bye", "goodbye"}
 
