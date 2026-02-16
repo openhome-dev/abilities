@@ -3,6 +3,7 @@ import datetime
 import json
 import random
 import re
+import os
 
 import requests
 from src.agent.capability import MatchingCapability
@@ -284,7 +285,7 @@ class OutlookCapability(MatchingCapability):
     trigger_data: dict = None  # Stores classified trigger intent
 
     # {{register capability}}
-   @classmethod
+    @classmethod
     def register_capability(cls) -> "MatchingCapability":
         with open(
             os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.json")
