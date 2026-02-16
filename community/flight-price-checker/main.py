@@ -8,6 +8,7 @@ from src.agent.capability import MatchingCapability
 from src.agent.capability_worker import CapabilityWorker
 from src.main import AgentWorker
 
+
 class FlightFinderCapability(MatchingCapability):
     @classmethod
     def register_capability(cls) -> "MatchingCapability":
@@ -25,7 +26,7 @@ class FlightFinderCapability(MatchingCapability):
     # Do not change
     # {{register capability}}
 
-    API_URL_BASE: ClassVar[str] = "YOUR_HOST"
+    API_URL_BASE: ClassVar[str] = "RAPID_API_HOST"
     API_KEY: ClassVar[str] = "API_KEY"
 
     EXIT_WORDS: ClassVar[Set[str]] = {"stop", "exit", "quit", "done", "cancel", "bye", "goodbye"}
