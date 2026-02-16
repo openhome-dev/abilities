@@ -18,3 +18,4 @@ Format: - **@username** — ability-name ([ability-name](community/ability-name/
 - **[@hassan1731996](https://github.com/hassan1731996)** — daily-briefing ([daily-briefing](community/daily-briefing/))
 - **[@BhargavTelu](https://github.com/BhargavTelu)** — grocery-list-manager ([grocery-list-manager](community/grocery-list-manager/))
 - **[@ArturKozhushnyi](https://github.com/ArturKozhushnyi)** — coin-flipper ([coin-flipper](community/coin-flipper/))
+- **[@ammyyou112](https://github.com/ammyyou112)** — dad-joke-teller ([dad-joke-teller](community/dad-joke-teller/))
