@@ -28,7 +28,7 @@ class FlightFinderCapability(MatchingCapability):
     # {{register capability}}
 
     API_URL_BASE: ClassVar[str] = "https://kiwi-com-cheap-flights.p.rapidapi.com"
-    API_KEY: ClassVar[str] = "RAPIDAPI_KEY"
+    API_KEY: ClassVar[str] = "YOUR_API_KEY"
 
     EXIT_WORDS: ClassVar[Set[str]] = {"stop", "exit", "quit", "done", "cancel", "bye", "goodbye"}
 
