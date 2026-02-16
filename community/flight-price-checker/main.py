@@ -1,9 +1,13 @@
-from typing import ClassVar, Set
 import json
+import os
+from typing import ClassVar, Set
+
 import requests
 
 from src.agent.capability import MatchingCapability
 from src.agent.capability_worker import CapabilityWorker
+from src.main import AgentWorker
+
 
 class FlightFinderCapability(MatchingCapability):
     @classmethod
@@ -20,10 +24,10 @@ class FlightFinderCapability(MatchingCapability):
     worker: AgentWorker = None
     capability_worker: CapabilityWorker = None
 
-    #{{register capability}}
+    # {{register capability}}
 
     API_URL_BASE: ClassVar[str] = "https://kiwi-com-cheap-flights.p.rapidapi.com"
-    API_KEY: ClassVar[str] = "API_KEY"
+    API_KEY: ClassVar[str] = "YOUR_KEY"
 
     EXIT_WORDS: ClassVar[Set[str]] = {"stop", "exit", "quit", "done", "cancel", "bye", "goodbye"}
 
