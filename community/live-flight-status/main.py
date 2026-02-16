@@ -242,8 +242,7 @@ class LiveFlightStatusCapability(MatchingCapability):
 
     @classmethod
     def register_capability(cls) -> "MatchingCapability":
-        config_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.json")
-        with open(config_path) as file:
+        with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.json")) as file:
             data = json.load(file)
         return cls(
             unique_name=data["unique_name"],
