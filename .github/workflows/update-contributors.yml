@@ -22,22 +22,46 @@ jobs:
       - name: Add contributor
         run: |
           USERNAME="${{ github.event.pull_request.user.login }}"
-          ABILITY_DIR=$(git diff --name-only ${{ github.event.pull_request.base.sha }}...${{ github.event.pull_request.merge_commit_sha }} \
+
+          ABILITY_DIRS=$(git diff --name-only ${{ github.event.pull_request.base.sha }}...${{ github.event.pull_request.merge_commit_sha }} \
             | grep -E '^community/' \
             | cut -d'/' -f1-2 \
-            | sort -u \
-            | head -1)
+            | sort -u)
 
-          ABILITY_NAME=$(basename "$ABILITY_DIR")
-
-          if grep -q "@$USERNAME" CONTRIBUTORS.md; then
-            echo "✅ $USERNAME already in CONTRIBUTORS.md"
+          if [ -z "$ABILITY_DIRS" ]; then
+            echo "⚠️ No community ability directories found in diff"
             exit 0
           fi
 
-          sed -i '/*Be the first!/d' CONTRIBUTORS.md
+          # Remove placeholder line if present
+          sed -i '/\*Be the first!/d' CONTRIBUTORS.md
 
-          echo "- **[@$USERNAME](https://github.com/$USERNAME)** — $ABILITY_NAME ([$ABILITY_NAME]($ABILITY_DIR/))" >> CONTRIBUTORS.md
+          for ABILITY_DIR in $ABILITY_DIRS; do
+            ABILITY_NAME=$(basename "$ABILITY_DIR")
+            ABILITY_ENTRY="$ABILITY_NAME ([$ABILITY_NAME]($ABILITY_DIR/))"
+
+            if grep -q "@$USERNAME" CONTRIBUTORS.md; then
+              # User exists — check if this specific ability is already listed
+              USER_LINE=$(grep "@$USERNAME" CONTRIBUTORS.md)
+
+              if echo "$USER_LINE" | grep -qF "$ABILITY_NAME ([$ABILITY_NAME]"; then
+                echo "✅ $USERNAME already has $ABILITY_NAME — skipping"
+                continue
+              fi
+
+              # Append new ability to existing user line
+              sed -i "/@${USERNAME}/s|\$|, ${ABILITY_ENTRY}|" CONTRIBUTORS.md
+              echo "✅ Added $ABILITY_NAME to $USERNAME's existing entry"
+            else
+              # New user — add fresh line
+              echo "- **[@$USERNAME](https://github.com/$USERNAME)** — $ABILITY_ENTRY" >> CONTRIBUTORS.md
+              echo "✅ Added new contributor $USERNAME with $ABILITY_NAME"
+            fi
+          done
+
+          echo ""
+          echo "📄 Final CONTRIBUTORS.md:"
+          cat CONTRIBUTORS.md
 
       - name: Commit and push
         run: |
