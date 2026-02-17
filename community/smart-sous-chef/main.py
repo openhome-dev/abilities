@@ -25,9 +25,8 @@ class Chefassistantv1Capability(MatchingCapability):
         with open(
             os.path.join(
                 os.path.dirname(os.path.abspath(__file__)),
-                "config.json",
-            ),
-            encoding="utf-8",
+                "config.json"
+            )
         ) as file:
             data = json.load(file)
 
