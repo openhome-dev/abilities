@@ -9,13 +9,11 @@ from src.agent.capability import MatchingCapability
 from src.agent.capability_worker import CapabilityWorker
 from src.main import AgentWorker
 
-
 API_KEY = "YOUR_API_KEY"
 BASE_URL = "https://api.spoonacular.com"
 
 
 class Chefassistantv1Capability(MatchingCapability):
-
     worker: AgentWorker = None
     capability_worker: CapabilityWorker = None
     active_timers: ClassVar[Dict[str, bool]] = {}
@@ -25,7 +23,7 @@ class Chefassistantv1Capability(MatchingCapability):
         with open(
             os.path.join(
                 os.path.dirname(os.path.abspath(__file__)),
-                "config.json"
+                "config.json",
             )
         ) as file:
             data = json.load(file)
