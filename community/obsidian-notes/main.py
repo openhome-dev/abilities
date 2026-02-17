@@ -7,22 +7,23 @@ from src.agent.capability_worker import CapabilityWorker
 
 # =============================================================================
 # OBSIDIAN NOTES
-# Voice-controlled Obsidian vault access. Search, read, and create notes
-# through a REST API bridge (Obsidian Local REST API plugin or custom endpoint).
+# Voice-controlled Obsidian vault access via a Vercel API proxy backed by
+# a GitHub-synced vault. Search, read, create notes, and pull active context
+# (long-term memory) through the proxy.
 #
-# Setup: Install the "Local REST API" Obsidian plugin, or deploy your own
-# bridge endpoint. Set OBSIDIAN_API_URL and OBSIDIAN_API_KEY below.
+# Setup: Set OBSIDIAN_VAULT_API to your Vercel deployment URL + /api/vault
+#   Default: https://ari-avatar-remote.vercel.app/api/vault
 #
-# Pattern: Greet → Ask intent → Route to search/read/create → Loop or Exit
+# The Vercel endpoint proxies to a private GitHub repo containing the vault.
+# Vault changes auto-commit and push via obsidian-commit.sh hook.
+#
+# Pattern: Greet → Ask intent → Route to search/read/create/recall → Loop or Exit
 # =============================================================================
 
-# --- CONFIGURATION ---
-# Option 1: Obsidian Local REST API plugin (https://github.com/coddingtonbear/obsidian-local-rest-api)
-#   URL: https://localhost:27124 (default)
-#   Key: Set in plugin settings
-# Option 2: Custom bridge API (e.g. Vercel serverless function synced to vault)
-OBSIDIAN_API_URL = os.environ.get("OBSIDIAN_API_URL", "https://localhost:27124")
-OBSIDIAN_API_KEY = os.environ.get("OBSIDIAN_API_KEY", "")
+VAULT_API = os.environ.get(
+    "OBSIDIAN_VAULT_API",
+    "https://ari-avatar-remote.vercel.app/api/vault"
+)
 
 EXIT_WORDS = {"stop", "exit", "quit", "done", "cancel", "bye", "leave", "nevermind"}
 
@@ -47,70 +48,25 @@ class ObsidianNotesCapability(MatchingCapability):
         self.capability_worker = CapabilityWorker(self.worker)
         self.worker.session_tasks.create(self.run())
 
-    def api_headers(self) -> dict:
-        headers = {"Content-Type": "application/json"}
-        if OBSIDIAN_API_KEY:
-            headers["Authorization"] = f"Bearer {OBSIDIAN_API_KEY}"
-        return headers
-
-    async def search_notes(self, query: str) -> list[dict] | None:
-        """Search the vault for notes matching query."""
+    def vault_request(self, payload: dict) -> dict | None:
+        """Make a request to the Vercel vault API."""
         try:
-            resp = requests.post(
-                f"{OBSIDIAN_API_URL}/search/simple/",
-                headers=self.api_headers(),
-                json={"query": query},
-                verify=False,
-                timeout=10,
-            )
+            resp = requests.post(VAULT_API, json=payload, timeout=15)
             if resp.status_code == 200:
-                results = resp.json()
-                return results[:5]  # Top 5 results
-            else:
-                self.worker.editor_logging_handler.error(
-                    f"[Obsidian] Search failed: {resp.status_code}"
-                )
-                return None
-        except Exception as e:
-            self.worker.editor_logging_handler.error(f"[Obsidian] Search error: {e}")
-            return None
-
-    async def read_note(self, path: str) -> str | None:
-        """Read a specific note by path."""
-        try:
-            resp = requests.get(
-                f"{OBSIDIAN_API_URL}/vault/{path}",
-                headers={**self.api_headers(), "Accept": "text/markdown"},
-                verify=False,
-                timeout=10,
+                return resp.json()
+            self.worker.editor_logging_handler.error(
+                f"[Obsidian] API error {resp.status_code}: {resp.text[:200]}"
             )
-            if resp.status_code == 200:
-                return resp.text
             return None
         except Exception as e:
-            self.worker.editor_logging_handler.error(f"[Obsidian] Read error: {e}")
+            self.worker.editor_logging_handler.error(f"[Obsidian] Request error: {e}")
             return None
-
-    async def create_note(self, title: str, content: str) -> bool:
-        """Create a new note in the vault."""
-        try:
-            path = f"Voice Notes/{title}.md"
-            resp = requests.put(
-                f"{OBSIDIAN_API_URL}/vault/{path}",
-                headers={**self.api_headers(), "Content-Type": "text/markdown"},
-                data=content,
-                verify=False,
-                timeout=10,
-            )
-            return resp.status_code in (200, 201, 204)
-        except Exception as e:
-            self.worker.editor_logging_handler.error(f"[Obsidian] Create error: {e}")
-            return False
 
     async def run(self):
         await self.capability_worker.speak(
-            "Obsidian vault ready. I can search your notes, read a specific note, "
-            "or save a new voice note. What would you like?"
+            "Obsidian vault connected. I can search your notes, read a specific note, "
+            "save a new voice note, or recall your current context and priorities. "
+            "What would you like?"
         )
 
         while True:
@@ -125,48 +81,77 @@ class ObsidianNotesCapability(MatchingCapability):
 
             # Use LLM to classify intent
             intent = self.capability_worker.text_to_text_response(
-                f"Classify this user request into exactly one word: 'search', 'read', or 'create'. "
+                f"Classify this user request into exactly one word: "
+                f"'search', 'read', 'create', or 'context'. "
+                f"'context' means the user wants to know current priorities, focus, or memory. "
                 f"User said: '{user_input}'. Respond with only the one word."
             ).strip().lower()
 
-            if "search" in intent:
+            if "context" in intent or "memor" in intent or "priorit" in intent:
+                await self.handle_context()
+            elif "search" in intent:
                 await self.handle_search(user_input)
             elif "create" in intent or "save" in intent or "note" in intent:
                 await self.handle_create(user_input)
             elif "read" in intent:
                 await self.handle_read(user_input)
             else:
-                # Default to search
                 await self.handle_search(user_input)
 
             await self.capability_worker.speak(
-                "Anything else? Search, read, save a note, or say stop."
+                "Anything else? Search, read, save a note, check context, or say stop."
             )
 
         self.capability_worker.resume_normal_flow()
 
-    async def handle_search(self, query: str):
-        await self.capability_worker.speak(f"Searching your vault...")
-        results = await self.search_notes(query)
+    async def handle_context(self):
+        """Read active-context.md — ARI's long-term memory and current focus."""
+        await self.capability_worker.speak("Pulling up your active context...")
+        data = self.vault_request({"action": "context"})
 
-        if results is None:
+        if data is None or "content" not in data:
             await self.capability_worker.speak(
-                "I couldn't connect to your Obsidian vault. "
-                "Make sure the Local REST API plugin is running."
+                "Couldn't reach the vault. The sync might be down."
             )
             return
 
+        # Summarize context for voice
+        summary = self.capability_worker.text_to_text_response(
+            f"Summarize this active context document in 3-4 spoken sentences. "
+            f"Focus on current priorities, active projects, and recent learnings:\n\n"
+            f"{data['content'][:3000]}"
+        )
+        await self.capability_worker.speak(summary)
+
+    async def handle_search(self, query: str):
+        await self.capability_worker.speak("Searching your vault...")
+
+        # Extract search terms from natural language
+        search_query = self.capability_worker.text_to_text_response(
+            f"Extract the key search terms from this request: '{query}'. "
+            f"Return only the search keywords, nothing else."
+        ).strip()
+
+        data = self.vault_request({"action": "search", "query": search_query})
+
+        if data is None:
+            await self.capability_worker.speak(
+                "Couldn't connect to the vault. Check your setup."
+            )
+            return
+
+        results = data.get("results", [])
         if not results:
             await self.capability_worker.speak(
-                f"No notes found matching that. Try different keywords?"
+                "No notes found matching that. Try different keywords?"
             )
             return
 
         # Summarize results via LLM
-        titles = [r.get("filename", r.get("path", "Untitled")) for r in results]
+        titles = [r.get("name", r.get("path", "Untitled")) for r in results]
         summary = self.capability_worker.text_to_text_response(
-            f"The user searched their Obsidian vault and found these notes: {', '.join(titles)}. "
-            f"List them briefly in a natural spoken format. Keep it short."
+            f"The user searched their Obsidian vault and found these notes: "
+            f"{', '.join(titles)}. List them briefly in a natural spoken format."
         )
         await self.capability_worker.speak(summary)
         await self.capability_worker.speak("Want me to read any of these?")
@@ -178,23 +163,31 @@ class ObsidianNotesCapability(MatchingCapability):
             f"Return only the title, nothing else."
         ).strip()
 
-        await self.capability_worker.speak(f"Reading {note_name}...")
-        content = await self.read_note(f"{note_name}.md")
+        await self.capability_worker.speak(f"Looking for {note_name}...")
 
-        if content is None:
-            # Try without .md
-            content = await self.read_note(note_name)
+        # Try to find the note by searching first
+        data = self.vault_request({"action": "search", "query": note_name})
+        if data and data.get("results"):
+            # Read the first matching result
+            note_path = data["results"][0]["path"]
+            read_data = self.vault_request({"action": "read", "path": note_path})
+        else:
+            # Try direct path guesses
+            read_data = self.vault_request({"action": "read", "path": f"{note_name}.md"})
+            if not read_data or "content" not in read_data:
+                read_data = self.vault_request({"action": "read", "path": note_name})
 
-        if content is None:
+        if not read_data or "content" not in read_data:
             await self.capability_worker.speak(
-                f"Couldn't find a note called {note_name}. Try searching for it instead?"
+                f"Couldn't find a note called {note_name}. Try searching for it?"
             )
             return
 
+        content = read_data["content"]
         # Summarize long notes for voice
         if len(content) > 500:
             summary = self.capability_worker.text_to_text_response(
-                f"Summarize this Obsidian note in 2-3 spoken sentences: {content[:2000]}"
+                f"Summarize this Obsidian note in 2-3 spoken sentences:\n\n{content[:3000]}"
             )
             await self.capability_worker.speak(summary)
         else:
@@ -215,11 +208,18 @@ class ObsidianNotesCapability(MatchingCapability):
 
         # Format the note content
         formatted = f"# {title}\n\n{content}\n\n---\n*Created via voice with ARI*\n"
-        success = await self.create_note(title, formatted)
+        data = self.vault_request({
+            "action": "save",
+            "title": title,
+            "content": formatted,
+            "folder": "inbox"
+        })
 
-        if success:
-            await self.capability_worker.speak(f"Saved! Your note '{title}' is in the Voice Notes folder.")
+        if data and data.get("saved"):
+            await self.capability_worker.speak(
+                f"Saved! Your note '{title}' is in the inbox folder."
+            )
         else:
             await self.capability_worker.speak(
-                "Couldn't save the note. Check that the Obsidian REST API is running."
+                "Couldn't save the note. The vault sync might be down."
             )
