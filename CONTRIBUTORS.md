@@ -22,3 +22,4 @@ Format: - **@username** — ability-name ([ability-name](community/ability-name/
 - **[@megz2020](https://github.com/megz2020)** — marketplus ([marketplus](community/marketplus/))
 - **[@yonaseth12](https://github.com/yonaseth12)** — live-flight-status ([live-flight-status](community/live-flight-status/))
 - **[@alimujtaba478](https://github.com/alimujtaba478)** — x-news-feed ([x-news-feed](community/x-news-feed/))
+- **[@Akio9090-dev](https://github.com/Akio9090-dev)** — WeatherPro ([WeatherPro](community/WeatherPro/))
