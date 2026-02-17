@@ -1,9 +1,10 @@
 import json
 import os
 import random
+
 from src.agent.capability import MatchingCapability
-from src.main import AgentWorker
 from src.agent.capability_worker import CapabilityWorker
+from src.main import AgentWorker
 
 # =============================================================================
 # DICE ROLLER
@@ -94,9 +95,9 @@ class DiceRollerCapability(MatchingCapability):
             # Generate dramatic reaction via LLM
             if sides == 20 and count == 1:
                 if rolls[0] == 20:
-                    context = f"The user rolled a NATURAL 20 on a D20! Critical hit! Be extremely excited and dramatic."
+                    context = "The user rolled a NATURAL 20 on a D20! Critical hit! Be extremely excited and dramatic."
                 elif rolls[0] == 1:
-                    context = f"The user rolled a 1 on a D20... Critical fail! Be dramatically sympathetic."
+                    context = "The user rolled a 1 on a D20... Critical fail! Be dramatically sympathetic."
                 elif rolls[0] >= 15:
                     context = f"The user rolled a {rolls[0]} on a D20. That's a solid roll! Be encouraging."
                 else:
