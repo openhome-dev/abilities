@@ -9,7 +9,7 @@ from src.agent.capability_worker import CapabilityWorker
 from src.main import AgentWorker
 
 
-API_KEY = "18267ea57046473b9f03795627694281"
+API_KEY = "Your API Key here"
 BASE_URL = "https://api.spoonacular.com"
 SESSION_FILE = "smart_sous_chef_session.json"
 
