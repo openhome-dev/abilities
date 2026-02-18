@@ -1,6 +1,7 @@
+import asyncio
 import json
 import os
-import asyncio
+
 import requests
 
 from src.agent.capability import MatchingCapability
@@ -120,12 +121,12 @@ class RedcastBrowserCapability(MatchingCapability):
     def filter_products(self, products: list, brand: str, category: str, size: str) -> list:
         """Filter products by brand, category, and size availability."""
         results = []
-        
+
         for p in products:
             title = p.get("title", "").lower()
             vendor = p.get("vendor", "").lower()
             product_type = p.get("product_type", "").lower()
-            
+
             # Filter by brand (check both vendor and title)
             if brand:
                 brand_lower = brand.lower()
@@ -133,20 +134,20 @@ class RedcastBrowserCapability(MatchingCapability):
                 brand_clean = brand_lower.replace(" jeans", "").replace(" denim", "").strip()
                 if brand_clean not in vendor and brand_clean not in title:
                     continue
-            
+
             # Filter by category (check product_type and title)
             if category:
                 category_lower = category.lower()
-                
+
                 # Normalize category variations
                 if category_lower in ["t-shirt", "tshirt", "tee", "t shirt"]:
                     category_lower = "t-shirt"
                 elif category_lower in ["button up", "button-up", "dress shirt", "work shirt"]:
                     category_lower = "button-shirt"
-                
+
                 # Check if category matches
                 category_match = False
-                
+
                 if category_lower == "t-shirt":
                     # For t-shirts, look for "tee" or "t-shirt" specifically
                     # Exclude flannels, work shirts, button-ups
@@ -172,20 +173,20 @@ class RedcastBrowserCapability(MatchingCapability):
                     # Other categories - simple match
                     category_variations = [category_lower, category_lower + "s", category_lower.rstrip("s")]
                     category_match = any(var in product_type or var in title for var in category_variations)
-                
+
                 if not category_match:
                     continue
-            
+
             # Filter by size availability
             if size:
                 size_lower = size.lower().replace(" ", "")  # Remove spaces: "x l" -> "xl"
                 variants = p.get("variants", [])
                 has_size_in_stock = False
-                
+
                 for v in variants:
                     variant_size = (v.get("option1") or v.get("title", "")).lower().replace(" ", "")
                     available = v.get("available", False)
-                    
+
                     # Normalize both sides to a canonical form before comparing
                     SIZE_ALIASES = {
                         "s": "s", "small": "s",
@@ -198,11 +199,11 @@ class RedcastBrowserCapability(MatchingCapability):
                     norm_input = SIZE_ALIASES.get(size_lower, size_lower)
                     norm_variant = SIZE_ALIASES.get(variant_size, variant_size)
                     size_match = norm_input == norm_variant
-                    
+
                     if size_match and available:
                         has_size_in_stock = True
                         break
-                
+
                 if not has_size_in_stock:
                     continue
             else:
@@ -210,13 +211,13 @@ class RedcastBrowserCapability(MatchingCapability):
                 variants = p.get("variants", [])
                 if not any(v.get("available", False) for v in variants):
                     continue
-            
+
             results.append({
                 "title": p.get("title", ""),
                 "handle": p.get("handle", ""),
                 "vendor": p.get("vendor", ""),
             })
-        
+
         return results
 
     async def run(self):
@@ -226,7 +227,7 @@ class RedcastBrowserCapability(MatchingCapability):
                 "What are you looking for? You can say a brand, category, or size."
             )
             user_input = await self.capability_worker.user_response()
-            
+
             if not user_input:
                 await self.capability_worker.speak("I didn't catch that.")
                 return
@@ -236,13 +237,13 @@ class RedcastBrowserCapability(MatchingCapability):
             brand = filters.get("brand", "")
             category = filters.get("category", "")
             size = filters.get("size", "")
-            
+
             self.log(f"User said: '{user_input}'")
             self.log(f"Extracted filters - Brand: '{brand}', Category: '{category}', Size: '{size}'")
 
             # Fetch and filter catalog
             await self.capability_worker.speak("One sec, checking the catalog.")
-            
+
             catalog = await asyncio.to_thread(self.fetch_catalog)
             if not catalog:
                 await self.capability_worker.speak(
@@ -251,7 +252,7 @@ class RedcastBrowserCapability(MatchingCapability):
                 return
 
             results = self.filter_products(catalog, brand, category, size)
-            
+
             # Speak results
             if not results:
                 filter_desc = []
@@ -261,16 +262,16 @@ class RedcastBrowserCapability(MatchingCapability):
                     filter_desc.append(category)
                 if brand:
                     filter_desc.append(f"from {brand}")
-                
+
                 desc = " ".join(filter_desc) if filter_desc else "matching that"
                 await self.capability_worker.speak(
                     f"I didn't find anything {desc} that's in stock."
                 )
                 return
-            
+
             # Build response
             count = len(results)
-            
+
             if count == 1:
                 await self.capability_worker.speak(
                     f"Found one item: {results[0]['title']}."
@@ -290,7 +291,7 @@ class RedcastBrowserCapability(MatchingCapability):
                 await self.capability_worker.speak(
                     f"There are {count - 5} more. Want me to keep going?"
                 )
-                
+
                 response = await self.capability_worker.user_response()
                 if response and "yes" in response.lower():
                     # Read next batch

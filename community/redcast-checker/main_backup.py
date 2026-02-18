@@ -1,6 +1,7 @@
+import asyncio
 import json
 import os
-import asyncio
+
 import requests
 
 from src.agent.capability import MatchingCapability
@@ -317,7 +318,7 @@ class RedcastStockCapability(MatchingCapability):
             confirmed = await self.capability_worker.run_confirmation_loop(
                 f"I found {title}. Is that what you meant?"
             )
-        
+
         if not confirmed:
             await self.capability_worker.speak("Okay, try describing it differently.")
             return
