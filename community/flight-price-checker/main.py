@@ -1,17 +1,31 @@
 import json
+import os
 from typing import ClassVar, Set
 
 import requests
+
 from src.agent.capability import MatchingCapability
-from src.main import AgentWorker
 from src.agent.capability_worker import CapabilityWorker
+from src.main import AgentWorker
+
 
 class FlightPriceCheckerCapability(MatchingCapability):
     worker: AgentWorker = None
     capability_worker: CapabilityWorker = None
-    
+
+    @classmethod
+    def register_capability(cls) -> "MatchingCapability":
+        with open(
+            os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.json")
+        ) as file:
+            data = json.load(file)
+        return cls(
+            unique_name=data["unique_name"],
+            matching_hotwords=data["matching_hotwords"],
+        )
+
     # Do not change
-    #{{register capability}}
+    # {{register capability}}
 
     API_URL_BASE: ClassVar[str] = "https://kiwi-com-cheap-flights.p.rapidapi.com"
     API_KEY: ClassVar[str] = "YOUR_API_KEY"
@@ -68,11 +82,11 @@ class FlightPriceCheckerCapability(MatchingCapability):
                 words = input_lower.split()
                 for i, word in enumerate(words):
                     if word in ["from", "starting", "depart"]:
-                        if i+1 < len(words):
-                            origin = words[i+1]
+                        if i + 1 < len(words):
+                            origin = words[i + 1]
                     if word in ["to", "destination", "arrive", "fly"]:
-                        if i+1 < len(words):
-                            dest = words[i+1]
+                        if i + 1 < len(words):
+                            dest = words[i + 1]
 
                 # Fallback for common patterns like "Dhaka to Bangkok"
                 if not origin or not dest:
@@ -132,8 +146,8 @@ class FlightPriceCheckerCapability(MatchingCapability):
                         summary += f"Option {i}: ${price} with {carrier}, ~{dur_min} min. "
 
                     await self.capability_worker.speak(summary + " Want more details?")
-                
-                except requests.exceptions.HTTPError as http_err:
+
+                except requests.exceptions.HTTPError:
                     await self.capability_worker.speak(f"API error — status {response.status_code}. Quota or key issue?")
                 except Exception as e:
                     await self.capability_worker.speak("Couldn't fetch prices. Try again?")
@@ -144,7 +158,7 @@ class FlightPriceCheckerCapability(MatchingCapability):
             await self.capability_worker.speak(f"Flight tool error: {str(e)[:100]}")
             if hasattr(self.worker, 'editor_logging_handler'):
                 self.worker.editor_logging_handler.warning(f"Loop error: {str(e)}")
-        
+
         finally:
             self.capability_worker.resume_normal_flow()
 
