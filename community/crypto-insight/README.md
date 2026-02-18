@@ -1,24 +1,46 @@
 # Crypto Insight
 
-Voice ability that gives live crypto and gold-related price insight: current price, 24h change, RSI, and short-term trend (vs 7-day SMA). Supports any asset by name or symbol (e.g. Bitcoin, Ethereum, gold, XAUUSD) with no hardcoded IDs.
+Voice-first market ability for live crypto and gold-related requests. It answers natural questions like:
+
+- "What's the price on Bitcoin?"
+- "How is XRP doing?"
+- "Is gold trending up?"
+- "Give me ETH RSI."
+
+It fetches live market data and responds in short spoken language.
 
 ---
 
-## How It Works
+## Architecture (Voice -> LLM -> API -> Voice)
 
-1. **Trigger** — You say a phrase that matches the ability’s trigger list (e.g. “Ethereum price”, “Gold price”, “Crypto insight”). The ability captures your utterance as the initial request.
+1. **Trigger gate (platform)**  
+   OpenHome routes to this ability when the utterance matches configured hotwords.
 
-2. **Asset from your phrase** — If what you said looks like an asset request, the ability normalizes it with the platform LLM (e.g. “what’s the price on gold” → “gold”, “XAU USD” → “gold”) and looks up the asset in CoinLore. If found, it skips the follow-up question.
+2. **Context ingestion**  
+   The ability captures the triggering utterance (`transcription` / recent user history fallback).
 
-3. **Otherwise ask** — If the trigger didn’t name an asset (e.g. “Crypto insight”), it asks: “Which asset would you like to check? Say a cryptocurrency, gold, or symbol.” It then normalizes your reply and resolves it to a CoinLore asset.
+3. **LLM route/classify**  
+   `text_to_text_response()` returns strict JSON:
+   - `should_handle`
+   - `asset`
+   - `intent`
 
-4. **Resolve** — The ability searches CoinLore’s ticker list by name, symbol, or nameid. “Gold” is matched to gold-backed tokens (e.g. Tether Gold, PAX Gold) on CoinLore.
+4. **Deterministic fallbacks**  
+   If routing or extraction is weak, it falls back to:
+   - alias mapping (`btc -> bitcoin`, `xauusd -> gold`, etc.)
+   - heuristic market-term detection
+   - one-word LLM asset normalization
 
-5. **Fetch & analyze** — It fetches current price and 24h change from CoinLore, then historical price points for RSI (14-period) and 7-day SMA. It builds a short spoken summary: price, change, RSI interpretation, and trend vs the 7-day average.
+5. **Resolve + fetch**  
+   It resolves the asset dynamically via CoinLore tickers (no hardcoded IDs), then fetches:
+   - current price / 24h change
+   - chart points for RSI and SMA trend
 
-6. **Speak** — It says something like: “Tether Gold is trading at $4,953, down 1.6% in 24 hours. RSI is 58, suggesting neutral momentum. Price is below the 7-day average by 0.2%, indicating bearish trend.”
+6. **Voice formatting**  
+   It rewrites the final answer into 1-2 conversational spoken sentences without changing numbers.
 
-Trigger-echo is ignored (if the first “response” is the same as the trigger phrase, it reprompts instead of using it as the asset).
+7. **No dead ends**  
+   If an asset is unresolved, it suggests alternatives and asks one retry follow-up.
 
 ---
 
@@ -26,42 +48,49 @@ Trigger-echo is ignored (if the first “response” is the same as the trigger 
 
 ### CoinLore (no API key)
 
-- **Base:** `https://api.coinlore.net`
-- **Tickers list:** `GET /api/tickers/` — Paginated list of all coins; used to resolve a search term (name/symbol) to a CoinLore `id`. No hardcoded coin IDs; resolution is dynamic.
-- **Ticker:** `GET /api/ticker/?id={id}` — Current price and 24h percent change for one coin.
-- **Markets / chart data:** `GET /api/coin/markets/?id={id}` — Historical price points (e.g. `price_usd`, `time`) used to compute RSI and 7-day SMA.
+- Base: `https://api.coinlore.net`
+- `GET /api/tickers/` -> dynamic asset resolution by name/symbol/nameid
+- `GET /api/ticker/?id={id}` -> live price + 24h change
+- `GET /api/coin/markets/?id={id}` -> time series used for RSI/SMA
 
-All `requests` calls use a 10-second timeout. CoinLore is free and does not require an API key; rate limits (429) are handled gracefully.
+All requests include `timeout=10`.
 
-### OpenHome platform LLM (Text-to-Text)
+### OpenHome LLM (`CapabilityWorker.text_to_text_response`)
 
-- **Usage:** Normalizing freeform user input to a single asset search term (e.g. “gold price”, “XAUUSD”, “how is XRP doing” → “gold”, “gold”, “xrp”).
-- **How:** The ability calls `capability_worker.text_to_text_response(prompt)` with a short prompt asking for one lowercase asset word. The LLM is provided by the OpenHome platform; you configure the provider (e.g. API keys) in **Dashboard → Profile → Settings → API Key Settings**. This ability does not store or read any API keys itself.
+Used for:
+- request routing/classification
+- asset normalization
+- voice response polishing
+
+Provider keys are managed in OpenHome dashboard settings. This ability does not store keys.
 
 ---
 
 ## Trigger Words
 
-Suggested phrases (defined in `main.py` as `MATCHING_HOTWORDS`; also configurable in the OpenHome dashboard when installing the ability):
+Triggers are only the handoff gate. Natural-language understanding is done inside the ability.
+The active trigger list is loaded from `config.json` at runtime (with a code fallback).
 
-- Crypto insight, crypto ai, check crypto  
-- What’s bitcoin doing, crypto price, check ethereum  
-- Bitcoin price, ethereum price  
-- What’s the price on gold, price of gold, gold price  
-- Just tell me the price, tell me the price  
+Representative trigger phrases in `MATCHING_HOTWORDS` include:
+- `crypto insight`, `crypto ai`, `check crypto`
+- `bitcoin price`, `ethereum price`, `gold price`
+- `quote`, `ticker`, `rsi`, `sma`, `trend`
 
-You can say the asset in the same phrase (e.g. “Ethereum price”, “Gold price”) to get an immediate answer without a follow-up question.
+If users say only a wake phrase, the ability asks a short follow-up: "Which asset should I check?"
 
 ---
 
-## Setup
+## Behavior Guarantees
 
-- No API keys are required for CoinLore.
-- For best results (arbitrary phrases like “gold”, “XAUUSD”), set up OpenAI in OpenHome (Dashboard → Profile → Settings → API Key Settings). If the LLM is unavailable, the ability falls back to simple word extraction from your reply.
+- Always speaks an outcome (answer, clarification, or fallback).
+- Avoids silent exits.
+- Calls `resume_normal_flow()` on exit.
+- Uses `session_tasks` for async delays.
 
 ---
 
 ## Files
 
-- `main.py` — Ability logic (trigger handling, LLM normalization, CoinLore resolution, price/chart fetch, RSI/SMA, speech). Defines `unique_name` and `MATCHING_HOTWORDS` for the platform.
-- `__init__.py` — Empty; marks the ability package.
+- `main.py` - full ability logic (routing, extraction, resolution, analysis, speech)
+- `config.json` - canonical OpenHome registration fields (`unique_name`, `matching_hotwords`)
+- `__init__.py` - empty package marker
