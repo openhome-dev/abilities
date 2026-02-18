@@ -24,3 +24,4 @@ Format: - **@username** — ability-name ([ability-name](community/ability-name/
 - **[@alimujtaba478](https://github.com/alimujtaba478)** — x-news-feed ([x-news-feed](community/x-news-feed/))
 - **[@Akio9090-dev](https://github.com/Akio9090-dev)** — WeatherPro ([WeatherPro](community/WeatherPro/))
 - **[@RyanBhandal](https://github.com/RyanBhandal)** — Outlook ([Outlook](community/Outlook/))
+- **[@fiction17](https://github.com/fiction17)** — flight-price-checker ([flight-price-checker](community/flight-price-checker/))
