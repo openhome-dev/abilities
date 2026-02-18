@@ -1,9 +1,9 @@
 import json
 import os
 import re
-import requests
 from typing import ClassVar, Dict, List, Optional
 
+import requests
 from src.agent.capability import MatchingCapability
 from src.agent.capability_worker import CapabilityWorker
 from src.main import AgentWorker
