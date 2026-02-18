@@ -3,7 +3,6 @@ import json
 import os
 
 import requests
-
 from src.agent.capability import MatchingCapability
 from src.agent.capability_worker import CapabilityWorker
 from src.main import AgentWorker
