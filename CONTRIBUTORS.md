@@ -13,7 +13,7 @@ Contributors are added here when their PR is merged.
 Format: - **@username** — ability-name ([ability-name](community/ability-name/))
 -->
 - **[@Rizwan-algoryc](https://github.com/Rizwan-algoryc)** — slow-music ([slow-music](community/slow-music/))
-- **[@engrumair842-arch](https://github.com/engrumair842-arch)** — reddit-daily-digest ([reddit-daily-digest](community/reddit-daily-digest/))
+- **[@engrumair842-arch](https://github.com/engrumair842-arch)** — reddit-daily-digest ([reddit-daily-digest](community/reddit-daily-digest/)), smart-sous-chef ([smart-sous-chef](community/smart-sous-chef/))
 - **[@samsonadmasu](https://github.com/samsonadmasu)** — voice-unit-converter ([voice-unit-converter](community/voice-unit-converter/)), food-water-log ([food-water-log](community/food-water-log/))
 - **[@hassan1731996](https://github.com/hassan1731996)** — daily-briefing ([daily-briefing](community/daily-briefing/)), voice-journal ([voice-journal](community/voice-journal/))
 - **[@BhargavTelu](https://github.com/BhargavTelu)** — grocery-list-manager ([grocery-list-manager](community/grocery-list-manager/))
