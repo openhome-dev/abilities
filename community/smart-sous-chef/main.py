@@ -1,19 +1,18 @@
 import json
 import os
 import re
-import urllib.parse
-import urllib.request
+import requests
 from typing import ClassVar, Dict, List, Optional
 
 from src.agent.capability import MatchingCapability
 from src.agent.capability_worker import CapabilityWorker
 from src.main import AgentWorker
 
-API_KEY = "YOUR_API_KEY"
+API_KEY = "your api key here"
 BASE_URL = "https://api.spoonacular.com"
 
 
-class Chefassistantv1Capability(MatchingCapability):
+class TestingPrAbilitiesCapability(MatchingCapability):
     worker: AgentWorker = None
     capability_worker: CapabilityWorker = None
     active_timers: ClassVar[Dict[str, bool]] = {}
@@ -118,13 +117,14 @@ class Chefassistantv1Capability(MatchingCapability):
 
     async def fetch_recipe(self, query: str) -> Optional[dict]:
         try:
-            params = urllib.parse.urlencode(
-                {"query": query, "number": 1, "apiKey": API_KEY}
+            # Search for recipe
+            response = requests.get(
+                f"{BASE_URL}/recipes/complexSearch",
+                params={"query": query, "number": 1, "apiKey": API_KEY},
+                timeout=10,
             )
-            url = f"{BASE_URL}/recipes/complexSearch?{params}"
-
-            with urllib.request.urlopen(url, timeout=10) as response:
-                data = json.loads(response.read().decode())
+            response.raise_for_status()
+            data = response.json()
 
             results = data.get("results", [])
             if not results:
@@ -132,13 +132,14 @@ class Chefassistantv1Capability(MatchingCapability):
 
             recipe_id = results[0]["id"]
 
-            info_url = (
-                f"{BASE_URL}/recipes/{recipe_id}/information"
-                f"?apiKey={API_KEY}"
+            # Fetch full recipe info
+            info_response = requests.get(
+                f"{BASE_URL}/recipes/{recipe_id}/information",
+                params={"apiKey": API_KEY},
+                timeout=10,
             )
-
-            with urllib.request.urlopen(info_url, timeout=10) as response:
-                info = json.loads(response.read().decode())
+            info_response.raise_for_status()
+            info = info_response.json()
 
             analyzed = info.get("analyzedInstructions", [])
             if not analyzed or not analyzed[0].get("steps"):
