@@ -1,0 +1,25 @@
+{
+    "unique_name": "gmail_connector",
+    "matching_hotwords": [
+        "email",
+        "emails",
+        "inbox",
+        "gmail",
+        "unread emails",
+        "new emails",
+        "check my email",
+        "check email",
+        "read my email",
+        "read email",
+        "any new email",
+        "do I have email",
+        "send an email",
+        "send email",
+        "write an email",
+        "reply to email",
+        "email from",
+        "triage my email",
+        "go through my email",
+        "catch me up on email"
+    ]
+}
