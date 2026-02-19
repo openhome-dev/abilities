@@ -15,7 +15,7 @@ API_BASE = "https://www.themealdb.com/api/json/v1/1"
 # STEP_ONE = "Which specific location are you interested in knowing the weather for?"
 # STEP_TWO = "Are you sure"
 
-#prompt constants
+# prompt constants
 REPEAT_PROMPT = "I'm sorry, I didn't get that. Please repeat that."
 
 MENU_PROMPT = (
@@ -26,18 +26,24 @@ MENU_PROMPT = (
     "- Say 'random' to surprise you\n"
 )
 
-#normalize strings by stripping whitespace and collapsing spaces
+# normalize strings by stripping whitespace and collapsing spaces
+
+
 def _norm(s: Optional[str]) -> str:
     return re.sub(r"\s+", " ", (s or "").strip())
 
-#split a long instructions text into small steps
+# split a long instructions text into small steps
+
+
 def _steps_from_instructions(instr: Optional[str]) -> List[str]:
     if not instr:
         return []
     raw = [s.strip() for s in re.split(r"\n+|(?<=\.)\s+", instr) if s.strip()]
     return [s for s in raw if len(s) > 2]
 
-#extract ingredient + measure pairs from a meal object
+# extract ingredient + measure pairs from a meal object
+
+
 def _parse_ingredients(meal: Dict) -> List[str]:
     items = []
     for i in range(1, 21):
@@ -46,6 +52,7 @@ def _parse_ingredients(meal: Dict) -> List[str]:
         if ing:
             items.append(f"{mea} {ing}".strip())
     return items
+
 
 class MealmateAbilityCapability(MatchingCapability):
     worker: AgentWorker = None
@@ -66,7 +73,7 @@ class MealmateAbilityCapability(MatchingCapability):
             matching_hotwords=data["matching_hotwords"],
         )
 
-    #ask user something & wait for reply
+    # ask user something & wait for reply
     async def _ask(self, prompt: str) -> str:
         msg = prompt
         while True:
@@ -74,25 +81,25 @@ class MealmateAbilityCapability(MatchingCapability):
             if ans and str(ans).strip():
                 return str(ans).strip()
             msg = REPEAT_PROMPT
-    
-    #speak smt back to user
+
+    # speak smt back to user
     async def _say(self, text: str):
         await self.capability_worker.speak(text)
 
     # theMealDB (API) related parts
-    #GET used for API
+    # GET used for API
     def _get(self, path: str, params: Dict = None) -> Dict:
         url = f"{API_BASE}/{path}"
         r = requests.get(url, params=params or {}, timeout=10)
         r.raise_for_status()
         return r.json()
 
-    #search recipes by dish name
+    # search recipes by dish name
     def search_by_name(self, q: str) -> List[Dict]:
         data = self._get("search.php", {"s": q})
         return data.get("meals") or []
 
-    #search recipes by ingredients, API only supports 1 at a time so we ask once manually
+    # search recipes by ingredients, API only supports 1 at a time so we ask once manually
     def filter_by_ingredient_multi(self, ingredients_csv: str) -> List[Dict]:
         # intersect results for multiple ingredients client-side
         ingredients = [i.strip() for i in ingredients_csv.split(",") if i.strip()]
@@ -108,29 +115,29 @@ class MealmateAbilityCapability(MatchingCapability):
                 break
         return list(by_id.values())
 
-    #filter recipes by category
+    # filter recipes by category
     def filter_by_category(self, category: str) -> List[Dict]:
         data = self._get("filter.php", {"c": category})
         return data.get("meals") or []
 
-    #filter recipes by area or cuisine
+    # filter recipes by area or cuisine
     def filter_by_area(self, area: str) -> List[Dict]:
         data = self._get("filter.php", {"a": area})
         return data.get("meals") or []
 
-    #lookup a meal by its ID
+    # lookup a meal by its ID
     def lookup_by_id(self, meal_id: str) -> Optional[Dict]:
         data = self._get("lookup.php", {"i": meal_id})
         meals = data.get("meals") or []
         return meals[0] if meals else None
 
-    #get a random meal
+    # get a random meal
     def random_meal(self) -> Optional[Dict]:
         data = self._get("random.php")
         meals = data.get("meals") or []
         return meals[0] if meals else None
 
-    #extraction for text to text
+    # extraction for text to text
     def _extract_intent(self, user_text: str) -> Dict[str, str]:
         """
         Uses the built-in text_to_text_response to classify user message into:
@@ -174,7 +181,7 @@ User: {user_text}
         return {"mode": "ASK"}
 
         async def _present_brief_list_and_pick(self, meals_brief: List[Dict]) -> Optional[str]:
-        # meals_brief items have idMeal, strMeal (and thumb); present top 10
+            # meals_brief items have idMeal, strMeal (and thumb); present top 10
             show = meals_brief[:10]
             lines = [f"{i+1}) {m['strMeal']}" for i, m in enumerate(show)]
             await self._say("Here are some options:\n" + "\n".join(lines))
@@ -184,9 +191,9 @@ User: {user_text}
             if not pick.isdigit() or not (1 <= int(pick) <= len(show)):
                 await self._say("Invalid choice.")
                 return None
-            return show[int(pick)-1]["idMeal"]
+            return show[int(pick) - 1]["idMeal"]
 
-    #display details for a selected meal
+    # display details for a selected meal
     async def _load_and_show_meal(self, meal_id: str):
         meal = self.lookup_by_id(meal_id)
         if not meal:
@@ -224,7 +231,7 @@ User: {user_text}
             else:
                 await self._say("Options: cook / list / another / done")
 
-    #shows shopping list for current meal
+    # shows shopping list for current meal
     async def _shopping_list(self):
         if not self.current_meal:
             await self._say("No meal loaded.")
@@ -232,7 +239,7 @@ User: {user_text}
         ings = _parse_ingredients(self.current_meal)
         await self._say("🛒 Shopping list:\n- " + "\n- ".join(ings))
 
-    #guides user through cooking steps
+    # guides user through cooking steps
     async def _guided_cook(self):
         if not self.current_meal:
             await self._say("No meal loaded.")
@@ -266,13 +273,13 @@ User: {user_text}
                 return
             else:
                 await self._say("Commands: next / back / repeat / exit")
-    
+
     async def first_setup(self):
         # msg = self.worker.final_user_input
 
         msg = await self.capability_worker.wait_for_complete_transcription()
-        
-        #figure out intent from user's first phrase
+
+        # figure out intent from user's first phrase
         intent = self._extract_intent(msg)
         mode = intent.get("mode", "ASK")
         query = intent.get("query")
@@ -330,7 +337,7 @@ User: {user_text}
                     await self._say("I found:\n" + "\n".join(lines))
                     pick = await self._ask("Pick a number (or 'cancel'):")
                     if not pick.lower().startswith("c") and pick.isdigit() and 1 <= int(pick) <= len(show):
-                        await self._load_and_show_meal(show[int(pick)-1]["idMeal"])
+                        await self._load_and_show_meal(show[int(pick) - 1]["idMeal"])
 
             else:  # ASK
                 await self._say(MENU_PROMPT)
@@ -388,7 +395,7 @@ User: {user_text}
                             await self._say("I found:\n" + "\n".join(lines))
                             pick = await self._ask("Pick a number (or 'cancel'):")
                             if not pick.lower().startswith("c") and pick.isdigit() and 1 <= int(pick) <= len(show):
-                                await self._load_and_show_meal(show[int(pick)-1]["idMeal"])
+                                await self._load_and_show_meal(show[int(pick) - 1]["idMeal"])
                         else:
                             await self._say("No results for that dish name.")
                     else:
