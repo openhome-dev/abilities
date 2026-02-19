@@ -4,7 +4,7 @@ Thank you to everyone who has contributed to OpenHome Abilities! 🎉
 
 ## Core Team
 
-- **OpenHome** — Official Abilities and platform maintenance
+- **OpenHome** - Official Abilities and platform maintenance
 
 ## Community Contributors
 
@@ -25,3 +25,4 @@ Format: - **@username** — ability-name ([ability-name](community/ability-name/
 - **[@Akio9090-dev](https://github.com/Akio9090-dev)** — WeatherPro ([WeatherPro](community/WeatherPro/))
 - **[@RyanBhandal](https://github.com/RyanBhandal)** — Outlook ([Outlook](community/Outlook/))
 - **[@fiction17](https://github.com/fiction17)** — flight-price-checker ([flight-price-checker](community/flight-price-checker/))
+- **[@pipinstallshan](https://github.com/pipinstallshan)** — crypto-insight ([crypto-insight](community/crypto-insight/))
