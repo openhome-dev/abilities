@@ -4,7 +4,6 @@ import os
 from src.agent.capability import MatchingCapability
 from src.main import AgentWorker
 from src.agent.capability_worker import CapabilityWorker
-from geopy.geocoders import Nominatim
 import requests
 
 import re
@@ -348,7 +347,6 @@ User: {user_text}
                 if intent.get("mode") and intent.get("mode") != "ASK":
                     # Simulate restarting with the clarified intent
                     # (We reuse first_setup core branches without re-waiting transcription)
-                    faux_msg = follow
                     mode = intent["mode"]
                     query = intent.get("query")
                     # Quick branch reuse:
