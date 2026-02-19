@@ -16,7 +16,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.pull_request.head.ref }}
+          repository: ${{ github.event.pull_request.head.repo.full_name }}
+          ref: ${{ github.event.pull_request.head.sha }}
           fetch-depth: 0
 
       - uses: actions/setup-python@v5
@@ -60,6 +61,16 @@ jobs:
           echo "🔍 Lint files: ${LINT_FILES:-none}"
           echo "📦 __init__.py files: ${INIT_FILES:-none}"
 
+      # ── Detect if PR is from a fork ─────────────────────────────
+      - name: Check if fork PR
+        id: fork_check
+        run: |
+          if [ "${{ github.event.pull_request.head.repo.full_name }}" = "${{ github.repository }}" ]; then
+            echo "is_fork=false" >> $GITHUB_OUTPUT
+          else
+            echo "is_fork=true" >> $GITHUB_OUTPUT
+          fi
+
       # ── __init__.py must be empty check ──────────────────────────
       - name: Check __init__.py files are empty
         if: steps.changed.outputs.skip == 'false' && steps.changed.outputs.init_files != ''
@@ -89,7 +100,6 @@ jobs:
         if: steps.changed.outputs.skip == 'false' && steps.changed.outputs.lint_files != ''
         id: autofix
         run: |
-          # Capture before-fix diff for the PR comment
           autopep8 --in-place --max-line-length=120 --ignore=E501,W503 \
             ${{ steps.changed.outputs.lint_files }}
 
@@ -112,9 +122,15 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add -A
           git commit -m "style: auto-fix flake8 formatting issues"
-          git push origin ${{ github.event.pull_request.head.ref }} && \
-            echo "push_success=true" >> $GITHUB_OUTPUT || \
+
+          if [ "${{ steps.fork_check.outputs.is_fork }}" = "true" ]; then
             echo "push_success=false" >> $GITHUB_OUTPUT
+            echo "⚠️ Cannot auto-push to fork PRs"
+          else
+            git push origin HEAD:refs/heads/${{ github.event.pull_request.head.ref }} && \
+              echo "push_success=true" >> $GITHUB_OUTPUT || \
+              echo "push_success=false" >> $GITHUB_OUTPUT
+          fi
 
       # ── Flake8 (remaining issues after auto-fix) ────────────────
       - name: Run Flake8
@@ -153,7 +169,8 @@ jobs:
             const flake8Err = '${{ steps.flake8.outputs.has_errors }}' === 'true';
             const initErr = '${{ steps.init_check.outputs.has_violations }}' === 'true';
             const autoFixed = '${{ steps.autofix.outputs.has_fixes }}' === 'true';
-            const pushOk = '${{ steps.push_fixes.outputs.push_success }}' !== 'false';
+            const pushOk = '${{ steps.push_fixes.outputs.push_success }}' === 'true';
+            const isFork = '${{ steps.fork_check.outputs.is_fork }}' === 'true';
             const lintFiles = '${{ steps.changed.outputs.lint_files }}';
             const initFiles = '${{ steps.changed.outputs.init_files }}';
 
@@ -183,9 +200,15 @@ jobs:
                 body += '```diff\n' + autopep8Diff.slice(0, 3000) + '\n```\n\n';
                 body += '</details>\n\n';
               } else {
-                body += '### ⚠️ Auto-fix Failed to Push\n\n';
-                body += 'Formatting issues were detected but could not be pushed (fork PRs cannot be auto-fixed). Apply manually:\n\n';
+                body += '### ⚠️ Auto-fix Could Not Be Pushed\n\n';
+                if (isFork) {
+                  body += 'This PR is from a fork, so auto-fixes cannot be pushed. ';
+                }
+                body += 'Apply the fixes manually:\n\n';
                 body += '```bash\npip install autopep8\nautopep8 --in-place --max-line-length=120 --ignore=E501,W503 <your files>\n```\n\n';
+                body += '<details><summary>View suggested diff</summary>\n\n';
+                body += '```diff\n' + autopep8Diff.slice(0, 3000) + '\n```\n\n';
+                body += '</details>\n\n';
               }
             }
 
