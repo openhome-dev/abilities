@@ -1,0 +1,25 @@
+{
+  "unique_name": "voice-memory-capture",
+  "matching_hotwords": [
+    "remember that",
+    "remember this",
+    "save this",
+    "don't forget",
+    "make a note",
+    "note to self",
+    "what did I save",
+    "what do I have saved",
+    "do I have anything about",
+    "what did I remember",
+    "find my note about",
+    "list everything",
+    "list my memories",
+    "list all",
+    "give me a summary",
+    "how many memories",
+    "how many days until",
+    "days left before",
+    "when is",
+    "what date is today"
+  ]
+}
