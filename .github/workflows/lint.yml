@@ -16,7 +16,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.pull_request.head.sha }}
+          repository: ${{ github.event.pull_request.head.repo.full_name }}
+          ref: ${{ github.event.pull_request.head.ref }}
           fetch-depth: 0
           token: ${{ secrets.GITHUB_TOKEN }}
 
@@ -101,6 +102,7 @@ jobs:
 
       - name: Commit auto-format fixes
         if: steps.autoformat.outputs.has_fixes == 'true'
+        continue-on-error: true
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
@@ -110,7 +112,7 @@ jobs:
 
       # ── Flake8 (check remaining issues after auto-format) ──────
       - name: Run Flake8
-        if: steps.changed.outputs.skip == 'false' && steps.changed.outputs.lint_files != ''
+        if: always() && steps.changed.outputs.skip == 'false' && steps.changed.outputs.lint_files != ''
         id: flake8
         continue-on-error: true
         run: |
@@ -126,7 +128,7 @@ jobs:
 
       # ── Create empty fallback files if steps were skipped ───────
       - name: Ensure output files exist
-        if: steps.changed.outputs.skip == 'false'
+        if: always() && steps.changed.outputs.skip == 'false'
         run: |
           touch flake8_output.txt init_violations.txt
 
