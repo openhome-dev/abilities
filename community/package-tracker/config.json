@@ -1,3 +1,5 @@
 {
+  "unique_name": "package_tracker",
+  "matching_hotwords": ["track my package", "where's my package", "package status", "tracking"],
   "trackingmore_api_key": "YOUR_TRACKINGMORE_API_KEY"
 }
