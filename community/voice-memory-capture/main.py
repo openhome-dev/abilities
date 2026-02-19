@@ -104,7 +104,6 @@ class VoiceMemoryCapture(MatchingCapability):
         await self.capability_worker.speak("One sec... saving.")
 
         classify_prompt = """You are a memory classifier. Extract the core fact from the user's voice input. Return ONLY valid JSON, no markdown fences.
-
 {
   "summary": "clean one-sentence summary of what to remember",
   "category": "idea | reminder | person | place | thing | note",
@@ -191,7 +190,7 @@ Output: {"summary": "Need to buy more dog food", "category": "reminder", "keywor
                 m["days_ago"] = 0
             enriched_memories.append(m)
 
-        recall_prompt = f"""You are a memory retrieval assistant. The user has saved memories over time. 
+        recall_prompt = f"""You are a memory retrieval assistant. The user has saved memories over time.
 Given their query and the list of saved memories, return the top 3 most relevant matches as JSON.
 
 Return ONLY valid JSON, no markdown fences:
