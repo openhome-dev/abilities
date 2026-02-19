@@ -8,7 +8,7 @@ on:
       - 'official/**'
 
 permissions:
-  contents: read
+  contents: write
   pull-requests: write
 
 jobs:
@@ -19,11 +19,21 @@ jobs:
       - name: Checkout PR code
         uses: actions/checkout@v4
         with:
+          repository: ${{ github.event.pull_request.head.repo.full_name }}
           ref: ${{ github.event.pull_request.head.sha }}
           fetch-depth: 0
 
       - name: Fetch base branch for diff
         run: git fetch origin ${{ github.base_ref }}
+
+      - name: Check if fork PR
+        id: fork_check
+        run: |
+          if [ "${{ github.event.pull_request.head.repo.full_name }}" = "${{ github.repository }}" ]; then
+            echo "is_fork=false" >> $GITHUB_OUTPUT
+          else
+            echo "is_fork=true" >> $GITHUB_OUTPUT
+          fi
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -36,40 +46,156 @@ jobs:
           CHANGED_DIRS=$(git diff --name-only origin/${{ github.base_ref }}...HEAD \
             | grep -E '^(community|official)/' \
             | cut -d'/' -f1-2 \
-            | sort -u \
-            | tr '\n' ' ')
-          echo "dirs=$CHANGED_DIRS" >> $GITHUB_OUTPUT
+            | sort -u)
+
+          if [ -z "$CHANGED_DIRS" ]; then
+            echo "skip=true" >> $GITHUB_OUTPUT
+            echo "No ability directories changed — skipping"
+            exit 0
+          fi
+
+          echo "skip=false" >> $GITHUB_OUTPUT
+
+          EOF_MARKER=$(dd if=/dev/urandom bs=15 count=1 2>/dev/null | base64)
+          echo "dirs<<$EOF_MARKER" >> $GITHUB_OUTPUT
+          echo "$CHANGED_DIRS" >> $GITHUB_OUTPUT
+          echo "$EOF_MARKER" >> $GITHUB_OUTPUT
+
           echo "Changed ability directories:"
           echo "$CHANGED_DIRS"
 
+      # ── Auto-fix community folder names ─────────────────────────
+      - name: Fix community folder names
+        if: steps.changed.outputs.skip == 'false'
+        id: fix_names
+        run: |
+          has_renames=false
+          FIXED_DIRS=""
+          RENAME_LOG=""
+
+          while IFS= read -r dir; do
+            [ -z "$dir" ] && continue
+
+            if [[ "$dir" != community/* ]]; then
+              FIXED_DIRS="${FIXED_DIRS}${dir}"$'\n'
+              continue
+            fi
+
+            folder_name=$(basename "$dir")
+            fixed_name=$(echo "$folder_name" | sed 's/[_ ]\+/-/g')
+
+            if [ "$folder_name" != "$fixed_name" ]; then
+              old_path="$dir"
+              new_path="community/$fixed_name"
+
+              if [ -d "$old_path" ]; then
+                echo "🔧 Renaming: $old_path → $new_path"
+                git mv "$old_path" "$new_path"
+                FIXED_DIRS="${FIXED_DIRS}${new_path}"$'\n'
+                RENAME_LOG="${RENAME_LOG}${old_path} → ${new_path}"$'\n'
+                has_renames=true
+              else
+                FIXED_DIRS="${FIXED_DIRS}${dir}"$'\n'
+              fi
+            else
+              FIXED_DIRS="${FIXED_DIRS}${dir}"$'\n'
+            fi
+          done <<< "${{ steps.changed.outputs.dirs }}"
+
+          echo "has_renames=$has_renames" >> $GITHUB_OUTPUT
+
+          echo "$RENAME_LOG" > rename_log.txt
+
+          FIXED_DIRS_SPACE=$(echo "$FIXED_DIRS" | tr '\n' ' ' | xargs)
+          echo "dirs=$FIXED_DIRS_SPACE" >> $GITHUB_OUTPUT
+
+          echo "📁 Final dirs for validation: $FIXED_DIRS_SPACE"
+
+      - name: Commit and push folder renames
+        if: steps.fix_names.outputs.has_renames == 'true' && steps.fork_check.outputs.is_fork == 'false'
+        id: push_renames
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "fix: rename community ability folders to use hyphens"
+          git push origin HEAD:refs/heads/${{ github.event.pull_request.head.ref }} && \
+            echo "push_success=true" >> $GITHUB_OUTPUT || \
+            echo "push_success=false" >> $GITHUB_OUTPUT
+
+      # ── Run validation on (possibly renamed) folders ────────────
       - name: Run validate_ability.py
+        if: steps.changed.outputs.skip == 'false'
         id: validate
         continue-on-error: true
         run: |
-          if [ -f "validate_ability.py" ]; then
-            python validate_ability.py ${{ steps.changed.outputs.dirs }}
+          DIRS="${{ steps.fix_names.outputs.dirs }}"
+          if [ -z "$DIRS" ]; then
+            echo "No directories to validate"
+            exit 0
           fi
 
+          if [ -f "validate_ability.py" ]; then
+            python validate_ability.py $DIRS
+          fi
+
+      # ── Ensure output files exist ──────────────────────────────
+      - name: Ensure output files exist
+        if: steps.changed.outputs.skip == 'false'
+        run: |
+          touch validation_output.txt rename_log.txt
+
+      # ── PR Comment ─────────────────────────────────────────────
       - name: Comment PR with validation results
-        if: always() && steps.changed.outputs.dirs != ''
+        if: always() && steps.changed.outputs.skip == 'false'
         uses: actions/github-script@v7
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
             const fs = require('fs');
-            let body = '';
+            const marker = '<!-- ability-validation-bot -->';
 
+            let body = `${marker}\n`;
+
+            // ── Folder rename section ──
+            const hasRenames = '${{ steps.fix_names.outputs.has_renames }}' === 'true';
+            const isFork = '${{ steps.fork_check.outputs.is_fork }}' === 'true';
+            const pushOk = '${{ steps.push_renames.outputs.push_success }}' === 'true';
+
+            if (hasRenames) {
+              const renameLog = fs.readFileSync('rename_log.txt', 'utf8').trim();
+
+              if (!isFork && pushOk) {
+                body += `## 📁 Folder Names Auto-Fixed\n\n`;
+                body += `Community ability folders may only use **hyphens** (\`-\`) — no underscores or spaces.\n\n`;
+                body += `The following folders were **automatically renamed** and pushed:\n\n`;
+                body += `\`\`\`\n${renameLog}\n\`\`\`\n\n`;
+              } else {
+                body += `## ⚠️ Folder Names Need Fixing\n\n`;
+                body += `Community ability folders may only use **hyphens** (\`-\`) — no underscores or spaces.\n\n`;
+                if (isFork) {
+                  body += `This PR is from a fork, so auto-rename cannot be pushed. `;
+                }
+                body += `Please rename manually:\n\n`;
+                body += `\`\`\`\n${renameLog}\n\`\`\`\n\n`;
+                body += `\`\`\`bash\ngit mv community/my_ability community/my-ability\n\`\`\`\n\n`;
+              }
+            }
+
+            // ── Validation results section ──
             try {
-              const output = fs.readFileSync('validation_output.txt', 'utf8');
+              const output = fs.readFileSync('validation_output.txt', 'utf8').trim();
               const passed = '${{ steps.validate.outcome }}' === 'success';
 
               if (passed) {
-                body = `## ✅ Ability Validation Passed\n\n`;
+                body += `## ✅ Ability Validation Passed\n\n`;
               } else {
-                body = `## ❌ Ability Validation Failed\n\n`;
+                body += `## ❌ Ability Validation Failed\n\n`;
               }
 
-              body += `\`\`\`\n${output}\n\`\`\`\n\n`;
+              if (output) {
+                body += `\`\`\`\n${output}\n\`\`\`\n\n`;
+              }
 
               if (!passed) {
                 body += `### 📚 How to fix\n`;
@@ -78,12 +204,10 @@ jobs:
                 body += `- See [Blocked Imports & Keywords](https://docs.openhome.com/how_to_build_an_ability#blocked-imports-and-keywords)\n`;
               }
             } catch (e) {
-              body = `## ⚠️ Validation script did not produce output.\n\nCheck the workflow logs.`;
+              body += `## ⚠️ Validation script did not produce output.\n\nCheck the workflow logs.`;
             }
 
-            const marker = '<!-- ability-validation-bot -->';
-            body = `${marker}\n${body}`;
-
+            // ── Upsert comment ──
             const { data: comments } = await github.rest.issues.listComments({
               owner: context.repo.owner,
               repo: context.repo.repo,
@@ -108,6 +232,7 @@ jobs:
               });
             }
 
+      # ── Fail if validation failed ──────────────────────────────
       - name: Fail if validation failed
         if: steps.validate.outcome == 'failure'
         run: exit 1

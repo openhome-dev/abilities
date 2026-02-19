@@ -16,6 +16,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+          repository: ${{ github.event.pull_request.head.repo.full_name }}
           ref: ${{ github.event.pull_request.head.sha }}
           fetch-depth: 0
 
@@ -39,7 +40,6 @@ jobs:
             exit 0
           fi
 
-          # Separate __init__.py from other files
           INIT_FILES=""
           LINT_FILES=""
 
@@ -75,7 +75,6 @@ jobs:
               continue
             fi
 
-            # Strip whitespace/blank lines and check if anything remains
             CONTENT=$(sed '/^\s*$/d' "$file")
 
             if [ -n "$CONTENT" ]; then
