@@ -1,9 +1,10 @@
 import json
 import os
 import re
+
 from src.agent.capability import MatchingCapability
-from src.main import AgentWorker
 from src.agent.capability_worker import CapabilityWorker
+from src.main import AgentWorker
 
 # =============================================================================
 # POMODORO FOCUS TIMER
