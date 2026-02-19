@@ -1,4 +1,4 @@
-name: Lint & Auto-fix
+name: Lint
 
 on:
   pull_request_target:
@@ -11,7 +11,7 @@ jobs:
     name: lint
     runs-on: ubuntu-latest
     permissions:
-      contents: write
+      contents: read
       pull-requests: write
     steps:
       - uses: actions/checkout@v4
@@ -24,8 +24,8 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Install tools
-        run: pip install flake8 autopep8
+      - name: Install linters
+        run: pip install flake8 isort
 
       - name: Get changed Python files
         id: changed
@@ -61,16 +61,6 @@ jobs:
           echo "🔍 Lint files: ${LINT_FILES:-none}"
           echo "📦 __init__.py files: ${INIT_FILES:-none}"
 
-      # ── Detect if PR is from a fork ─────────────────────────────
-      - name: Check if fork PR
-        id: fork_check
-        run: |
-          if [ "${{ github.event.pull_request.head.repo.full_name }}" = "${{ github.repository }}" ]; then
-            echo "is_fork=false" >> $GITHUB_OUTPUT
-          else
-            echo "is_fork=true" >> $GITHUB_OUTPUT
-          fi
-
       # ── __init__.py must be empty check ──────────────────────────
       - name: Check __init__.py files are empty
         if: steps.changed.outputs.skip == 'false' && steps.changed.outputs.init_files != ''
@@ -95,44 +85,7 @@ jobs:
 
           echo "has_violations=$has_violations" >> $GITHUB_OUTPUT
 
-      # ── Auto-fix with autopep8 ──────────────────────────────────
-      - name: Auto-fix with autopep8
-        if: steps.changed.outputs.skip == 'false' && steps.changed.outputs.lint_files != ''
-        id: autofix
-        run: |
-          autopep8 --in-place --max-line-length=120 --ignore=E501,W503 \
-            ${{ steps.changed.outputs.lint_files }}
-
-          if git diff --quiet; then
-            echo "has_fixes=false" >> $GITHUB_OUTPUT
-            echo "✅ No auto-fixable issues found"
-          else
-            echo "has_fixes=true" >> $GITHUB_OUTPUT
-            echo "🔧 Auto-fixed formatting issues:"
-            git diff --stat
-            git diff > autopep8_diff.txt
-          fi
-
-      # ── Commit and push auto-fixes ──────────────────────────────
-      - name: Commit and push auto-fixes
-        if: steps.autofix.outputs.has_fixes == 'true'
-        id: push_fixes
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add -A
-          git commit -m "style: auto-fix flake8 formatting issues"
-
-          if [ "${{ steps.fork_check.outputs.is_fork }}" = "true" ]; then
-            echo "push_success=false" >> $GITHUB_OUTPUT
-            echo "⚠️ Cannot auto-push to fork PRs"
-          else
-            git push origin HEAD:refs/heads/${{ github.event.pull_request.head.ref }} && \
-              echo "push_success=true" >> $GITHUB_OUTPUT || \
-              echo "push_success=false" >> $GITHUB_OUTPUT
-          fi
-
-      # ── Flake8 (remaining issues after auto-fix) ────────────────
+      # ── Flake8 (skip __init__.py) ───────────────────────────────
       - name: Run Flake8
         if: steps.changed.outputs.skip == 'false' && steps.changed.outputs.lint_files != ''
         id: flake8
@@ -148,11 +101,26 @@ jobs:
             echo "has_errors=false" >> $GITHUB_OUTPUT
           fi
 
+      # ── isort (skip __init__.py) ────────────────────────────────
+      - name: Run isort
+        if: steps.changed.outputs.skip == 'false' && steps.changed.outputs.lint_files != ''
+        id: isort
+        continue-on-error: true
+        run: |
+          OUTPUT=$(isort --check-only --diff ${{ steps.changed.outputs.lint_files }} 2>&1) || true
+          echo "$OUTPUT"
+          echo "$OUTPUT" > isort_output.txt
+          if [ -n "$OUTPUT" ]; then
+            echo "has_errors=true" >> $GITHUB_OUTPUT
+          else
+            echo "has_errors=false" >> $GITHUB_OUTPUT
+          fi
+
       # ── Create empty fallback files if steps were skipped ───────
       - name: Ensure output files exist
         if: steps.changed.outputs.skip == 'false'
         run: |
-          touch flake8_output.txt init_violations.txt autopep8_diff.txt
+          touch flake8_output.txt isort_output.txt init_violations.txt
 
       # ── PR Comment ──────────────────────────────────────────────
       - name: Comment on PR
@@ -163,18 +131,16 @@ jobs:
             const fs = require('fs');
 
             const flake8 = fs.readFileSync('flake8_output.txt', 'utf8').trim();
+            const isort = fs.readFileSync('isort_output.txt', 'utf8').trim();
             const initViolations = fs.readFileSync('init_violations.txt', 'utf8').trim();
-            const autopep8Diff = fs.readFileSync('autopep8_diff.txt', 'utf8').trim();
 
             const flake8Err = '${{ steps.flake8.outputs.has_errors }}' === 'true';
+            const isortErr = '${{ steps.isort.outputs.has_errors }}' === 'true';
             const initErr = '${{ steps.init_check.outputs.has_violations }}' === 'true';
-            const autoFixed = '${{ steps.autofix.outputs.has_fixes }}' === 'true';
-            const pushOk = '${{ steps.push_fixes.outputs.push_success }}' === 'true';
-            const isFork = '${{ steps.fork_check.outputs.is_fork }}' === 'true';
             const lintFiles = '${{ steps.changed.outputs.lint_files }}';
             const initFiles = '${{ steps.changed.outputs.init_files }}';
 
-            const allPassed = !flake8Err && !initErr;
+            const allPassed = !flake8Err && !isortErr && !initErr;
 
             let body = '<!-- lint-check-result -->\n';
             body += '## 🔍 Lint Results\n\n';
@@ -191,36 +157,20 @@ jobs:
               }
             }
 
-            // ── Auto-fix section ──
-            if (autoFixed) {
-              if (pushOk) {
-                body += '### 🔧 Auto-fixed & Pushed\n\n';
-                body += 'The following formatting issues were **automatically fixed** and pushed to this branch:\n\n';
-                body += '<details><summary>View auto-fix diff</summary>\n\n';
-                body += '```diff\n' + autopep8Diff.slice(0, 3000) + '\n```\n\n';
-                body += '</details>\n\n';
-              } else {
-                body += '### ⚠️ Auto-fix Could Not Be Pushed\n\n';
-                if (isFork) {
-                  body += 'This PR is from a fork, so auto-fixes cannot be pushed. ';
-                }
-                body += 'Apply the fixes manually:\n\n';
-                body += '```bash\npip install autopep8\nautopep8 --in-place --max-line-length=120 --ignore=E501,W503 <your files>\n```\n\n';
-                body += '<details><summary>View suggested diff</summary>\n\n';
-                body += '```diff\n' + autopep8Diff.slice(0, 3000) + '\n```\n\n';
-                body += '</details>\n\n';
-              }
-            }
-
             // ── Flake8 ──
             if (lintFiles) {
               body += `**Files linted:** \`${lintFiles}\`\n\n`;
               if (flake8Err) {
-                body += '### ❌ Flake8 Errors (cannot be auto-fixed)\n\n';
-                body += 'These issues require manual fixes:\n\n';
-                body += '```\n' + flake8 + '\n```\n\n';
+                body += '### ❌ Flake8 Errors\n```\n' + flake8 + '\n```\n\n';
               } else {
                 body += '### ✅ Flake8 — Passed\n\n';
+              }
+
+              // ── isort ──
+              if (isortErr) {
+                body += '### ❌ Import Order (isort)\n```diff\n' + isort + '\n```\n\n';
+              } else {
+                body += '### ✅ isort — Passed\n\n';
               }
             } else {
               body += '_No non-init Python files to lint._\n\n';
@@ -230,7 +180,7 @@ jobs:
             if (allPassed) {
               body += '> ✅ All checks passed!';
             } else {
-              body += '> Fix the remaining issues and push again. The lint will re-run automatically.';
+              body += '> Fix these issues and push again. The lint will re-run automatically.';
             }
 
             // ── Upsert comment ──
@@ -264,6 +214,7 @@ jobs:
       - name: Fail if errors
         if: |
           steps.flake8.outputs.has_errors == 'true' ||
+          steps.isort.outputs.has_errors == 'true' ||
           steps.init_check.outputs.has_violations == 'true'
         run: |
           echo "❌ Lint failed — check the PR comment for details"
