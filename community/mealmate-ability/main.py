@@ -1,4 +1,3 @@
-import asyncio
 import json
 import os
 from src.agent.capability import MatchingCapability
