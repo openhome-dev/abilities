@@ -8,6 +8,7 @@ Usage:
 
 Checks:
     - Required files exist (main.py, README.md)
+    - Folder name uses only hyphens (no underscores or spaces)
     - main.py follows SDK patterns
     - register_capability() classmethod boilerplate is present
     - No blocked imports or patterns
@@ -92,6 +93,18 @@ class ValidationResult:
 def validate_ability(path: str) -> ValidationResult:
     result = ValidationResult()
     path = path.rstrip("/")
+
+    # --- Check folder name format (community folders only) ---
+    folder_name = os.path.basename(path)
+    parent_dir = os.path.basename(os.path.dirname(os.path.abspath(path)))
+
+    if parent_dir == "community":
+        if re.search(r'[_ ]', folder_name):
+            suggested = re.sub(r'[_ ]+', '-', folder_name)
+            result.error(
+                f"Folder name '{folder_name}' contains underscores or spaces — "
+                f"only hyphens (-) are allowed. Rename to: '{suggested}'"
+            )
 
     # --- Check required files ---
     for f in REQUIRED_FILES:
