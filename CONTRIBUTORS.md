@@ -17,7 +17,7 @@ Format: - **@username** — ability-name ([ability-name](community/ability-name/
 - **[@samsonadmasu](https://github.com/samsonadmasu)** — voice-unit-converter ([voice-unit-converter](community/voice-unit-converter/)), food-water-log ([food-water-log](community/food-water-log/))
 - **[@hassan1731996](https://github.com/hassan1731996)** — daily-briefing ([daily-briefing](community/daily-briefing/)), voice-journal ([voice-journal](community/voice-journal/))
 - **[@BhargavTelu](https://github.com/BhargavTelu)** — grocery-list-manager ([grocery-list-manager](community/grocery-list-manager/))
-- **[@ArturKozhushnyi](https://github.com/ArturKozhushnyi)** — coin-flipper ([coin-flipper](community/coin-flipper/))
+- **[@ArturKozhushnyi](https://github.com/ArturKozhushnyi)** — coin-flipper ([coin-flipper](community/coin-flipper/)), Bedtime-Wind-Down ([Bedtime-Wind-Down](community/Bedtime-Wind-Down/))
 - **[@ammyyou112](https://github.com/ammyyou112)** — dad-joke-teller ([dad-joke-teller](community/dad-joke-teller/)), youtube-search-play ([youtube-search-play](community/youtube-search-play/))
 - **[@megz2020](https://github.com/megz2020)** — marketplus ([marketplus](community/marketplus/)), real-time-forex-metal-data ([real-time-forex-metal-data](community/real-time-forex-metal-data/))
 - **[@yonaseth12](https://github.com/yonaseth12)** — live-flight-status ([live-flight-status](community/live-flight-status/))
