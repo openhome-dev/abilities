@@ -289,17 +289,13 @@ class HNDigestCapability(MatchingCapability):
                 if not ok:
                     return  # API was unreachable; resume_normal_flow in finally
 
-            await self.capability_worker.speak(
-                "Say a number to hear more about that story, "
-                "search a topic, or say done."
-            )
-
+            next_prompt = "Say a number to hear more about that story, search a topic, or say done."
             max_turns = 8
             for _ in range(max_turns):
-                user_input = await self.capability_worker.run_io_loop("")
+                user_input = await self.capability_worker.run_io_loop(next_prompt)
 
                 if not user_input or not user_input.strip():
-                    await self.capability_worker.speak("Say a number, a topic, or done.")
+                    next_prompt = "Say a number, a topic, or done."
                     continue
 
                 if self._is_exit(user_input):
@@ -309,34 +305,27 @@ class HNDigestCapability(MatchingCapability):
                 # Check for "more stories" intent
                 lowered = user_input.lower()
                 if any(w in lowered for w in MORE_WORDS) and "about" not in lowered:
-                    ok = await self._deliver_digest(MAX_STORY_COUNT)
-                    if ok:
-                        await self.capability_worker.speak(
-                            "Say a number for details, or done to finish."
-                        )
+                    await self._deliver_digest(MAX_STORY_COUNT)
+                    next_prompt = "Say a number for details, a topic to search, or done."
                     continue
 
                 # Check for topic search
                 topic = self._detect_topic_request(user_input)
                 if topic:
                     await self._deliver_topic_search(topic)
-                    await self.capability_worker.speak(
-                        "Want to hear more on this, or say done?"
-                    )
+                    next_prompt = "Want to dig deeper, search another topic, or say done?"
                     continue
 
                 # Check for story number
                 idx = self._parse_story_number(user_input)
                 if idx is not None:
                     await self._expand_story(idx)
-                    await self.capability_worker.speak(
-                        "Want another story, or say done?"
-                    )
+                    next_prompt = "Another story, a topic search, or done?"
                     continue
 
-                # Fallback — treat the whole utterance as a topic search
+                # Fallback - treat the whole utterance as a topic search
                 await self._deliver_topic_search(user_input.strip())
-                await self.capability_worker.speak("Say another topic or done.")
+                next_prompt = "Another topic, a story number, or done?"
 
         except Exception as exc:
             self._err(f"Unexpected error in run(): {exc}")
