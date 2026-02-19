@@ -1,0 +1,28 @@
+{
+  "unique_name": "n8n_commander",
+  "matching_hotwords": [
+    "trigger workflow",
+    "run workflow",
+    "n8n",
+    "automation",
+    "post to slack",
+    "create a task",
+    "add a task",
+    "log this",
+    "file a ticket",
+    "create a bug",
+    "smart home",
+    "turn on",
+    "turn off",
+    "daily summary",
+    "morning briefing",
+    "draft an email",
+    "trigger automation",
+    "run automation",
+    "run my workflow",
+    "execute workflow",
+    "what can you do",
+    "report an issue",
+    "create an issue"
+  ]
+}
