@@ -95,7 +95,7 @@ PREVIOUS_ASSET_WORDS = {"it", "that", "same", "same one", "that one", "this one"
 GENERIC_ASSET_WORDS = {"crypto", "coin", "coins", "market", "price", "token", "asset"}
 
 
-class CryptoAiCapability(MatchingCapability):
+class WewrwewCapability(MatchingCapability):
     worker: AgentWorker = None
     capability_worker: CapabilityWorker = None
     initial_request: Optional[str] = None
@@ -174,15 +174,12 @@ class CryptoAiCapability(MatchingCapability):
         lowered = text.lower().strip()
         initial = (self.initial_request or "").lower().strip()
 
-        # Only treat as echo when it's clearly just a wake phrase, not a real market query.
         if initial and lowered == initial:
             if any(phrase in lowered for phrase in DIRECT_WAKE_PHRASES):
                 return True
             if not self._looks_like_market_request(lowered):
                 return True
 
-        # Do not use broad matching_hotwords here (contains generic terms like "price").
-        # That causes real user questions to be dropped as echo.
         return False
 
     def _looks_like_market_request(self, text: str) -> bool:
@@ -573,7 +570,6 @@ class CryptoAiCapability(MatchingCapability):
             return resolved, search_term
 
         if previous_resolved and self._references_previous_asset(query):
-            # User asked "what about it?" — keep using the last resolved asset.
             return previous_resolved, previous_resolved[1]
 
         if not resolved and (route.get("should_handle") == "true" or self._looks_like_market_request(query)):
@@ -585,7 +581,6 @@ class CryptoAiCapability(MatchingCapability):
 
     async def run(self):
         try:
-            # Give memory/transcription a brief moment to stabilize before first read.
             if self.worker:
                 await self.worker.session_tasks.sleep(0.2)
             initial_input = self._best_initial_input()
@@ -605,7 +600,7 @@ class CryptoAiCapability(MatchingCapability):
                         break
 
                 if self._is_exit(current_query):
-                    await self.capability_worker.speak("Alright, exiting crypto insight.")
+                    await self.capability_worker.speak("Okay, signing off. Bye!")
                     break
 
                 resolved, search_term = await self._resolve_query_turn(
@@ -635,6 +630,7 @@ class CryptoAiCapability(MatchingCapability):
 
                 follow_up = await self._ask_follow_up()
                 if not follow_up or self._is_exit(follow_up):
+                    await self.capability_worker.speak("Okay, signing off. Bye!")
                     break
                 current_query = follow_up
         except Exception as e:
