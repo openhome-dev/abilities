@@ -121,7 +121,7 @@ class PomodoroTimerCapability(MatchingCapability):
                 pass
         finally:
             self.worker.editor_logging_handler.info(
-                f"[PomodoroTimer] Ability ended"
+                "[PomodoroTimer] Ability ended"
             )
             self.capability_worker.resume_normal_flow()
 
