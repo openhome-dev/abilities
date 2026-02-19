@@ -4,7 +4,7 @@ Thank you to everyone who has contributed to OpenHome Abilities! 🎉
 
 ## Core Team
 
-- **OpenHome** — Official Abilities and platform maintenance
+- **OpenHome** - Official Abilities and platform maintenance
 
 ## Community Contributors
 

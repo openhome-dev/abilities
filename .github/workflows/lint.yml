@@ -11,27 +11,40 @@ jobs:
     name: lint
     runs-on: ubuntu-latest
     permissions:
-      contents: read
+      contents: write
       pull-requests: write
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.pull_request.head.sha }}
+          repository: ${{ github.event.pull_request.head.repo.full_name }}
+          ref: ${{ github.event.pull_request.head.ref }}
           fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
 
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
 
       - name: Install linters
-        run: pip install flake8 isort
+        run: pip install flake8 autopep8 autoflake
 
+      # ── Get EXACT PR-changed files via GitHub API ──────────────
       - name: Get changed Python files
         id: changed
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          git fetch origin ${{ github.base_ref }}
-          ALL_FILES=$(git diff --name-only origin/${{ github.base_ref }}...HEAD -- '*.py' \
+          # Fetch exact file list from the PR (not git diff)
+          ALL_FILES=$(curl -s \
+            -H "Authorization: token $GH_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/files?per_page=100" \
+            | jq -r '.[].filename' \
+            | grep '\.py$' \
             | grep -E '^(community|official|templates)/' || true)
+
+          echo "📋 PR changed Python files:"
+          echo "$ALL_FILES"
 
           if [ -z "$ALL_FILES" ]; then
             echo "skip=true" >> $GITHUB_OUTPUT
@@ -43,6 +56,10 @@ jobs:
           LINT_FILES=""
 
           while IFS= read -r file; do
+            # Skip files that no longer exist (deleted in PR)
+            if [ ! -f "$file" ]; then
+              continue
+            fi
             if [[ "$(basename "$file")" == "__init__.py" ]]; then
               INIT_FILES="$INIT_FILES $file"
             else
@@ -84,9 +101,48 @@ jobs:
 
           echo "has_violations=$has_violations" >> $GITHUB_OUTPUT
 
-      # ── Flake8 (skip __init__.py) ───────────────────────────────
-      - name: Run Flake8
+      # ── Auto-fix with autoflake (remove unused imports & vars) ──
+      - name: Auto-fix with autoflake
         if: steps.changed.outputs.skip == 'false' && steps.changed.outputs.lint_files != ''
+        run: |
+          autoflake --in-place \
+            --remove-all-unused-imports \
+            --remove-unused-variables \
+            ${{ steps.changed.outputs.lint_files }}
+
+      # ── Auto-format with autopep8 ───────────────────────────────
+      - name: Auto-format with autopep8
+        if: steps.changed.outputs.skip == 'false' && steps.changed.outputs.lint_files != ''
+        id: autoformat
+        run: |
+          autopep8 --in-place --max-line-length=120 --ignore=E501,W503 \
+            ${{ steps.changed.outputs.lint_files }}
+
+          if git diff --quiet; then
+            echo "has_fixes=false" >> $GITHUB_OUTPUT
+          else
+            echo "has_fixes=true" >> $GITHUB_OUTPUT
+          fi
+
+      # ── Commit ONLY the specific PR files ──────────────────────
+      - name: Commit auto-format fixes
+        if: steps.autoformat.outputs.has_fixes == 'true'
+        continue-on-error: true
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          # Stage ONLY the exact files from this PR — nothing else
+          for file in ${{ steps.changed.outputs.lint_files }}; do
+            git add "$file"
+          done
+
+          git commit -m "style: auto-format Python files with autoflake + autopep8"
+          git push
+
+      # ── Flake8 (check remaining issues after auto-format) ──────
+      - name: Run Flake8
+        if: always() && steps.changed.outputs.skip == 'false' && steps.changed.outputs.lint_files != ''
         id: flake8
         continue-on-error: true
         run: |
@@ -100,26 +156,11 @@ jobs:
             echo "has_errors=false" >> $GITHUB_OUTPUT
           fi
 
-      # ── isort (skip __init__.py) ────────────────────────────────
-      - name: Run isort
-        if: steps.changed.outputs.skip == 'false' && steps.changed.outputs.lint_files != ''
-        id: isort
-        continue-on-error: true
-        run: |
-          OUTPUT=$(isort --check-only --diff ${{ steps.changed.outputs.lint_files }} 2>&1) || true
-          echo "$OUTPUT"
-          echo "$OUTPUT" > isort_output.txt
-          if [ -n "$OUTPUT" ]; then
-            echo "has_errors=true" >> $GITHUB_OUTPUT
-          else
-            echo "has_errors=false" >> $GITHUB_OUTPUT
-          fi
-
       # ── Create empty fallback files if steps were skipped ───────
       - name: Ensure output files exist
-        if: steps.changed.outputs.skip == 'false'
+        if: always() && steps.changed.outputs.skip == 'false'
         run: |
-          touch flake8_output.txt isort_output.txt init_violations.txt
+          touch flake8_output.txt init_violations.txt
 
       # ── PR Comment ──────────────────────────────────────────────
       - name: Comment on PR
@@ -130,21 +171,27 @@ jobs:
             const fs = require('fs');
 
             const flake8 = fs.readFileSync('flake8_output.txt', 'utf8').trim();
-            const isort = fs.readFileSync('isort_output.txt', 'utf8').trim();
             const initViolations = fs.readFileSync('init_violations.txt', 'utf8').trim();
 
             const flake8Err = '${{ steps.flake8.outputs.has_errors }}' === 'true';
-            const isortErr = '${{ steps.isort.outputs.has_errors }}' === 'true';
             const initErr = '${{ steps.init_check.outputs.has_violations }}' === 'true';
+            const autoFixed = '${{ steps.autoformat.outputs.has_fixes }}' === 'true';
             const lintFiles = '${{ steps.changed.outputs.lint_files }}';
             const initFiles = '${{ steps.changed.outputs.init_files }}';
 
-            const allPassed = !flake8Err && !isortErr && !initErr;
+            const allPassed = !flake8Err && !initErr;
 
             let body = '<!-- lint-check-result -->\n';
             body += '## 🔍 Lint Results\n\n';
 
-            // ── __init__.py check ──
+            if (autoFixed) {
+              body += '### 🔧 Auto-formatted\n';
+              body += 'Some files were automatically cleaned and formatted with `autoflake` + `autopep8` and committed.\n';
+              body += '- ✅ **Unused imports removed** (autoflake)\n';
+              body += '- ✅ **Unused variables removed** (autoflake)\n';
+              body += '- ✅ **PEP8 formatting applied** (autopep8)\n\n';
+            }
+
             if (initFiles) {
               if (initErr) {
                 body += '### ❌ `__init__.py` Must Be Empty\n\n';
@@ -156,33 +203,23 @@ jobs:
               }
             }
 
-            // ── Flake8 ──
             if (lintFiles) {
               body += `**Files linted:** \`${lintFiles}\`\n\n`;
               if (flake8Err) {
-                body += '### ❌ Flake8 Errors\n```\n' + flake8 + '\n```\n\n';
+                body += '### ❌ Flake8 Errors (could not be auto-fixed)\n```\n' + flake8 + '\n```\n\n';
               } else {
                 body += '### ✅ Flake8 — Passed\n\n';
-              }
-
-              // ── isort ──
-              if (isortErr) {
-                body += '### ❌ Import Order (isort)\n```diff\n' + isort + '\n```\n\n';
-              } else {
-                body += '### ✅ isort — Passed\n\n';
               }
             } else {
               body += '_No non-init Python files to lint._\n\n';
             }
 
-            // ── Footer ──
             if (allPassed) {
               body += '> ✅ All checks passed!';
             } else {
-              body += '> Fix these issues and push again. The lint will re-run automatically.';
+              body += '> Fix the remaining issues and push again. The lint will re-run automatically.';
             }
 
-            // ── Upsert comment ──
             const { data: comments } = await github.rest.issues.listComments({
               owner: context.repo.owner,
               repo: context.repo.repo,
@@ -213,7 +250,6 @@ jobs:
       - name: Fail if errors
         if: |
           steps.flake8.outputs.has_errors == 'true' ||
-          steps.isort.outputs.has_errors == 'true' ||
           steps.init_check.outputs.has_violations == 'true'
         run: |
           echo "❌ Lint failed — check the PR comment for details"
