@@ -11,7 +11,7 @@ class PerplexityWebSearchCapability(MatchingCapability):
     worker: AgentWorker = None
     capability_worker: CapabilityWorker = None
 
-    #{{register capability}}
+    # {{register capability}}
 
     async def give_advice(self):
         # Introduce the web search assistant
@@ -58,14 +58,12 @@ class PerplexityWebSearchCapability(MatchingCapability):
             json=payload
         )
 
-
         # ✅ End API timer
         end_time = time.time()
         response_time = round(end_time - start_time, 3)
 
         # ✅ Log API response time
         self.worker.editor_logging_handler.info(f"⏱️ API Response Time: {response_time} seconds")
-
 
         # Log response status and raw text
         self.worker.editor_logging_handler.info(f"📡 Response Status: {response.status_code}")
@@ -81,8 +79,6 @@ class PerplexityWebSearchCapability(MatchingCapability):
 
         # Extract the assistant’s message (final summary)
         search_result = result.get("choices", [{}])[0].get("message", {}).get("content", "Sorry, I couldn't find anything.")
-
-
 
         search_result = re.sub(r"\[\d+\]", "", search_result)
         search_result = search_result.replace("  ", " ").strip()

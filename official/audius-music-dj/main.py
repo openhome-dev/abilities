@@ -1,4 +1,3 @@
-import logging
 import os
 import json
 import httpx
@@ -125,7 +124,7 @@ class AudiusMusicDjCapability(MatchingCapability):
         "context_summary": None,
         "last_played_message": None
     }
-    
+
     # Store played songs inside the class
     played_songs: dict = {
         "titles": []
@@ -164,7 +163,7 @@ class AudiusMusicDjCapability(MatchingCapability):
             self.worker.editor_logging_handler.info("🔊 Stream initialized (direct mode) after")
 
             # Stream incoming audio chunks
-            async for chunk in stream_response.aiter_bytes(chunk_size=25*1024):
+            async for chunk in stream_response.aiter_bytes(chunk_size=25 * 1024):
                 if not chunk:
                     continue
 
@@ -328,7 +327,7 @@ class AudiusMusicDjCapability(MatchingCapability):
 
             if response.status_code == 200:
                 tracks = response.json().get("data", [])
-                
+
                 # Fallback with GPT suggestion if no tracks found
                 if not tracks:
                     summary = request_dict.get("summary", "").strip()
@@ -343,7 +342,7 @@ class AudiusMusicDjCapability(MatchingCapability):
 
                     search_query = self.capability_worker.text_to_text_response(gpt_prompt, [])
                     search_query = (search_query or "").strip()
-                    
+
                     if search_query:
                         params["query"] = search_query
                         response = requests.get(search_endpoint, params=params, headers={
@@ -351,7 +350,7 @@ class AudiusMusicDjCapability(MatchingCapability):
                             "User-Agent": f"{self.app_name}/1.0"
                         })
                         tracks = response.json().get("data", [])
-                    
+
                     if not tracks:
                         await self.capability_worker.speak(
                             "Sorry, I couldn't find any tracks for that request even after trying a suggestion."
@@ -363,7 +362,7 @@ class AudiusMusicDjCapability(MatchingCapability):
                     f"{i+1}. {t.get('title','')} by {t.get('user',{}).get('name','')}, genre: {t.get('genre','Unknown')}"
                     for i, t in enumerate(tracks)
                 ])
-                
+
                 selection_prompt = f"""
                     User request: {request_dict}
                     Tracks:
@@ -372,7 +371,7 @@ class AudiusMusicDjCapability(MatchingCapability):
                     Pick the BEST matching track number (1-5), making sure NOT to pick any of these recently played songs: {already_played_titles}.
                     Return ONLY the number.
                 """
-                
+
                 choice = self.capability_worker.text_to_text_response(selection_prompt, [])
                 self.worker.editor_logging_handler.info(f"Track choice: {choice}")
 
@@ -487,7 +486,7 @@ class AudiusMusicDjCapability(MatchingCapability):
         Message: "{message}"  
         Return ONLY the JSON object.
         """
-        
+
         response = self.capability_worker.text_to_text_response(check_prompt, [])
 
         self.worker.editor_logging_handler.error(response)
@@ -508,7 +507,7 @@ class AudiusMusicDjCapability(MatchingCapability):
         await self.capability_worker.speak("Playing your favorite songs.")
         self.worker.editor_logging_handler.info(f"testing favorites: {favorites}")
         favorites = list(reversed(favorites))
-        
+
         for fav in favorites:
             try:
                 track_id = fav["song_id"]
@@ -672,7 +671,7 @@ class AudiusMusicDjCapability(MatchingCapability):
 
                     msg = f"Question: {CONTINUE_PROMPT} Answer: {msg}"
                     self.worker.editor_logging_handler.error(f"User said (formatted): {msg}")
-                    
+
                     if not msg:
                         await self.capability_worker.speak("I didn't catch that. Could you repeat?")
                         continue
@@ -695,7 +694,7 @@ class AudiusMusicDjCapability(MatchingCapability):
                         final_request = us_response
                     else:
                         self.global_context["context_summary"] = us_response.get("summary")
-                    
+
                     if us_response.get("needs_more_info"):
                         clarification_prompt = "Could you tell me the genre, artist, or song?"
                         await self.capability_worker.speak(clarification_prompt)
@@ -712,7 +711,7 @@ class AudiusMusicDjCapability(MatchingCapability):
                     else:
                         final_request = us_response
 
-                    self.worker.editor_logging_handler.error(f"Final request: {final_request}")                    
+                    self.worker.editor_logging_handler.error(f"Final request: {final_request}")
                     await self.play_song(final_request)
 
                 elif intent == "stop":
@@ -726,7 +725,7 @@ class AudiusMusicDjCapability(MatchingCapability):
 
                     if song_id:
                         favorites = self.capability_worker.get_single_key("favorites").get("value", [])
-                        
+
                         if not any(fav["song_id"] == song_id for fav in favorites):
                             favorites.append({"song_id": song_id, "song_message": song_message})
                             self.capability_worker.update_key("favorites", favorites)
@@ -742,7 +741,7 @@ class AudiusMusicDjCapability(MatchingCapability):
 
                     if song_id:
                         favorites = self.capability_worker.get_single_key("favorites").get("value", [])
-                        
+
                         new_favorites = [fav for fav in favorites if fav["song_id"] != song_id]
                         if len(new_favorites) < len(favorites):
                             self.capability_worker.update_key("favorites", new_favorites)
@@ -760,7 +759,7 @@ class AudiusMusicDjCapability(MatchingCapability):
 
             await self.capability_worker.send_data_over_websocket("music-mode", {"mode": "off"})
             self.worker.music_mode_event.clear()
-            
+
             await asyncio.sleep(1)
             self.capability_worker.resume_normal_flow()
 
@@ -773,11 +772,11 @@ class AudiusMusicDjCapability(MatchingCapability):
             self.worker = worker
             self.capability_worker = CapabilityWorker(self.worker)
             self.host = self._get_host()
-            
+
             if not self.host:
                 worker.editor_logging_handler.error("Failed to get Audius host")
                 return
-            
+
             self.worker.session_tasks.create(self.first_setup())
         except Exception as e:
             self.worker.editor_logging_handler.warning(e)
