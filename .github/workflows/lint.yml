@@ -110,9 +110,8 @@ jobs:
             fi
           done <<< "${{ steps.changed.outputs.files }}"
 
-          echo "errors<<EOF" >> $GITHUB_OUTPUT
-          echo "$ERRORS" >> $GITHUB_OUTPUT
-          echo "EOF" >> $GITHUB_OUTPUT
+          # Write errors to file (safe for JS to read)
+          echo "$ERRORS" > flake8_errors.txt
 
           if [ -n "$ERRORS" ]; then
             echo "has_errors=true" >> $GITHUB_OUTPUT
@@ -131,17 +130,20 @@ jobs:
           while IFS= read -r file; do
             if [ -f "$file" ] && [[ "$file" == *"__init__.py" ]]; then
               if [ -s "$file" ]; then
-                INIT_RESULTS="${INIT_RESULTS}❌ \`${file}\` — Should be empty but has content"$'\n'
+                INIT_RESULTS="${INIT_RESULTS}❌ ${file} — Should be empty but has content"$'\n'
                 HAS_VIOLATIONS="true"
               else
-                INIT_RESULTS="${INIT_RESULTS}✅ \`${file}\` — Empty as expected"$'\n'
+                INIT_RESULTS="${INIT_RESULTS}✅ ${file} — Empty as expected"$'\n'
               fi
             fi
           done <<< "${{ steps.changed.outputs.files }}"
 
-          echo "results<<EOF" >> $GITHUB_OUTPUT
-          echo "$INIT_RESULTS" >> $GITHUB_OUTPUT
-          echo "EOF" >> $GITHUB_OUTPUT
+          # Write results to file (safe for JS to read)
+          echo "$INIT_RESULTS" > init_results.txt
+
+          # Write linted file list to file
+          echo "${{ steps.changed.outputs.files }}" | grep -v '__init__.py' > linted_files.txt || true
+
           echo "has_violations=$HAS_VIOLATIONS" >> $GITHUB_OUTPUT
 
       # ──────────────── Post PR Comment ────────────────────────────────
@@ -149,70 +151,95 @@ jobs:
         if: always() && steps.changed.outputs.found == 'true'
         uses: actions/github-script@v7
         with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
-            const hasAutoFixes = '${{ steps.check.outputs.has_fixes }}' === 'true';
-            const errors = `${{ steps.flake8.outputs.errors }}`.trim();
-            const hasErrors = '${{ steps.flake8.outputs.has_errors }}' === 'true';
-            const initResults = `${{ steps.init_check.outputs.results }}`.trim();
-            const hasViolations = '${{ steps.init_check.outputs.has_violations }}' === 'true';
-            const files = `${{ steps.changed.outputs.files }}`.trim();
+            const fs = require('fs');
+            const marker = '<!-- lint-bot -->';
 
-            let body = `## 🔍 Lint Results\n\n`;
+            let body = `${marker}\n`;
+
+            // ── Auto-format section ──
+            const hasAutoFixes = '${{ steps.check.outputs.has_fixes }}' === 'true';
 
             if (hasAutoFixes) {
-              body += `### 🔧 Auto-formatted & Auto-fixed\n`;
+              body += `## 🔧 Auto-formatted & Auto-fixed\n\n`;
               body += `Files were automatically cleaned and formatted, then committed:\n`;
               body += `- ✅ **Unused imports removed** (autoflake)\n`;
               body += `- ✅ **Unused variables removed** (autoflake)\n`;
               body += `- ✅ **PEP8 formatting applied** (autopep8)\n\n`;
             }
 
-            if (initResults) {
-              body += `### \`__init__.py\` Check\n${initResults}\n\n`;
+            // ── __init__.py check section ──
+            try {
+              const initResults = fs.readFileSync('init_results.txt', 'utf8').trim();
+              if (initResults) {
+                body += `### \`__init__.py\` Check\n${initResults}\n\n`;
+              }
+            } catch (e) {
+              // no init files changed — skip
             }
 
-            const lintedFiles = files.split('\n').filter(f => f && !f.includes('__init__.py'));
-            body += `**Files linted:** ${lintedFiles.map(f => '\`' + f + '\`').join(', ')}\n\n`;
+            // ── Linted files list ──
+            try {
+              const linted = fs.readFileSync('linted_files.txt', 'utf8').trim();
+              if (linted) {
+                const fileList = linted.split('\n').filter(f => f.trim());
+                body += `**Files linted:** ${fileList.map(f => '\`' + f + '\`').join(', ')}\n\n`;
+              }
+            } catch (e) {
+              // no linted files — skip
+            }
+
+            // ── Flake8 errors section ──
+            const hasErrors = '${{ steps.flake8.outputs.has_errors }}' === 'true';
+            const hasViolations = '${{ steps.init_check.outputs.has_violations }}' === 'true';
 
             if (hasErrors) {
-              body += `### ❌ Flake8 Errors (could not be auto-fixed)\n\`\`\`\n${errors}\n\`\`\`\n`;
-              body += `Fix the remaining issues and push again. The lint will re-run automatically.\n`;
+              try {
+                const errors = fs.readFileSync('flake8_errors.txt', 'utf8').trim();
+                body += `### ❌ Flake8 Errors (could not be auto-fixed)\n\`\`\`\n${errors}\n\`\`\`\n`;
+                body += `Fix the remaining issues and push again. The lint will re-run automatically.\n`;
+              } catch (e) {
+                body += `### ❌ Flake8 errors found — check workflow logs.\n`;
+              }
             } else if (hasViolations) {
               body += `### ⚠️ \`__init__.py\` violations found — see above.\n`;
             } else {
               body += `### ✅ All checks passed! No remaining lint errors.\n`;
             }
 
-            // Update existing bot comment or create new one
+            // ── Upsert comment ──
             const { data: comments } = await github.rest.issues.listComments({
               owner: context.repo.owner,
               repo: context.repo.repo,
               issue_number: context.issue.number,
             });
 
-            const botComment = comments.find(c => c.body.includes('🔍 Lint Results'));
+            const existing = comments.find(c => c.body.includes(marker));
 
-            if (botComment) {
+            if (existing) {
               await github.rest.issues.updateComment({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
-                comment_id: botComment.id,
-                body: body,
+                comment_id: existing.id,
+                body,
               });
             } else {
               await github.rest.issues.createComment({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
                 issue_number: context.issue.number,
-                body: body,
+                body,
               });
             }
 
       # ──────────────── Fail the workflow if any check failed ──────────
       - name: Fail if errors
         if: |
-          steps.flake8.outputs.has_errors == 'true' ||
-          steps.init_check.outputs.has_violations == 'true'
+          always() && (
+            steps.flake8.outputs.has_errors == 'true' ||
+            steps.init_check.outputs.has_violations == 'true'
+          )
         run: |
           echo "❌ Lint failed — check the PR comment for details"
           exit 1
