@@ -174,7 +174,65 @@ Brief description of the conversation flow.
 - Set trigger words in the dashboard
 - Make sure all exit paths work (say "stop", "exit", etc.)
 
-### 7. Sync with `dev` Before Submitting
+### 7. Write Automated Tests (Recommended)
+
+Automated tests ensure your ability works reliably and helps catch bugs before users encounter them.
+
+**Quick Start:**
+
+```bash
+# Install test dependencies (if not already installed)
+pip install pytest pytest-asyncio
+
+# Run tests for your ability
+pytest abilities/__tests__/community/test_your_ability.py -v
+```
+
+**Creating Your Test File:**
+
+1. Create `abilities/__tests__/community/test_your_ability.py`
+2. Use the test utilities to mock user interactions:
+
+```python
+import pytest
+from __tests__.utils import (
+    create_mock_worker_with_capability,
+    assert_spoke
+)
+
+from community.your_ability.main import YourAbilityCapability
+
+
+class TestYourAbilityBasic:
+    @pytest.mark.asyncio
+    async def test_basic_flow(self):
+        mock_worker, mock_cap_worker, capability = create_mock_worker_with_capability(
+            YourAbilityCapability
+        )
+        
+        # Configure mock user responses
+        mock_cap_worker.set_user_responses(["test input", "exit"])
+        
+        # Run your ability
+        await capability.your_main_method()
+        
+        # Verify behavior
+        assert_spoke(mock_cap_worker, "expected response")
+```
+
+**What to Test:**
+- [ ] Basic happy-path flow
+- [ ] Error handling (API failures, invalid input)
+- [ ] Edge cases (empty input, very long input)
+- [ ] Exit conditions ("stop", "exit", etc.)
+- [ ] Configuration loading
+
+**Resources:**
+- Full testing guide: `abilities/__tests__/README.md`
+- Example tests: Check `__tests__/official/` for weather, basic-advisor examples
+- Test utilities: `__tests__/utils.py` — mock helpers, assertion utilities
+
+### 8. Sync with `dev` Before Submitting
 
 Before you push, make sure your branch is current with the latest `dev` from upstream:
 
@@ -192,7 +250,7 @@ git merge upstream/dev
 
 Resolve any conflicts, then continue.
 
-### 8. Submit Your PR
+### 9. Submit Your PR
 
 ```bash
 git add community/your-ability-name/
@@ -241,6 +299,8 @@ Every community PR is reviewed for:
 
 ### Nice to Have
 
+- [ ] Automated test suite included (`__tests__/community/test_your_ability.py`)
+- [ ] Tests cover success scenarios, error handling, and edge cases
 - [ ] Spoken responses are short and natural (this is voice, not text)
 - [ ] Exit/stop handling in any looping Ability
 - [ ] Inline comments explaining non-obvious logic
