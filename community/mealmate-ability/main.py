@@ -406,7 +406,7 @@ User: {user_text}
         except Exception:
             await self._say("Something went wrong. Please try again.")
 
-        await asyncio.sleep(1)
+        await self.worker.session_tasks.sleep(1)
         self.capability_worker.resume_normal_flow()
 
     def call(
