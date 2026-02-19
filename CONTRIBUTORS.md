@@ -28,3 +28,4 @@ Format: - **@username** — ability-name ([ability-name](community/ability-name/
 - **[@pipinstallshan](https://github.com/pipinstallshan)** — crypto-insight ([crypto-insight](community/crypto-insight/))
 - **[@crunchdomo](https://github.com/crunchdomo)** — redcast-checker ([redcast-checker](community/redcast-checker/))
 - **[@Husnain-Bhatti](https://github.com/Husnain-Bhatti)** — mealmate-ability ([mealmate-ability](community/mealmate-ability/))
+- **[@jibzus](https://github.com/jibzus)** — pomodoro-timer ([pomodoro-timer](community/pomodoro-timer/))
