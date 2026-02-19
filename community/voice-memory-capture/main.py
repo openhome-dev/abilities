@@ -9,7 +9,7 @@ from src.main import AgentWorker
 from src.agent.capability_worker import CapabilityWorker
 
 
-class VoiceMemoryCaptureCapability(MatchingCapability):
+class VoiceMemoryCapture(MatchingCapability):
     worker: AgentWorker = None
     capability_worker: CapabilityWorker = None
 
@@ -37,21 +37,21 @@ class VoiceMemoryCaptureCapability(MatchingCapability):
     async def run(self):
         """Main logic when the ability is triggered."""
         try:
-            # Safely get the trigger text from history
+            # Safely get trigger text from history
             history = self.worker.agent_memory.full_message_history
             trigger_text = ""
             if history:
                 last_msg = history[-1]
                 if isinstance(last_msg, dict):
                     trigger_text = last_msg.get("content", "")
-                elif hasattr(last_msg, 'content'):
+                elif hasattr(last_msg, "content"):
                     trigger_text = last_msg.content
                 else:
                     trigger_text = str(last_msg)
 
             lower_text = trigger_text.lower().strip()
 
-            # Determine mode based on keywords (reliable fallback)
+            # Keyword-based mode detection
             mode = "save"
             content = trigger_text
             query = trigger_text
@@ -87,7 +87,7 @@ class VoiceMemoryCaptureCapability(MatchingCapability):
 
         except Exception as e:
             await self.capability_worker.speak("Something went wrong with memory. Try again?")
-            if hasattr(self.worker, 'editor_logging_handler'):
+            if hasattr(self.worker, "editor_logging_handler"):
                 self.worker.editor_logging_handler.warning(f"Memory error: {str(e)}")
 
         finally:
@@ -122,7 +122,7 @@ Output: {"summary": "Need to buy more dog food", "category": "reminder", "keywor
         raw = raw.replace("```json", "").replace("```", "").strip()
         try:
             parsed = json.loads(raw)
-        except:
+        except Exception:
             parsed = {"summary": content, "category": "note", "keywords": []}
 
         entry = {
@@ -187,7 +187,7 @@ Output: {"summary": "Need to buy more dog food", "category": "reminder", "keywor
                 ts = datetime.fromisoformat(m["timestamp"])
                 days_ago = (current_time - ts).days
                 m["days_ago"] = days_ago
-            except:
+            except Exception:
                 m["days_ago"] = 0
             enriched_memories.append(m)
 
@@ -209,7 +209,7 @@ QUERY: {query}"""
         raw = raw.replace("```json", "").replace("```", "").strip()
         try:
             matches = json.loads(raw)
-        except:
+        except Exception:
             matches = []
 
         if not matches:
