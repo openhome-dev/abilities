@@ -67,7 +67,7 @@ Choose the appropriate version:
 ### Step 1: Get the Template
 Find the OpenClaw template ability from:
 - OpenHome Dashboard abilities library, OR
-- [GitHub Repository](https://github.com/OpenHome)
+- [GitHub Repository](https://github.com/OpenHome-dev/abilities)
 
 ### Step 2: Customize for Your Use Case
 This template provides the basic structure. Modify it to:
