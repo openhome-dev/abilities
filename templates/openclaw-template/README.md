@@ -54,7 +54,7 @@ Choose the appropriate version:
    - **Linux**: `chmod +x` and run, grant required permissions
 
 2. **Copy your OpenHome API Key**
-   - Go to [OpenHome Dashboard → Settings → API Keys](https://app.openhome.xyz/dashboard/settings)
+   - Go to [OpenHome Dashboard → Settings → API Keys](https://app.openhome.com/dashboard/settings)
    - Copy your API key
 
 3. **Connect the client**
@@ -591,9 +591,9 @@ Voice Input → OpenHome Ability → exec_local_command()
 - **[OpenClaw Client](https://drive.google.com/drive/folders/10qK75I-bFB2D98YJ6dH3tQFsvEk44Y7-)** — Download for your OS (required)
 
 **OpenHome:**
-- [Dashboard](https://app.openhome.xyz/dashboard)
-- [API Key Management](https://app.openhome.xyz/dashboard/settings) — Get your API key here
-- [Abilities Library](https://app.openhome.xyz/dashboard/abilities)
+- [Dashboard](https://app.openhome.com/dashboard)
+- [API Key Management](https://app.openhome.com/dashboard/settings) — Get your API key here
+- [Abilities Library](https://app.openhome.com/dashboard/abilities)
 
 **OpenClaw:**
 - CLI Help: `openclaw --help`
