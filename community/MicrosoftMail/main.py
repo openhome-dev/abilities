@@ -293,7 +293,7 @@ class OutlookConnectorCapability(MatchingCapability):
     # REGISTRATION
     # =========================================================================
     # Do not change following tag of register capability
-    #{{register capability}}
+    # {{register capability}}
 
     @classmethod
     def register_capability(cls) -> "MatchingCapability":
