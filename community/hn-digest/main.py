@@ -75,12 +75,21 @@ class HNDigestCapability(MatchingCapability):
         self.stories = []
         self.initial_request = None
 
-        for attr in ("transcription", "last_transcription", "current_transcription"):
+        try:
+            if worker.transcription and str(worker.transcription).strip():
+                self.initial_request = str(worker.transcription).strip()
+        except Exception:
+            pass
+        if not self.initial_request:
             try:
-                val = getattr(worker, attr, None)
-                if val and str(val).strip():
-                    self.initial_request = str(val).strip()
-                    break
+                if worker.last_transcription and str(worker.last_transcription).strip():
+                    self.initial_request = str(worker.last_transcription).strip()
+            except Exception:
+                pass
+        if not self.initial_request:
+            try:
+                if worker.current_transcription and str(worker.current_transcription).strip():
+                    self.initial_request = str(worker.current_transcription).strip()
             except Exception:
                 pass
 
