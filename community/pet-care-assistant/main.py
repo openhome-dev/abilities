@@ -46,8 +46,8 @@ ACTIVITY_TYPES = {
 }
 
 # Serper.dev API key (https://serper.dev — 2,500 free queries)
-# Set via environment variable SERPER_API_KEY or use placeholder default
-SERPER_API_KEY = os.getenv("SERPER_API_KEY", "your_serper_api_key_here")
+# Users should replace this placeholder with their actual API key
+SERPER_API_KEY = "your_serper_api_key_here"
 
 LOOKUP_SYSTEM_PROMPT = (
     "You are a pet care assistant answering a question about the user's "
