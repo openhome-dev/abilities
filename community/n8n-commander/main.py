@@ -665,12 +665,12 @@ class N8nCommanderCapability(MatchingCapability):
             # greet the user
             count = len(workflows)
             await self.capability_worker.speak(
-                f"Hey, I'm your automation assistant. "
-                f"I can trigger your n8n workflows by voice."
+                "Hey, I'm your automation assistant. "
+                "I can trigger your n8n workflows by voice."
             )
             await self.capability_worker.speak(
                 f"You have {count} workflow{'s' if count != 1 else ''} set up. "
-                f"Say help to hear them, or tell me what you need."
+                "Say help to hear them, or tell me what you need."
             )
 
             # check if the trigger phrase already contains a command
@@ -742,7 +742,7 @@ class N8nCommanderCapability(MatchingCapability):
                     ]
                     names_str = ", ".join(wf_names[:5])
                     await self.capability_worker.speak(
-                        f"I'm not sure which workflow to use. "
+                        "I'm not sure which workflow to use. "
                         f"Your options are: {names_str}. Which one?"
                     )
                     continue
