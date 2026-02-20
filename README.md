@@ -179,11 +179,12 @@ When promoted, the Ability moves to `official/`, gets the blue badge on Marketpl
 | Doc | Description |
 |-----|-------------|
 | [Getting Started](docs/getting-started.md) | Build your first Ability in 5 minutes |
-| [CapabilityWorker API](docs/capability-worker-api.md) | Full SDK reference |
+| [CapabilityWorker](docs/capability-worker.md) | Full SDK reference |
 | [Patterns Cookbook](docs/patterns.md) | Common patterns with code examples |
 | [Publishing to Marketplace](docs/publishing-to-marketplace.md) | How to ship your Ability to users |
 | [Promotion Path](docs/promotion.md) | How community Abilities become official |
-
+| [OpenHome SDK Reference](docs/OpenHome_SDK_Reference.md) | Complete guide to SDK
+| [Building Great OpenHome Abilities](docs/Building_Great_OpenHome_Abilities.md) | Guide to buil great OpenHome abilities
 ---
 
 ## 📜 License

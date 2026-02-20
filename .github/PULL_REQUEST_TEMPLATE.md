@@ -39,6 +39,7 @@
 - [ ] No blocked imports (`redis`, `connection_manager`, `user_config`)
 - [ ] No `asyncio.sleep()` or `asyncio.create_task()` — using `session_tasks`
 - [ ] Error handling on all external calls
+- [ ] Tested in OpenHome Live Editor
 
 ## Anything else?
 

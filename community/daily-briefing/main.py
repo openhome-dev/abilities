@@ -1,16 +1,22 @@
 import json
 import os
-import re
+
 import requests
 from src.agent.capability import MatchingCapability
-from src.main import AgentWorker
 from src.agent.capability_worker import CapabilityWorker
-
+from src.main import AgentWorker
 
 # ── Default location (New York) — user can change via voice ──────────
 DEFAULT_LAT = 40.71
 DEFAULT_LON = -74.01
 DEFAULT_CITY = "New York"
+
+# ── 3rd-party API keys (all free, no keys required) ─────────────────
+# Uncomment and set these if you switch to a key-based provider:
+# WEATHER_API_KEY = "your-weather-api-key-here"
+# QUOTE_API_KEY = "your-quote-api-key-here"
+# FACT_API_KEY = "your-fact-api-key-here"
+
 
 # ── Free API endpoints (no keys needed) ──────────────────────────────
 WEATHER_URL = "https://api.open-meteo.com/v1/forecast"
