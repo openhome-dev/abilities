@@ -24,18 +24,19 @@ A voice-first ability that helps users track and manage their pets' daily lives.
 
 | Service | API | Auth | Cost |
 |---|---|---|---|
-| Emergency Vet Finder | Google Places API (Text Search) | User provides Google API key | Pay-per-use (user's billing) |
+| Emergency Vet Finder | Serper Maps API | User provides Serper API key | 2,500 free queries/month; pay-per-use after |
+| Food Recall News | Serper News API | Same Serper API key | Included in same quota |
 | Weather Safety | Open-Meteo | None needed | Free |
 | Location Detection | ip-api.com | None needed | Free |
-| Food Recalls | openFDA API | None needed | Free |
+| Food Recall Events | openFDA API | None needed | Free |
 | All other features | LLM + File Storage (built-in) | None needed | Free |
 
-If Google Places API key is not configured, the emergency vet feature gracefully falls back to showing the user's saved vet info. All other features work with zero external accounts.
+If the Serper API key is not configured, the emergency vet feature gracefully falls back to showing the user's saved vet info, and food recall checks use openFDA only. Get a free key at [serper.dev](https://serper.dev). All other features work with zero external accounts.
 
 ## Setup
 
 1. Add the ability to your OpenHome Personality
-2. (Optional) Set your Google Places API key in `main.py` for emergency vet search
+2. (Optional) Set your Serper API key in `main.py` for emergency vet search and food recall news (get a free key at [serper.dev](https://serper.dev))
 3. On first activation, the ability walks you through setting up pet profiles via voice
 
 ## Suggested Trigger Words

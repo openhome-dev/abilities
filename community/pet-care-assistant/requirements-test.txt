@@ -1,0 +1,7 @@
+# Test dependencies for Pet Care Assistant
+
+pytest>=7.4.0
+pytest-asyncio>=0.21.0
+pytest-mock>=3.11.0
+pytest-cov>=4.1.0
+hypothesis>=6.82.0
