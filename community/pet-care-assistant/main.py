@@ -11,10 +11,10 @@ from src.agent.capability_worker import CapabilityWorker
 from src.main import AgentWorker
 
 # Service imports (separate files for better code organization)
-from pet_data_service import PetDataService
-from activity_log_service import ActivityLogService
-from external_api_service import ExternalAPIService
-from llm_service import LLMService
+from .pet_data_service import PetDataService
+from .activity_log_service import ActivityLogService
+from .external_api_service import ExternalAPIService
+from .llm_service import LLMService
 
 # =============================================================================
 # PET CARE ASSISTANT
@@ -138,6 +138,12 @@ class PetCareAssistantCapability(MatchingCapability):
     pet_data: dict = None
     activity_log: list = None
     _geocode_cache: dict = None  # In-memory cache for geocoding results
+
+    # Service instances (initialized in run())
+    pet_data_service: "PetDataService" = None
+    activity_log_service: "ActivityLogService" = None
+    external_api_service: "ExternalAPIService" = None
+    llm_service: "LLMService" = None
 
     @classmethod
     def register_capability(cls) -> "MatchingCapability":
