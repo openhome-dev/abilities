@@ -85,7 +85,7 @@ nohup python3 local_client.py > /tmp/openhome_client.log 2>&1 &
 
 1. Find **OpenHome Local Link** template from:
    - OpenHome Dashboard abilities library, OR
-   - [GitHub Repository](https://github.com/OpenHome)
+   - [GitHub Repository](https://github.com/OpenHome-dev/abilities)
 
 2. Add to your OpenHome Personality
 
