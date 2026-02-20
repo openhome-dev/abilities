@@ -533,7 +533,7 @@ class PomodoroFocusTimerCapability(MatchingCapability):
                 elif action in ("time", "none", "skip_checkins"):
                     continue
 
-            await asyncio.sleep(0)
+            await self.worker.session_tasks.sleep(0)
 
     async def run_break(self, duration_minutes: int, is_long_break: bool):
         duration_seconds = duration_minutes * 60
@@ -589,7 +589,7 @@ class PomodoroFocusTimerCapability(MatchingCapability):
                     await self.capability_worker.speak("Cancelling and exiting.")
                     return True
 
-            await asyncio.sleep(0)
+            await self.worker.session_tasks.sleep(0)
 
     async def speak_session_summary(self, session_count: int):
         history = await self.get_history()
