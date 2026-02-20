@@ -96,6 +96,8 @@ class OutlookBriefCapability(MatchingCapability):
     # REGISTRATION & ENTRY
     # -------------------------------------------------------------------------
 
+    # {{register capability}}
+
     @classmethod
     def register_capability(cls) -> "MatchingCapability":
         with open(
