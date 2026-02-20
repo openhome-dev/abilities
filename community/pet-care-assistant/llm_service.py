@@ -74,8 +74,10 @@ CLASSIFY_PROMPT = (
     "- 'food recall', 'recall check', 'food safe' => food_recall\n"
     "- 'add a pet', 'new pet', 'update', 'change vet', 'edit pet' => edit_pet\n"
     "- 'remove pet', 'delete pet' => edit_pet with action remove_pet\n"
-    "- 'clear log', 'clear activity log', 'delete all logs' => edit_pet with action clear_log\n"
-    "- 'start over', 'reset everything', 'delete everything', 'wipe all data', 'fresh start' => edit_pet with action reset_all\n"
+    "- 'clear log', 'clear activity log', 'delete all logs', 'clear history' => edit_pet with action clear_log (ONLY removes activity history, pets stay)\n"
+    "- 'start over', 'reset everything', 'delete everything', 'wipe all data', 'fresh start', 'wipe everything', 'clean slate', 'start from scratch', 'erase everything' => edit_pet with action reset_all (deletes ALL data: pets + logs + reminders)\n"
+    "- IMPORTANT: 'delete everything' and 'start over' always mean reset_all, NOT clear_log\n"
+    "- 'what pets', 'do I have any pets', 'any animals', 'list my pets', 'how many pets', 'what animals do I have' => lookup with query 'list registered pets'\n"
     "- 'remind me', 'set a reminder', 'alert me' => reminder with action set\n"
     "- 'my reminders', 'list reminders', 'what reminders' => reminder with action list\n"
     "- 'delete reminder', 'cancel reminder', 'remove reminder' => reminder with action delete\n"
@@ -94,7 +96,12 @@ CLASSIFY_PROMPT = (
     '"Is it safe for Luna outside?" -> {{"mode": "weather", "pet_name": "Luna"}}\n'
     '"Any pet food recalls?" -> {{"mode": "food_recall"}}\n'
     '"Add a new pet" -> {{"mode": "edit_pet", "action": "add_pet", "pet_name": null, "details": "add new pet"}}\n'
+    '"Clear activity log" -> {{"mode": "edit_pet", "action": "clear_log", "pet_name": null, "details": "clear logs"}}\n'
     '"Start over" -> {{"mode": "edit_pet", "action": "reset_all", "pet_name": null, "details": "reset all data"}}\n'
+    '"Delete everything" -> {{"mode": "edit_pet", "action": "reset_all", "pet_name": null, "details": "reset all data"}}\n'
+    '"Wipe all data" -> {{"mode": "edit_pet", "action": "reset_all", "pet_name": null, "details": "reset all data"}}\n'
+    '"What pets do I have?" -> {{"mode": "lookup", "pet_name": null, "query": "list registered pets"}}\n'
+    '"Do I have any animals?" -> {{"mode": "lookup", "pet_name": null, "query": "list registered pets"}}\n'
     '"Remind me to feed Luna in 2 hours" -> {{"mode": "reminder", "action": "set", "pet_name": "Luna", "activity": "feeding", "time_description": "in 2 hours"}}\n'
     '"What reminders do I have?" -> {{"mode": "reminder", "action": "list", "pet_name": null, "activity": null, "time_description": null}}\n'
 )

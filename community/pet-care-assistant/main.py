@@ -565,8 +565,33 @@ class PetCareAssistantCapability(MatchingCapability):
 
     async def _handle_lookup(self, intent: dict):
         """Answer a question about pet activity history."""
-        pet = await self._resolve_pet_async(intent.get("pet_name"))
         query = intent.get("query", "")
+
+        # Handle pet inventory queries directly from pet_data
+        if "list registered pets" in query.lower() or any(
+            w in query.lower()
+            for w in ["what pets", "any pets", "any animals", "list pets", "how many pets"]
+        ):
+            pets = self.pet_data.get("pets", [])
+            if not pets:
+                await self.capability_worker.speak(
+                    "You don't have any pets set up yet. Say 'add a new pet' to get started."
+                )
+            elif len(pets) == 1:
+                p = pets[0]
+                await self.capability_worker.speak(
+                    f"You have one pet: {p['name']}, a {p.get('breed', '')} {p['species']}."
+                )
+            else:
+                names = ", ".join(
+                    f"{p['name']} ({p.get('breed', '')} {p['species']})" for p in pets
+                )
+                await self.capability_worker.speak(
+                    f"You have {len(pets)} pets: {names}."
+                )
+            return
+
+        pet = await self._resolve_pet_async(intent.get("pet_name"))
 
         if pet:
             relevant_logs = [
