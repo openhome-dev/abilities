@@ -64,6 +64,8 @@ A professional, voice-driven productivity tool for OpenHome that manages structu
 No API keys required - uses built-in OpenHome SDK only.
 
 ---
+Tigger Word:
+Focus Timer. 
 
 ## 📖 Complete User Guide
 
