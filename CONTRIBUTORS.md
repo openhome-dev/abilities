@@ -24,7 +24,7 @@ Format: - **@username** — ability-name ([ability-name](community/ability-name/
 - **[@alimujtaba478](https://github.com/alimujtaba478)** — x-news-feed ([x-news-feed](community/x-news-feed/))
 - **[@Akio9090-dev](https://github.com/Akio9090-dev)** — WeatherPro ([WeatherPro](community/WeatherPro/))
 - **[@RyanBhandal](https://github.com/RyanBhandal)** — Outlook ([Outlook](community/Outlook/))
-- **[@fiction17](https://github.com/fiction17)** — flight-price-checker ([flight-price-checker](community/flight-price-checker/))
+- **[@fiction17](https://github.com/fiction17)** — flight-price-checker ([flight-price-checker](community/flight-price-checker/)), voice-memory-capture ([voice-memory-capture](community/voice-memory-capture/))
 - **[@pipinstallshan](https://github.com/pipinstallshan)** — crypto-insight ([crypto-insight](community/crypto-insight/)), vibe-trivia ([vibe-trivia](community/vibe-trivia/))
 - **[@crunchdomo](https://github.com/crunchdomo)** — redcast-checker ([redcast-checker](community/redcast-checker/))
 - **[@Husnain-Bhatti](https://github.com/Husnain-Bhatti)** — mealmate-ability ([mealmate-ability](community/mealmate-ability/))
