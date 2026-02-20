@@ -3,7 +3,7 @@ from src.agent.capability import MatchingCapability
 from src.main import AgentWorker
 from src.agent.capability_worker import CapabilityWorker
 
-class OpenclawCapability(MatchingCapability):
+class OpentestCapability(MatchingCapability):
     worker: AgentWorker = None
     capability_worker: CapabilityWorker = None
     
@@ -34,23 +34,8 @@ class OpenclawCapability(MatchingCapability):
 
         self.worker.editor_logging_handler.info(response)
         # Speak the response
-        check_response_system_prompt = """You are a voice assistant. Convert a command execution result into ONE short spoken sentence.
-
-        Rules:
-        - Maximum 1 sentence, 15 words or less
-        - No JSON, no markdown, no code blocks, no quotes
-        - No phrases like "Here's the raw response" or "The command ran"
-        - If successful with no output: confirm the action was done (e.g. "Slack is now open." or "Slack has been closed.")
-        - If successful with output: speak only the useful information (e.g. "Disk usage is at 42 percent.")
-        - If failed: say what went wrong simply (e.g. "I couldn't find Slack on this machine.")
-        - Sound natural, like a human assistant speaking out loud"""
-        result = self.capability_worker.text_to_text_response(
-            "Original user request: '%s'. Command result: %s" % (user_inquiry, response),
-            history,
-            check_response_system_prompt,
-        )
-        if result:
-            await self.capability_worker.speak(result)
+        
+        await self.capability_worker.speak(response["data"])
         # Resume the normal workflow
         self.capability_worker.resume_normal_flow()
 
