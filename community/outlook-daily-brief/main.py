@@ -6,8 +6,8 @@ One file, one class. Microsoft Graph (OAuth) + Open-Meteo (free) API.
 
 import asyncio
 import json
-import os
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Dict, List, Optional
 
 import requests
@@ -95,15 +95,12 @@ class OutlookBriefCapability(MatchingCapability):
     # -------------------------------------------------------------------------
     # REGISTRATION & ENTRY
     # -------------------------------------------------------------------------
-
     # {{register capability}}
 
     @classmethod
     def register_capability(cls) -> "MatchingCapability":
-        with open(
-            os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.json")
-        ) as file:
-            data = json.load(file)
+        config_path = Path(__file__).resolve().parent / "config.json"
+        data = json.loads(config_path.read_text(encoding="utf-8"))
         return cls(
             unique_name=data["unique_name"],
             matching_hotwords=data["matching_hotwords"],
