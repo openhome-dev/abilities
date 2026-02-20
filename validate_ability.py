@@ -134,8 +134,7 @@ def validate_ability(path: str) -> ValidationResult:
 
         if not has_register_tag:
             result.error(
-                "Missing register capability tag — add the following lines to your class:\n"
-                "    # Do not change following tag of register capability\n"
+                "Missing register capability tag — add the following line to your class:\n"
                 "    #{{register capability}}\n"
                 "See: https://docs.openhome.com/how_to_build_an_ability"
             )
