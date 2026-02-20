@@ -54,7 +54,6 @@ class ExternalAPIService:
             if resp.status_code == 200:
                 try:
                     data = resp.json()
-                    # Validate response has required fields
                     if "current" not in data:
                         self.worker.editor_logging_handler.error(
                             "[PetCare] Weather API response missing 'current' field"
@@ -86,7 +85,9 @@ class ExternalAPIService:
             )
             return None
 
-    async def search_emergency_vets(self, lat: float, lon: float, location: str) -> list:
+    async def search_emergency_vets(
+        self, lat: float, lon: float, location: str
+    ) -> list:
         """Search for emergency vets using Serper Maps API (non-blocking).
 
         Args:
@@ -275,7 +276,12 @@ class ExternalAPIService:
                     date = item.get("date", "")
                     if title:
                         headlines.append(
-                            {"source": "News", "title": title, "snippet": snippet, "date": date}
+                            {
+                                "source": "News",
+                                "title": title,
+                                "snippet": snippet,
+                                "date": date,
+                            }
                         )
             elif news_resp.status_code in (401, 403):
                 self.worker.editor_logging_handler.error(
@@ -321,9 +327,16 @@ class ExternalAPIService:
                 if data.get("status") == "success":
                     # Check for cloud/VPN IPs
                     isp = data.get("isp", "").lower()
+                    # Warn if cloud/VPN IP detected (location may be inaccurate)
                     if any(
                         cloud in isp
-                        for cloud in ["amazon", "google", "microsoft", "cloudflare", "digital ocean"]
+                        for cloud in [
+                            "amazon",
+                            "google",
+                            "microsoft",
+                            "cloudflare",
+                            "digital ocean",
+                        ]
                     ):
                         self.worker.editor_logging_handler.warning(
                             f"[PetCare] Detected cloud/VPN IP ({isp}), location may be inaccurate"
@@ -344,7 +357,9 @@ class ExternalAPIService:
 
         return None
 
-    async def geocode_location(self, location: str, geocode_cache: dict) -> Optional[dict]:
+    async def geocode_location(
+        self, location: str, geocode_cache: dict
+    ) -> Optional[dict]:
         """Geocode a location string to lat/lon (non-blocking, with caching).
 
         Args:
@@ -354,7 +369,6 @@ class ExternalAPIService:
         Returns:
             Dict with lat, lon or None if geocoding fails
         """
-        # Check cache first
         if location in geocode_cache:
             self.worker.editor_logging_handler.info(
                 f"[PetCare] Geocoding cache hit for: {location}"
@@ -371,8 +385,10 @@ class ExternalAPIService:
                 data = resp.json()
                 results = data.get("results", [])
                 if results:
-                    result = {"lat": results[0]["latitude"], "lon": results[0]["longitude"]}
-                    # Cache the result
+                    result = {
+                        "lat": results[0]["latitude"],
+                        "lon": results[0]["longitude"],
+                    }
                     geocode_cache[location] = result
                     return result
 

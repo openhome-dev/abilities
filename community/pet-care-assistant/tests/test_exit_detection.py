@@ -8,7 +8,8 @@ Tests the three-tier exit detection system:
 """
 
 import pytest
-from hypothesis import given, strategies as st
+from hypothesis import given
+from hypothesis import strategies as st
 
 
 class TestCleanInput:
@@ -269,12 +270,16 @@ class TestIsExitLLMFallback:
 
     def test_llm_says_yes_with_extra_text(self, capability):
         """Should handle LLM response with extra text."""
-        capability.capability_worker.text_to_text_response.return_value = "yes, they want to exit"
+        capability.capability_worker.text_to_text_response.return_value = (
+            "yes, they want to exit"
+        )
         assert capability.llm_service.is_exit_llm("I guess") is True
 
     def test_llm_failure_returns_false(self, capability):
         """Should return False (fail safe) when LLM call fails."""
-        capability.capability_worker.text_to_text_response.side_effect = Exception("LLM error")
+        capability.capability_worker.text_to_text_response.side_effect = Exception(
+            "LLM error"
+        )
         assert capability.llm_service.is_exit_llm("maybe") is False
 
     def test_llm_prompt_structure(self, capability):
@@ -293,9 +298,10 @@ class TestIsExitPropertyBased:
     @given(st.text())
     def test_never_crashes(self, text):
         """Should never crash regardless of input."""
+        from unittest.mock import MagicMock
+
         from llm_service import LLMService
         from main import PetCareAssistantCapability
-        from unittest.mock import MagicMock
 
         # Create capability with mocked dependencies inside test
         cap = PetCareAssistantCapability(unique_name="test", matching_hotwords=[])
@@ -323,9 +329,10 @@ class TestIsExitPropertyBased:
     @given(st.text(alphabet=st.characters(blacklist_categories=("Cs",)), min_size=1))
     def test_exit_detection_deterministic(self, text):
         """Exit detection should be deterministic (same input = same output)."""
+        from unittest.mock import MagicMock
+
         from llm_service import LLMService
         from main import PetCareAssistantCapability
-        from unittest.mock import MagicMock
 
         # Create capability with mocked dependencies inside test
         cap = PetCareAssistantCapability(unique_name="test", matching_hotwords=[])
@@ -374,4 +381,6 @@ class TestIsExitIntegration:
             "Can I walk Luna today?",
         ]
         for query in queries:
-            assert capability.llm_service.is_exit(query) is False, f"False positive on: {query}"
+            assert (
+                capability.llm_service.is_exit(query) is False
+            ), f"False positive on: {query}"

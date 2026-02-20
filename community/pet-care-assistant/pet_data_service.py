@@ -68,22 +68,16 @@ class PetDataService:
         backup_filename = f"{filename}.backup"
 
         try:
-            # Step 1: Create backup of existing file (if it exists)
+            # Create backup before overwriting
             if await self.capability_worker.check_if_file_exists(filename, False):
                 content = await self.capability_worker.read_file(filename, False)
-                await self.capability_worker.write_file(
-                    backup_filename, content, False
-                )
+                await self.capability_worker.write_file(backup_filename, content, False)
                 self.worker.editor_logging_handler.info(
                     f"[PetCare] Created backup: {backup_filename}"
                 )
 
-            # Step 2: Write new data to target file
-            await self.capability_worker.write_file(
-                filename, json.dumps(data), False
-            )
+            await self.capability_worker.write_file(filename, json.dumps(data), False)
 
-            # Step 3: Delete backup on success
             if await self.capability_worker.check_if_file_exists(
                 backup_filename, False
             ):
@@ -105,7 +99,9 @@ class PetDataService:
                 )
             raise
 
-    def resolve_pet(self, pet_data: dict, pet_name: Optional[str] = None) -> Optional[dict]:
+    def resolve_pet(
+        self, pet_data: dict, pet_name: Optional[str] = None
+    ) -> Optional[dict]:
         """Resolve a pet name to a pet dict (synchronous).
 
         Args:
@@ -120,14 +116,11 @@ class PetDataService:
         if not pets:
             return None
 
-        # If only one pet, always use it
         if len(pets) == 1:
             return pets[0]
 
-        # If name given, try to match
         if pet_name:
             name_lower = pet_name.lower().strip()
-            # Exact match
             for p in pets:
                 if p["name"].lower() == name_lower:
                     return p
@@ -143,10 +136,7 @@ class PetDataService:
         return pets[0]
 
     async def resolve_pet_async(
-        self,
-        pet_data: dict,
-        pet_name: Optional[str] = None,
-        is_exit_fn=None
+        self, pet_data: dict, pet_name: Optional[str] = None, is_exit_fn=None
     ) -> Optional[dict]:
         """Resolve a pet, asking the user if ambiguous (async).
 
@@ -168,18 +158,16 @@ class PetDataService:
 
         if pet_name:
             name_lower = pet_name.lower().strip()
-            # Exact match
             for p in pets:
                 if p["name"].lower() == name_lower:
                     return p
-            # Fuzzy match
+            # Fuzzy: check if name starts with input or vice versa
             for p in pets:
                 if p["name"].lower().startswith(name_lower) or name_lower.startswith(
                     p["name"].lower()
                 ):
                     return p
 
-        # Ask user
         names = " or ".join(p["name"] for p in pets)
         await self.capability_worker.speak(f"Which pet? {names}?")
         response = await self.capability_worker.user_response()

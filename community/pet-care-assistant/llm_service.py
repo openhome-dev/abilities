@@ -12,7 +12,6 @@ import json
 import re
 from datetime import datetime
 
-
 # Constants for exit detection (three-tier system)
 FORCE_EXIT_PHRASES: list[str] = [
     "exit petcare",
@@ -46,7 +45,6 @@ EXIT_RESPONSES: list[str] = [
     "we're done",
 ]
 
-# Intent classification prompt
 CLASSIFY_PROMPT = (
     "You are an intent classifier for a pet care assistant. "
     "The user manages one or more pets.\n"
@@ -59,7 +57,8 @@ CLASSIFY_PROMPT = (
     '- {{"mode": "emergency_vet"}}\n'
     '- {{"mode": "weather", "pet_name": "<name or null>"}}\n'
     '- {{"mode": "food_recall"}}\n'
-    '- {{"mode": "edit_pet", "action": "add_pet|update_pet|change_vet|update_weight|remove_pet|clear_log", "pet_name": "<name or null>", "details": "<what to change>"}}\n'
+    '- {{"mode": "edit_pet", "action": "add_pet|update_pet|change_vet|update_weight|remove_pet|clear_log|reset_all", "pet_name": "<name or null>", "details": "<what to change>"}}\n'
+    '- {{"mode": "reminder", "action": "set|list|delete", "pet_name": "<name or null>", "activity": "<feeding|medication|walk|other>", "time_description": "<raw time the user said>"}}\n'
     '- {{"mode": "exit"}}\n'
     '- {{"mode": "unknown"}}\n\n'
     "Rules:\n"
@@ -76,6 +75,10 @@ CLASSIFY_PROMPT = (
     "- 'add a pet', 'new pet', 'update', 'change vet', 'edit pet' => edit_pet\n"
     "- 'remove pet', 'delete pet' => edit_pet with action remove_pet\n"
     "- 'clear log', 'clear activity log', 'delete all logs' => edit_pet with action clear_log\n"
+    "- 'start over', 'reset everything', 'delete everything', 'wipe all data', 'fresh start' => edit_pet with action reset_all\n"
+    "- 'remind me', 'set a reminder', 'alert me' => reminder with action set\n"
+    "- 'my reminders', 'list reminders', 'what reminders' => reminder with action list\n"
+    "- 'delete reminder', 'cancel reminder', 'remove reminder' => reminder with action delete\n"
     "- 'stop', 'done', 'quit', 'exit', 'bye' => exit\n"
     "- If only one pet exists and no name is mentioned, use that pet's name.\n"
     "- If multiple pets and no name mentioned, set pet_name to null.\n"
@@ -91,6 +94,9 @@ CLASSIFY_PROMPT = (
     '"Is it safe for Luna outside?" -> {{"mode": "weather", "pet_name": "Luna"}}\n'
     '"Any pet food recalls?" -> {{"mode": "food_recall"}}\n'
     '"Add a new pet" -> {{"mode": "edit_pet", "action": "add_pet", "pet_name": null, "details": "add new pet"}}\n'
+    '"Start over" -> {{"mode": "edit_pet", "action": "reset_all", "pet_name": null, "details": "reset all data"}}\n'
+    '"Remind me to feed Luna in 2 hours" -> {{"mode": "reminder", "action": "set", "pet_name": "Luna", "activity": "feeding", "time_description": "in 2 hours"}}\n'
+    '"What reminders do I have?" -> {{"mode": "reminder", "action": "list", "pet_name": null, "activity": null, "time_description": null}}\n'
 )
 
 
@@ -118,7 +124,7 @@ class LLMService:
         self.pet_data = pet_data
 
     def classify_intent(self, user_input: str) -> dict:
-        """Use LLM to classify user intent and extract structured data.
+        """Use LLM to classify user intent and extract structured data (sync).
 
         Args:
             user_input: Raw user input string
@@ -142,6 +148,10 @@ class LLMService:
                 f"[PetCare] Classification error: {e}"
             )
             return {"mode": "unknown"}
+
+    async def classify_intent_async(self, user_input: str) -> dict:
+        """Async wrapper for classify_intent (runs in thread pool to avoid blocking event loop)."""
+        return await asyncio.to_thread(self.classify_intent, user_input)
 
     def extract_value(self, raw_input: str, instruction: str) -> str:
         """Use LLM to extract a clean value from messy voice input (sync).
@@ -178,9 +188,7 @@ class LLMService:
         """
         return await asyncio.to_thread(self.extract_value, raw_input, instruction)
 
-    # ------------------------------------------------------------------
-    # Typed Extraction Methods
-    # ------------------------------------------------------------------
+    # === Typed Extraction Methods ===
 
     async def extract_pet_name_async(self, raw_input: str) -> str:
         """Extract pet name from user input.
@@ -410,6 +418,10 @@ class LLMService:
             return result.strip().lower().startswith("yes")
         except Exception:
             return False
+
+    async def is_exit_llm_async(self, text: str) -> bool:
+        """Async wrapper for is_exit_llm (runs in thread pool to avoid blocking event loop)."""
+        return await asyncio.to_thread(self.is_exit_llm, text)
 
     def get_trigger_context(self) -> str:
         """Get the transcription that triggered this ability.

@@ -13,11 +13,12 @@ Uses responses library to mock HTTP calls and test:
 - Edge cases (empty results, malformed JSON)
 """
 
+import asyncio
 import json
+from unittest.mock import AsyncMock, MagicMock, patch
+
 import pytest
 import responses
-from unittest.mock import AsyncMock, MagicMock, patch
-import asyncio
 
 
 class TestEmergencyVetAPI:
@@ -38,7 +39,7 @@ class TestEmergencyVetAPI:
     @responses.activate
     @patch("main.SERPER_API_KEY", "test_api_key_123")
     async def test_emergency_vet_success(self, capability_with_location):
-        """Should successfully find emergency vets with valid response."""
+        """Should list vet names first, then give details after user picks one."""
         # Mock successful Serper Maps response
         responses.add(
             responses.POST,
@@ -50,28 +51,36 @@ class TestEmergencyVetAPI:
                         "rating": 4.5,
                         "openNow": True,
                         "phoneNumber": "512-555-1234",
+                        "address": "123 Main St",
                     },
                     {
                         "title": "BluePearl Pet Hospital",
                         "rating": 4.8,
                         "openNow": True,
                         "phoneNumber": "512-555-5678",
+                        "address": "456 Oak Ave",
                     },
                 ]
             },
             status=200,
         )
 
-        # Call the method
+        # User picks the first vet by name
+        capability_with_location.capability_worker.user_response = AsyncMock(
+            return_value="Austin Vet"
+        )
+
         await capability_with_location._handle_emergency_vet()
 
-        # Verify speak was called with vet info
         calls = capability_with_location.capability_worker.speak.call_args_list
         speak_text = " ".join(str(call[0][0]) for call in calls)
 
+        # Names list spoken first
         assert "Austin Vet Emergency" in speak_text
         assert "BluePearl Pet Hospital" in speak_text
+        # Details for chosen vet spoken after pick
         assert "open now" in speak_text
+        assert "4.5" in speak_text
 
     @pytest.mark.asyncio
     @responses.activate
@@ -238,7 +247,9 @@ class TestWeatherAPI:
 
     @pytest.mark.asyncio
     @responses.activate
-    async def test_weather_missing_current_field(self, capability_with_pet_and_location):
+    async def test_weather_missing_current_field(
+        self, capability_with_pet_and_location
+    ):
         """Should handle response missing required 'current' field."""
         responses.add(
             responses.GET,
@@ -359,7 +370,9 @@ class TestFoodRecallAPI:
         calls = capability_with_pets.capability_worker.speak.call_args_list
         speak_text = " ".join(str(call[0][0]) for call in calls)
 
-        assert "no" in speak_text.lower() and ("alert" in speak_text.lower() or "clear" in speak_text.lower())
+        assert "no" in speak_text.lower() and (
+            "alert" in speak_text.lower() or "clear" in speak_text.lower()
+        )
 
 
 class TestGeolocationAPIs:
@@ -446,9 +459,7 @@ class TestGeolocationAPIs:
     @pytest.mark.asyncio
     async def test_geocoding_cache_hit(self, capability):
         """Should return cached result without API call."""
-        capability._geocode_cache = {
-            "Austin, Texas": {"lat": 30.2672, "lon": -97.7431}
-        }
+        capability._geocode_cache = {"Austin, Texas": {"lat": 30.2672, "lon": -97.7431}}
 
         # No responses.add needed - should not hit API
         result = await capability._geocode_location("Austin, Texas")

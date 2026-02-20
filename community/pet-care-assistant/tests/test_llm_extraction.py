@@ -15,8 +15,9 @@ Tests the 10 typed extraction methods that parse user voice input:
 Uses mocked LLM responses to test extraction logic and edge cases.
 """
 
-import pytest
 from datetime import datetime
+
+import pytest
 
 
 class TestExtractPetName:
@@ -34,9 +35,13 @@ class TestExtractPetName:
     @pytest.mark.asyncio
     async def test_name_with_title(self, capability):
         """Should extract names with titles."""
-        capability.capability_worker.text_to_text_response.return_value = "Princess Luna"
+        capability.capability_worker.text_to_text_response.return_value = (
+            "Princess Luna"
+        )
 
-        result = await capability.llm_service.extract_pet_name_async("She's called Princess Luna")
+        result = await capability.llm_service.extract_pet_name_async(
+            "She's called Princess Luna"
+        )
 
         assert result == "Princess Luna"
 
@@ -54,7 +59,9 @@ class TestExtractPetName:
     @pytest.mark.asyncio
     async def test_empty_input(self, capability):
         """Should handle empty input gracefully."""
-        capability.capability_worker.text_to_text_response.side_effect = Exception("LLM error")
+        capability.capability_worker.text_to_text_response.side_effect = Exception(
+            "LLM error"
+        )
 
         result = await capability.llm_service.extract_pet_name_async("")
 
@@ -63,7 +70,9 @@ class TestExtractPetName:
     @pytest.mark.asyncio
     async def test_llm_failure_returns_raw_input(self, capability):
         """Should return raw input if LLM fails."""
-        capability.capability_worker.text_to_text_response.side_effect = Exception("LLM error")
+        capability.capability_worker.text_to_text_response.side_effect = Exception(
+            "LLM error"
+        )
 
         result = await capability.llm_service.extract_pet_name_async("Max")
 
@@ -78,7 +87,9 @@ class TestExtractSpecies:
         """Should extract 'dog' species."""
         capability.capability_worker.text_to_text_response.return_value = "dog"
 
-        result = await capability.llm_service.extract_species_async("He's a golden retriever")
+        result = await capability.llm_service.extract_species_async(
+            "He's a golden retriever"
+        )
 
         assert result == "dog"
 
@@ -87,7 +98,9 @@ class TestExtractSpecies:
         """Should extract 'cat' species."""
         capability.capability_worker.text_to_text_response.return_value = "cat"
 
-        result = await capability.llm_service.extract_species_async("She's a Maine Coon cat")
+        result = await capability.llm_service.extract_species_async(
+            "She's a Maine Coon cat"
+        )
 
         assert result == "cat"
 
@@ -96,7 +109,9 @@ class TestExtractSpecies:
         """Should extract exotic species."""
         capability.capability_worker.text_to_text_response.return_value = "rabbit"
 
-        result = await capability.llm_service.extract_species_async("A Holland Lop rabbit")
+        result = await capability.llm_service.extract_species_async(
+            "A Holland Lop rabbit"
+        )
 
         assert result == "rabbit"
 
@@ -105,7 +120,9 @@ class TestExtractSpecies:
         """Should extract species when breed is mentioned."""
         capability.capability_worker.text_to_text_response.return_value = "dog"
 
-        result = await capability.llm_service.extract_species_async("German Shepherd dog")
+        result = await capability.llm_service.extract_species_async(
+            "German Shepherd dog"
+        )
 
         assert result == "dog"
 
@@ -114,7 +131,9 @@ class TestExtractSpecies:
         """Should handle unclear species input."""
         capability.capability_worker.text_to_text_response.return_value = "dog"
 
-        result = await capability.llm_service.extract_species_async("Just a regular pet")
+        result = await capability.llm_service.extract_species_async(
+            "Just a regular pet"
+        )
 
         assert result == "dog"
 
@@ -125,7 +144,9 @@ class TestExtractBreed:
     @pytest.mark.asyncio
     async def test_pure_breed(self, capability):
         """Should extract pure breed names."""
-        capability.capability_worker.text_to_text_response.return_value = "golden retriever"
+        capability.capability_worker.text_to_text_response.return_value = (
+            "golden retriever"
+        )
 
         result = await capability.llm_service.extract_breed_async("Golden Retriever")
 
@@ -145,14 +166,18 @@ class TestExtractBreed:
         """Should return 'mixed' when breed unknown."""
         capability.capability_worker.text_to_text_response.return_value = "mixed"
 
-        result = await capability.llm_service.extract_breed_async("I don't know the breed")
+        result = await capability.llm_service.extract_breed_async(
+            "I don't know the breed"
+        )
 
         assert result == "mixed"
 
     @pytest.mark.asyncio
     async def test_hyphenated_breed(self, capability):
         """Should handle hyphenated breed names."""
-        capability.capability_worker.text_to_text_response.return_value = "French Bulldog"
+        capability.capability_worker.text_to_text_response.return_value = (
+            "French Bulldog"
+        )
 
         result = await capability.llm_service.extract_breed_async("French-Bulldog")
 
@@ -167,7 +192,9 @@ class TestExtractBirthday:
         """Should extract exact birth dates."""
         capability.capability_worker.text_to_text_response.return_value = "2020-06-15"
 
-        result = await capability.llm_service.extract_birthday_async("Born on June 15, 2020")
+        result = await capability.llm_service.extract_birthday_async(
+            "Born on June 15, 2020"
+        )
 
         assert result == "2020-06-15"
 
@@ -177,7 +204,9 @@ class TestExtractBirthday:
         # Mock to return a calculated date
         current_year = datetime.now().year
         expected_year = current_year - 3
-        capability.capability_worker.text_to_text_response.return_value = f"{expected_year}-01-01"
+        capability.capability_worker.text_to_text_response.return_value = (
+            f"{expected_year}-01-01"
+        )
 
         result = await capability.llm_service.extract_birthday_async("3 years old")
 
@@ -197,7 +226,9 @@ class TestExtractBirthday:
         """Should handle recent births."""
         capability.capability_worker.text_to_text_response.return_value = "2025-12-01"
 
-        result = await capability.llm_service.extract_birthday_async("Just got him last month")
+        result = await capability.llm_service.extract_birthday_async(
+            "Just got him last month"
+        )
 
         assert "2025" in result
 
@@ -217,7 +248,9 @@ class TestExtractWeight:
     @pytest.mark.asyncio
     async def test_weight_in_kilos(self, capability):
         """Should convert kilos to pounds."""
-        capability.capability_worker.text_to_text_response.return_value = "55"  # 25 kg ≈ 55 lbs
+        capability.capability_worker.text_to_text_response.return_value = (
+            "55"  # 25 kg ≈ 55 lbs
+        )
 
         result = await capability.llm_service.extract_weight_async("25 kilograms")
 
@@ -259,27 +292,33 @@ class TestExtractAllergies:
         """Should extract single allergy as JSON array."""
         capability.capability_worker.text_to_text_response.return_value = '["chicken"]'
 
-        result = await capability.llm_service.extract_allergies_async("Allergic to chicken")
+        result = await capability.llm_service.extract_allergies_async(
+            "Allergic to chicken"
+        )
 
         assert result == '["chicken"]'
 
     @pytest.mark.asyncio
     async def test_multiple_allergies(self, capability):
         """Should extract multiple allergies."""
-        capability.capability_worker.text_to_text_response.return_value = '["chicken", "grain"]'
+        capability.capability_worker.text_to_text_response.return_value = (
+            '["chicken", "grain"]'
+        )
 
-        result = await capability.llm_service.extract_allergies_async("Allergic to chicken and grain")
+        result = await capability.llm_service.extract_allergies_async(
+            "Allergic to chicken and grain"
+        )
 
         assert result == '["chicken", "grain"]'
 
     @pytest.mark.asyncio
     async def test_no_allergies(self, capability):
         """Should return empty array for no allergies."""
-        capability.capability_worker.text_to_text_response.return_value = '[]'
+        capability.capability_worker.text_to_text_response.return_value = "[]"
 
         result = await capability.llm_service.extract_allergies_async("No allergies")
 
-        assert result == '[]'
+        assert result == "[]"
 
     @pytest.mark.asyncio
     async def test_allergy_with_description(self, capability):
@@ -303,7 +342,9 @@ class TestExtractMedications:
             '[{"name": "Heartgard", "frequency": "monthly"}]'
         )
 
-        result = await capability.llm_service.extract_medications_async("Takes Heartgard monthly")
+        result = await capability.llm_service.extract_medications_async(
+            "Takes Heartgard monthly"
+        )
 
         assert result == '[{"name": "Heartgard", "frequency": "monthly"}]'
 
@@ -325,11 +366,13 @@ class TestExtractMedications:
     @pytest.mark.asyncio
     async def test_no_medications(self, capability):
         """Should return empty array for no medications."""
-        capability.capability_worker.text_to_text_response.return_value = '[]'
+        capability.capability_worker.text_to_text_response.return_value = "[]"
 
-        result = await capability.llm_service.extract_medications_async("Not on any medications")
+        result = await capability.llm_service.extract_medications_async(
+            "Not on any medications"
+        )
 
-        assert result == '[]'
+        assert result == "[]"
 
     @pytest.mark.asyncio
     async def test_medication_without_frequency(self, capability):
@@ -338,7 +381,9 @@ class TestExtractMedications:
             '[{"name": "Prednisone", "frequency": "as needed"}]'
         )
 
-        result = await capability.llm_service.extract_medications_async("Takes Prednisone sometimes")
+        result = await capability.llm_service.extract_medications_async(
+            "Takes Prednisone sometimes"
+        )
 
         assert "Prednisone" in result
 
@@ -351,7 +396,9 @@ class TestExtractVetName:
         """Should extract vet name with title."""
         capability.capability_worker.text_to_text_response.return_value = "Dr. Smith"
 
-        result = await capability.llm_service.extract_vet_name_async("Dr. Smith at Austin Vet")
+        result = await capability.llm_service.extract_vet_name_async(
+            "Dr. Smith at Austin Vet"
+        )
 
         assert result == "Dr. Smith"
 
@@ -367,9 +414,13 @@ class TestExtractVetName:
     @pytest.mark.asyncio
     async def test_clinic_name(self, capability):
         """Should extract clinic name when that's what user provides."""
-        capability.capability_worker.text_to_text_response.return_value = "Austin Veterinary Clinic"
+        capability.capability_worker.text_to_text_response.return_value = (
+            "Austin Veterinary Clinic"
+        )
 
-        result = await capability.llm_service.extract_vet_name_async("Austin Veterinary Clinic")
+        result = await capability.llm_service.extract_vet_name_async(
+            "Austin Veterinary Clinic"
+        )
 
         assert result == "Austin Veterinary Clinic"
 
@@ -393,7 +444,9 @@ class TestExtractPhoneNumber:
         """Should extract digits from formatted phone."""
         capability.capability_worker.text_to_text_response.return_value = "5125551234"
 
-        result = await capability.llm_service.extract_phone_number_async("(512) 555-1234")
+        result = await capability.llm_service.extract_phone_number_async(
+            "(512) 555-1234"
+        )
 
         assert result == "5125551234"
 
@@ -420,7 +473,9 @@ class TestExtractPhoneNumber:
         """Should extract phone with country code."""
         capability.capability_worker.text_to_text_response.return_value = "15125551234"
 
-        result = await capability.llm_service.extract_phone_number_async("+1 512-555-1234")
+        result = await capability.llm_service.extract_phone_number_async(
+            "+1 512-555-1234"
+        )
 
         assert result == "15125551234"
 
@@ -431,9 +486,13 @@ class TestExtractLocation:
     @pytest.mark.asyncio
     async def test_city_state(self, capability):
         """Should extract city and state."""
-        capability.capability_worker.text_to_text_response.return_value = "Austin, Texas"
+        capability.capability_worker.text_to_text_response.return_value = (
+            "Austin, Texas"
+        )
 
-        result = await capability.llm_service.extract_location_async("I live in Austin, Texas")
+        result = await capability.llm_service.extract_location_async(
+            "I live in Austin, Texas"
+        )
 
         assert result == "Austin, Texas"
 
@@ -451,14 +510,18 @@ class TestExtractLocation:
         """Should extract city and country."""
         capability.capability_worker.text_to_text_response.return_value = "London, UK"
 
-        result = await capability.llm_service.extract_location_async("London, United Kingdom")
+        result = await capability.llm_service.extract_location_async(
+            "London, United Kingdom"
+        )
 
         assert result == "London, UK"
 
     @pytest.mark.asyncio
     async def test_verbose_location(self, capability):
         """Should extract location from verbose input."""
-        capability.capability_worker.text_to_text_response.return_value = "Seattle, Washington"
+        capability.capability_worker.text_to_text_response.return_value = (
+            "Seattle, Washington"
+        )
 
         result = await capability.llm_service.extract_location_async(
             "We're based out of Seattle in Washington state"
@@ -473,7 +536,9 @@ class TestExtractionEdgeCases:
     @pytest.mark.asyncio
     async def test_none_input_pet_name(self, capability):
         """Should handle None input gracefully."""
-        capability.capability_worker.text_to_text_response.side_effect = Exception("LLM error")
+        capability.capability_worker.text_to_text_response.side_effect = Exception(
+            "LLM error"
+        )
 
         result = await capability.llm_service.extract_pet_name_async(None)
 
@@ -494,7 +559,9 @@ class TestExtractionEdgeCases:
         """Should handle special characters."""
         capability.capability_worker.text_to_text_response.return_value = "Mr. Whiskers"
 
-        result = await capability.llm_service.extract_pet_name_async("His name is Mr. Whiskers!!!")
+        result = await capability.llm_service.extract_pet_name_async(
+            "His name is Mr. Whiskers!!!"
+        )
 
         assert result == "Mr. Whiskers"
 
@@ -503,7 +570,9 @@ class TestExtractionEdgeCases:
         """Should handle unicode characters."""
         capability.capability_worker.text_to_text_response.return_value = "Amélie"
 
-        result = await capability.llm_service.extract_pet_name_async("Her name is Amélie 🐱")
+        result = await capability.llm_service.extract_pet_name_async(
+            "Her name is Amélie 🐱"
+        )
 
         assert result == "Amélie"
 

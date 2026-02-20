@@ -29,7 +29,7 @@ class ActivityLogService:
         pet_name: str,
         activity_type: str,
         details: str = "",
-        value: float = None
+        value: float = None,
     ) -> list:
         """Add an activity to the log.
 
@@ -54,10 +54,9 @@ class ActivityLogService:
 
         activity_log.append(entry)
 
-        # Enforce size limit
         if len(activity_log) > self.max_log_entries:
             removed = len(activity_log) - self.max_log_entries
-            activity_log = activity_log[-self.max_log_entries:]
+            activity_log = activity_log[-self.max_log_entries :]
             self.worker.editor_logging_handler.warning(
                 f"[PetCare] Activity log size limit reached. Removed {removed} old entries."
             )
@@ -69,7 +68,7 @@ class ActivityLogService:
         activity_log: list,
         pet_name: Optional[str] = None,
         activity_type: Optional[str] = None,
-        limit: int = 10
+        limit: int = 10,
     ) -> list:
         """Get recent activities, optionally filtered.
 

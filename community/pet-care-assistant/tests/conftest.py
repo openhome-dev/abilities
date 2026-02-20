@@ -1,9 +1,10 @@
 """Shared test fixtures for Pet Care Assistant tests."""
 
-import pytest
-import sys
 import os
-from unittest.mock import MagicMock, AsyncMock
+import sys
+from unittest.mock import AsyncMock, MagicMock
+
+import pytest
 
 
 # Mock the OpenHome src modules before importing main
@@ -12,9 +13,11 @@ def mock_src_modules():
     """Mock the src.agent modules that aren't available in test environment."""
     # Create mock modules
     mock_capability = MagicMock()
-    mock_capability.MatchingCapability = type('MatchingCapability', (), {
-        '__init__': lambda self, unique_name='', matching_hotwords=None: None
-    })
+    mock_capability.MatchingCapability = type(
+        "MatchingCapability",
+        (),
+        {"__init__": lambda self, unique_name="", matching_hotwords=None: None},
+    )
 
     mock_capability_worker = MagicMock()
     mock_capability_worker.CapabilityWorker = MagicMock
@@ -23,11 +26,11 @@ def mock_src_modules():
     mock_main.AgentWorker = MagicMock
 
     # Install mocks in sys.modules
-    sys.modules['src'] = MagicMock()
-    sys.modules['src.agent'] = MagicMock()
-    sys.modules['src.agent.capability'] = mock_capability
-    sys.modules['src.agent.capability_worker'] = mock_capability_worker
-    sys.modules['src.main'] = mock_main
+    sys.modules["src"] = MagicMock()
+    sys.modules["src.agent"] = MagicMock()
+    sys.modules["src.agent.capability"] = mock_capability
+    sys.modules["src.agent.capability_worker"] = mock_capability_worker
+    sys.modules["src.main"] = mock_main
 
     # Add parent directory to path
     sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -68,15 +71,14 @@ def mock_capability_worker():
 @pytest.fixture
 def capability(mock_worker, mock_capability_worker):
     """Create a PetCareAssistantCapability instance with mocked dependencies."""
-    from main import PetCareAssistantCapability
-    from pet_data_service import PetDataService
     from activity_log_service import ActivityLogService
     from external_api_service import ExternalAPIService
     from llm_service import LLMService
+    from main import PetCareAssistantCapability
+    from pet_data_service import PetDataService
 
     cap = PetCareAssistantCapability(
-        unique_name="test_pet_care",
-        matching_hotwords=["pet care", "my pets"]
+        unique_name="test_pet_care", matching_hotwords=["pet care", "my pets"]
     )
     cap.worker = mock_worker
     cap.capability_worker = mock_capability_worker
@@ -87,7 +89,9 @@ def capability(mock_worker, mock_capability_worker):
     # Initialize all services
     cap.pet_data_service = PetDataService(mock_capability_worker, mock_worker)
     cap.activity_log_service = ActivityLogService(mock_worker, max_log_entries=500)
-    cap.external_api_service = ExternalAPIService(mock_worker, serper_api_key="test_key")
+    cap.external_api_service = ExternalAPIService(
+        mock_worker, serper_api_key="test_key"
+    )
     cap.llm_service = LLMService(mock_capability_worker, mock_worker, cap.pet_data)
 
     return cap
