@@ -29,3 +29,4 @@ Format: - **@username** — ability-name ([ability-name](community/ability-name/
 - **[@crunchdomo](https://github.com/crunchdomo)** — redcast-checker ([redcast-checker](community/redcast-checker/))
 - **[@Husnain-Bhatti](https://github.com/Husnain-Bhatti)** — mealmate-ability ([mealmate-ability](community/mealmate-ability/))
 - **[@jibzus](https://github.com/jibzus)** — pomodoro-timer ([pomodoro-timer](community/pomodoro-timer/))
+- **[@codeforstartups](https://github.com/codeforstartups)** — package-tracker ([package-tracker](community/package-tracker/))
