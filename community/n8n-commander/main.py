@@ -131,7 +131,7 @@ class N8nCommanderCapability(MatchingCapability):
         start = cleaned.find("{")
         end = cleaned.rfind("}")
         if start != -1 and end != -1 and end > start:
-            return cleaned[start : end + 1]
+            return cleaned[start: end + 1]
         return cleaned
 
     # prefs management
@@ -731,7 +731,7 @@ class N8nCommanderCapability(MatchingCapability):
                 await self.capability_worker.speak("One sec, figuring that out.")
                 intent = self.resolve_intent(user_text, workflows)
                 wf_id = intent.get("workflow_id", "none")
-                confidence = intent.get("confidence", 0.0)
+                intent.get("confidence", 0.0)
                 source = intent.get("source", "")
 
                 # couldn't figure out what they want
