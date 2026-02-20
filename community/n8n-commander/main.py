@@ -1,5 +1,4 @@
 import json
-import os
 from datetime import datetime, timezone
 from typing import Dict, List, Optional, Tuple
 
@@ -63,22 +62,11 @@ class N8nCommanderCapability(MatchingCapability):
     Supports fire-and-forget and round-trip response workflows.
     """
 
+    #{{register capability}}
     worker: AgentWorker = None
     capability_worker: CapabilityWorker = None
     initial_request: Optional[str] = None
     last_utterance: str = ""  # raw text of what user last said, sent in webhook payload
-
-    @classmethod
-    def register_capability(cls) -> "MatchingCapability":
-        """Load trigger hotwords from config.json — standard pattern for all abilities."""
-        with open(
-            os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.json")
-        ) as file:
-            data = json.load(file)
-        return cls(
-            unique_name=data["unique_name"],
-            matching_hotwords=data["matching_hotwords"],
-        )
 
     def call(self, worker: AgentWorker):
         """Entry point when the platform matches our hotwords.
