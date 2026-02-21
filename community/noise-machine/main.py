@@ -1,4 +1,3 @@
-import json
 import re
 import time
 from difflib import SequenceMatcher
@@ -365,7 +364,6 @@ def _match_sound(user_text: str) -> tuple[Optional[str], float]:
     return best_key, best_score
 
 
-
 # ---------------------------
 # Trigger guard: avoid auto-selecting a sound from generic activation phrases
 # ---------------------------
@@ -382,6 +380,7 @@ _SOUND_HINT_WORDS.discard("noise")
 _SOUND_HINT_WORDS.discard("sound")
 _SOUND_HINT_WORDS.discard("machine")
 
+
 def _is_generic_trigger(text: str) -> bool:
     toks = set(_tokens(text))
     if not toks:
@@ -394,11 +393,12 @@ def _is_generic_trigger(text: str) -> bool:
         return True
     return False
 
+
 class NoiseMachineCapability(MatchingCapability):
     worker: AgentWorker = None
     capability_worker: CapabilityWorker = None
 
-    #{{register capability}}
+    # {{register capability}}
 
     last_spoken: str = ""
     stop_requested: bool = False
@@ -550,7 +550,6 @@ class NoiseMachineCapability(MatchingCapability):
                         return True
                 except Exception:
                     pass
-
 
                 # If the clip ends far earlier than expected (brief: ~30–60s), treat it as an interrupt
                 # and stop instead of restarting the loop.
