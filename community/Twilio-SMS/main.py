@@ -14,10 +14,10 @@ from src.main import AgentWorker
 class TwilioSmsCapability(MatchingCapability):
     worker: AgentWorker = None
     capability_worker: CapabilityWorker = None
-    
+
     prefs_file: str = "twilio_sms_prefs.json"
     prefs: dict = None
-    
+
     @classmethod
     def register_capability(cls) -> "MatchingCapability":
         """Registers the capability by loading config from config.json."""
@@ -51,22 +51,22 @@ class TwilioSmsCapability(MatchingCapability):
 
         # If the file exists, verify the structure without touching user keys
         needs_save = False
-        
+
         if "contacts" not in self.prefs:
             self.prefs["contacts"] = {}
             needs_save = True
-            
+
         if "default_country_code" not in self.prefs:
             self.prefs["default_country_code"] = "+1"
             needs_save = True
-            
+
         if "confirm_before_send" not in self.prefs:
             self.prefs["confirm_before_send"] = True
             needs_save = True
 
         if needs_save:
             self.save_prefs()
-            
+
     def save_prefs(self):
         """Save preferences to the JSON file."""
         if self.prefs is None:
@@ -81,7 +81,7 @@ class TwilioSmsCapability(MatchingCapability):
         """Execute an authenticated request to the Twilio REST API."""
         account_sid = self.prefs.get("account_sid")
         auth_token = self.prefs.get("auth_token")
-        
+
         if not account_sid or not auth_token:
             return {"error": "missing_credentials"}
 
@@ -138,9 +138,9 @@ class TwilioSmsCapability(MatchingCapability):
         """Clean SMS text and expand abbreviations for Text-to-Speech (TTS)."""
         replacements = {
             "lol": "L O L", "omg": "O M G", "btw": "by the way",
-            "imo": "in my opinion", "idk": "I don't know", "tbh": "to be honest", 
-            "fyi": "for your information", "brb": "be right back", "rn": "right now", 
-            "nvm": "never mind", "lmk": "let me know", "ty": "thank you", 
+            "imo": "in my opinion", "idk": "I don't know", "tbh": "to be honest",
+            "fyi": "for your information", "brb": "be right back", "rn": "right now",
+            "nvm": "never mind", "lmk": "let me know", "ty": "thank you",
             "np": "no problem", "ur": "your", "u": "you", "r": "are", "k": "okay"
         }
         words = body.split()
@@ -152,10 +152,10 @@ class TwilioSmsCapability(MatchingCapability):
             else:
                 cleaned.append(word)
         result = " ".join(cleaned)
-        
+
         # Replace URLs with spoken equivalent
         result = re.sub(r'https?://\S+', 'a link', result)
-        
+
         # Truncate long messages
         if len(result) > 500:
             result = result[:500] + "... message truncated."
@@ -196,24 +196,24 @@ class TwilioSmsCapability(MatchingCapability):
     def normalize_phone_number(self, raw_number):
         """Normalize a spoken phone number to E.164 format."""
         digits = re.sub(r'[^\d+]', '', raw_number)
-        
+
         if digits.startswith('+'):
             return digits if len(digits) >= 11 else None
-            
+
         if len(digits) == 10:
             default_cc = self.prefs.get("default_country_code", "+1")
             return f"{default_cc}{digits}"
-            
+
         if len(digits) == 11 and digits.startswith('1'):
             return f"+{digits}"
-            
+
         return None
 
     def resolve_contact(self, spoken_name):
         """Smart contact search (Exact match first, then LLM fuzzy search)."""
         contacts = self.prefs.get("contacts", {})
         lower_name = spoken_name.lower().strip()
-        
+
         # 1. Exact match
         for name, number in contacts.items():
             if name.lower() == lower_name:
@@ -226,7 +226,7 @@ class TwilioSmsCapability(MatchingCapability):
             User said: "{spoken_name}"
             Available contacts: {contact_list}
             Return ONLY the exact contact name from the list, or "none" if no match."""
-            
+
             result = self.capability_worker.text_to_text_response(prompt)
             clean = result.strip().strip('"').lower()
             for name, number in contacts.items():
@@ -243,17 +243,17 @@ class TwilioSmsCapability(MatchingCapability):
         IMPORTANT: Format the phone number as digits only (convert words to digits).
         Return ONLY valid JSON: {{"name": "contact name", "number": "phone number"}}
         If either is missing, return an empty string."""
-        
+
         llm_response = self.capability_worker.text_to_text_response(extract_prompt)
         parsed_data = self.extract_json_from_llm(llm_response)
-        
+
         name = parsed_data.get("name", "").lower()
         raw_number = parsed_data.get("number", "")
-        
+
         if not name or not raw_number:
             await self.capability_worker.speak("I didn't catch the name or the phone number. Try saying, 'Add Sarah with number 555 123 4567'.")
             return
-            
+
         clean_number = self.normalize_phone_number(raw_number)
         if not clean_number:
             await self.capability_worker.speak(f"The number {raw_number} doesn't look like a valid phone number.")
@@ -261,7 +261,7 @@ class TwilioSmsCapability(MatchingCapability):
 
         await self.capability_worker.speak(f"I will save {name} as {clean_number}. Is that correct?")
         confirm = await self.capability_worker.user_response()
-        
+
         if confirm and ("yes" in confirm.lower() or "sure" in confirm.lower() or "ok" in confirm.lower() or "right" in confirm.lower()):
             contacts = self.prefs.get("contacts", {})
             contacts[name] = clean_number
@@ -283,18 +283,18 @@ class TwilioSmsCapability(MatchingCapability):
         User said: "{user_input}"
         Known contacts: {contact_names}
         Return ONLY valid JSON: {{"name": "contact name"}}"""
-        
+
         llm_response = self.capability_worker.text_to_text_response(extract_prompt)
         parsed_data = self.extract_json_from_llm(llm_response)
-        
+
         name = parsed_data.get("name", "").lower()
         if not name or name not in contacts:
             await self.capability_worker.speak(f"I couldn't find {name} in your contacts. You currently have: {contact_names}.")
             return
-            
+
         await self.capability_worker.speak(f"Are you sure you want to remove {name} from your contacts?")
         confirm = await self.capability_worker.user_response()
-        
+
         if confirm and ("yes" in confirm.lower() or "sure" in confirm.lower() or "remove" in confirm.lower() or "delete" in confirm.lower()):
             del contacts[name]
             self.prefs["contacts"] = contacts
@@ -309,7 +309,7 @@ class TwilioSmsCapability(MatchingCapability):
         if not contacts:
             await self.capability_worker.speak("You don't have any contacts saved yet.")
             return
-            
+
         names = list(contacts.keys())
         if len(names) == 1:
             await self.capability_worker.speak(f"You have 1 contact: {names[0]}.")
@@ -323,11 +323,11 @@ class TwilioSmsCapability(MatchingCapability):
         """Check the Twilio account balance."""
         await self.capability_worker.speak("Checking your Twilio balance...")
         result = self.twilio_request("GET", "Balance.json")
-        
+
         if "error" in result:
             await self.capability_worker.speak("I couldn't retrieve your account balance.")
             return
-            
+
         balance = result.get("balance", "unknown")
         currency = result.get("currency", "")
         await self.capability_worker.speak(f"Your Twilio account balance is {balance} {currency}.")
@@ -337,12 +337,12 @@ class TwilioSmsCapability(MatchingCapability):
         extract_prompt = f"""The user wants to read texts from a specific person. Extract the sender's name.
         User said: "{user_input}"
         Return ONLY valid JSON: {{"sender": "contact name"}}"""
-        
+
         llm_response = self.capability_worker.text_to_text_response(extract_prompt)
         parsed_data = self.extract_json_from_llm(llm_response)
-        
+
         sender_name_raw = parsed_data.get("sender", "").lower()
-        
+
         if not sender_name_raw:
             await self.capability_worker.speak("I couldn't figure out whose messages you want to read.")
             return
@@ -356,7 +356,7 @@ class TwilioSmsCapability(MatchingCapability):
         sender_name = contact["name"]
 
         await self.capability_worker.speak(f"Checking messages from {sender_name}...")
-        
+
         params = {"To": self.prefs.get("twilio_number", ""), "From": from_number, "PageSize": 5}
         result = self.twilio_request("GET", "Messages.json", params=params)
 
@@ -383,7 +383,7 @@ class TwilioSmsCapability(MatchingCapability):
     async def handle_read_texts(self):
         """Fetch and read the latest incoming SMS messages."""
         await self.capability_worker.speak("Checking your messages...")
-        
+
         params = {"To": self.prefs.get("twilio_number", ""), "PageSize": 20}
         result = self.twilio_request("GET", "Messages.json", params=params)
 
@@ -434,7 +434,7 @@ class TwilioSmsCapability(MatchingCapability):
                 if num == sender_number:
                     contact_name = name
                     break
-            
+
             if contact_name:
                 sender_display = contact_name
             else:
@@ -444,7 +444,7 @@ class TwilioSmsCapability(MatchingCapability):
             body_clean = self.clean_message_for_voice(msg.get("body", ""))
 
             prefix = "First" if i == 0 else "Next"
-            
+
             await self.capability_worker.speak(f"{prefix}, from {sender_display} {time_display}: {body_clean}")
 
         if is_new and new_messages:
@@ -455,18 +455,18 @@ class TwilioSmsCapability(MatchingCapability):
         """Parse recipient and body, and send an SMS."""
         contacts = self.prefs.get("contacts", {})
         contact_names = ", ".join(contacts.keys())
-        
+
         extract_prompt = f"""The user wants to send a text message. Extract the recipient and message body.
         User said: "{user_input}"
         Known contacts: {contact_names}
         Return ONLY valid JSON: {{"recipient": "contact name", "body": "the message to send"}}"""
-        
+
         llm_response = self.capability_worker.text_to_text_response(extract_prompt)
         parsed_data = self.extract_json_from_llm(llm_response)
-        
+
         recipient_name_raw = parsed_data.get("recipient", "").lower()
         body = parsed_data.get("body", "")
-        
+
         if not recipient_name_raw or not body:
             await self.capability_worker.speak("I couldn't figure out who to send that to or what to say. Please try again.")
             return
@@ -481,15 +481,15 @@ class TwilioSmsCapability(MatchingCapability):
 
         await self.capability_worker.speak(f"I'll text {recipient_name}: '{body}'. Should I send it?")
         confirm_input = await self.capability_worker.user_response()
-        
+
         if not confirm_input:
             await self.capability_worker.speak("Message cancelled.")
             return
-            
+
         if "yes" in confirm_input.lower() or "send" in confirm_input.lower() or "sure" in confirm_input.lower() or "ok" in confirm_input.lower():
             await self.capability_worker.speak("Sending...")
             result = self.send_sms(to_number, body)
-            
+
             if "error" in result:
                 error_code = result.get("code")
                 if error_code == 21211:
@@ -511,29 +511,29 @@ class TwilioSmsCapability(MatchingCapability):
     async def handle_check_delivery(self):
         """Check the delivery status of the last sent message."""
         last_sent_sid = self.prefs.get("last_sent_sid")
-        
+
         if not last_sent_sid:
             await self.capability_worker.speak("You haven't sent any messages recently that I can check.")
             return
-            
+
         await self.capability_worker.speak("Checking delivery status...")
-        
+
         result = self.twilio_request("GET", f"Messages/{last_sent_sid}.json")
-        
+
         if "error" in result:
             await self.capability_worker.speak("I couldn't check the status right now. Please try again later.")
             return
-            
+
         status = result.get("status", "unknown")
         spoken_status = self.format_delivery_status(status)
-        
+
         await self.capability_worker.speak(spoken_status)
 
     async def run(self):
         """Main interaction loop for the capability."""
         try:
             self.load_prefs()
-            
+
             if not self.prefs.get("account_sid") or not self.prefs.get("auth_token") or not self.prefs.get("twilio_number"):
                 await self.capability_worker.speak("Twilio credentials are missing. Please configure your Account SID, Auth Token, and Twilio phone number in the preferences file.")
                 return
