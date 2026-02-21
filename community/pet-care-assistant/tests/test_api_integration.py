@@ -13,8 +13,6 @@ Uses responses library to mock HTTP calls and test:
 - Edge cases (empty results, malformed JSON)
 """
 
-import asyncio
-import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest

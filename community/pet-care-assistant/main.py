@@ -125,7 +125,7 @@ def _fmt_phone_for_speech(phone: str) -> str:
             f"{', '.join(digits[7:])}"
         )
     elif 7 <= len(digits) <= 15:
-        groups = [digits[i : i + 3] for i in range(0, len(digits), 3)]
+        groups = [digits[i: i + 3] for i in range(0, len(digits), 3)]
         return ", ".join(", ".join(group) for group in groups)
     elif len(digits) < 7:
         return "incomplete phone number"
@@ -1029,11 +1029,13 @@ class PetCareAssistantCapability(MatchingCapability):
             )
             if vet_input is None:
                 return None  # User wants to abort/restart
-            _is_skip = lambda v: any(
+
+            def _is_skip(v): return any(
                 w in v.lower() for w in ["no", "nope", "skip", "don't", "none"]
             )
             # Affirmative without a name ("yes", "yeah", "sure") → ask for the name
-            _is_affirmative = lambda v: v.lower().strip().rstrip(".!?") in {
+
+            def _is_affirmative(v): return v.lower().strip().rstrip(".!?") in {
                 "yes",
                 "yeah",
                 "yep",

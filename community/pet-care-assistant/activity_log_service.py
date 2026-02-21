@@ -56,7 +56,7 @@ class ActivityLogService:
 
         if len(activity_log) > self.max_log_entries:
             removed = len(activity_log) - self.max_log_entries
-            activity_log = activity_log[-self.max_log_entries :]
+            activity_log = activity_log[-self.max_log_entries:]
             self.worker.editor_logging_handler.warning(
                 f"[PetCare] Activity log size limit reached. Removed {removed} old entries."
             )
