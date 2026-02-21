@@ -136,7 +136,7 @@ class PetCareAssistantCapability(MatchingCapability):
     """OpenHome ability for multi-pet care tracking with persistent storage,
     emergency vet finder, weather safety, and food recall checks."""
 
-    #{{register capability}}
+    # {{register capability}}
     worker: AgentWorker = None
     capability_worker: CapabilityWorker = None
     pet_data: dict = None
