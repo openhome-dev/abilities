@@ -2,6 +2,7 @@ import json
 import os
 import time
 import asyncio
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 import requests
@@ -85,10 +86,16 @@ class GDriveVoiceManager(MatchingCapability):
             # -----------------------------------------------------------------
             if not self.prefs.get("refresh_token"):
                 await self.capability_worker.speak(
-                    "I need to connect to your Google Drive first. "
-                    "I'll walk you through the setup."
+                    "Before I can access your Drive, I need to connect via OAuth."
                 )
-                success = await self.run_oauth_setup_flow()
+
+                skip_walkthrough = await self.capability_worker.run_confirmation_loop(
+                    "Do you already have a Client ID and Client Secret ready?"
+                )
+
+                success = await self.run_oauth_setup_flow(
+                    skip_walkthrough=skip_walkthrough
+                )
                 if not success:
                     await self.capability_worker.speak(
                         "Setup didn't complete. We can try again next time."
@@ -116,56 +123,15 @@ class GDriveVoiceManager(MatchingCapability):
             # Classify trigger context
             # -----------------------------------------------------------------
             classification = self.classify_trigger_context(trigger_context)
-            mode = classification.get("mode", "")
-            search_query = classification.get("search_query")
+            await self.dispatch(classification)
 
-            # -----------------------------------------------------------------
-            # Route: Find Files (P0 — name search)
-            # -----------------------------------------------------------------
-            if mode == "find" and search_query:
-                await self._run_find(search_query)
-                self.capability_worker.resume_normal_flow()
-                return
+            # ---------------------------------------------------------
+            # Follow-up conversation loop (P1)
+            # ---------------------------------------------------------
+            await self._follow_up_loop()
 
-            # -----------------------------------------------------------------
-            # Route: Known but unimplemented modes
-            # -----------------------------------------------------------------
-            if mode in {"whats_new", "read_doc", "quick_save", "folder_browse"}:
-                await self.capability_worker.speak(
-                    "That feature is coming soon. "
-                    "Right now I can search your Drive by file name. "
-                    "What should I look for?"
-                )
-                user_input = await self.capability_worker.user_response()
-                if user_input and not self._is_exit(user_input):
-                    await self._run_find(user_input)
-                self.capability_worker.resume_normal_flow()
-                return
-
-            # -----------------------------------------------------------------
-            # Route: Find without extracted query
-            # -----------------------------------------------------------------
-            if mode == "find" and not search_query:
-                await self.capability_worker.speak(
-                    "What file should I search for?"
-                )
-                user_input = await self.capability_worker.user_response()
-                if user_input and not self._is_exit(user_input):
-                    await self._run_find(user_input)
-                self.capability_worker.resume_normal_flow()
-                return
-
-            # -----------------------------------------------------------------
-            # Route: Generic trigger / fallback
-            # -----------------------------------------------------------------
-            await self.capability_worker.speak(
-                "I can search your Google Drive by file name. "
-                "What would you like me to find?"
-            )
-            user_input = await self.capability_worker.user_response()
-            if user_input and not self._is_exit(user_input):
-                await self._run_find(user_input)
             self.capability_worker.resume_normal_flow()
+            return
 
         except Exception as e:
             self.worker.editor_logging_handler.error(
@@ -177,19 +143,336 @@ class GDriveVoiceManager(MatchingCapability):
             self.capability_worker.resume_normal_flow()
 
     # =========================================================================
+    # Central Dispatcher (P1)
+    # =========================================================================
+
+    async def dispatch(self, classification: Dict[str, Any]):
+        """
+        Route classified command to correct handler.
+
+        Handles missing required fields gracefully by prompting user.
+        Does NOT call resume_normal_flow().
+        """
+
+        mode = classification.get("mode", "find")
+        search_query = classification.get("search_query")
+        file_reference = classification.get("file_reference")
+        folder_name = classification.get("folder_name")
+        note_content = classification.get("note_content")
+        file_type = classification.get("file_type", "any")
+
+        # ----------------------------
+        # FIND
+        # ----------------------------
+        if mode == "find":
+            if not search_query:
+                await self.capability_worker.speak(
+                    "What should I search for?"
+                )
+                return
+
+            await self._run_find(search_query, classification)
+            return
+
+        # ----------------------------
+        # WHAT'S NEW
+        # ----------------------------
+        if mode == "whats_new":
+            await self._run_whats_new()
+            return
+
+        # ----------------------------
+        # READ DOC
+        # ----------------------------
+        if mode == "read_doc":
+            if not file_reference:
+                await self.capability_worker.speak(
+                    "What file should I read?"
+                )
+                return
+
+            await self._run_read_doc(file_reference)
+            return
+
+        # ----------------------------
+        # QUICK SAVE
+        # ----------------------------
+        if mode == "quick_save":
+            if not note_content:
+                await self.capability_worker.speak(
+                    "What would you like me to save?"
+                )
+                return
+
+            await self._run_quick_save(note_content)
+            return
+
+        # ----------------------------
+        # FOLDER BROWSE
+        # ----------------------------
+        if mode == "folder_browse":
+            if not folder_name:
+                await self.capability_worker.speak(
+                    "Which folder would you like to browse?"
+                )
+                return
+
+            await self._run_folder_browse(folder_name)
+            return
+
+        # ----------------------------
+        # SET NOTES FOLDER (P2)
+        # ----------------------------
+        if mode == "set_notes_folder":
+            if not folder_name:
+                await self.capability_worker.speak(
+                    "Which folder should I use for saving notes?"
+                )
+                return
+
+            await self._run_set_notes_folder(folder_name)
+            return
+
+        # ----------------------------
+        # Fallback
+        # ----------------------------
+        await self.capability_worker.speak(
+            "I can search, read documents, list recent files, "
+            "save notes, or browse folders. What would you like to do?"
+        )
+
+    # =========================================================================
+    # Follow-Up Conversation Loop (P1)
+    # =========================================================================
+
+    async def _follow_up_loop(self):
+        """
+        Allows natural multi-turn interaction after an initial command.
+
+        - Re-runs classification each turn
+        - Uses central dispatcher
+        - Stops on exit phrases
+        - Stops after 2 idle turns
+        - Hard cap of 10 turns
+        """
+
+        idle_count = 0
+        max_turns = 10
+        turn_count = 0
+
+        while turn_count < max_turns:
+            user_input = await self.capability_worker.user_response()
+
+            # No response / silence
+            if not user_input or not user_input.strip():
+                idle_count += 1
+                if idle_count >= 2:
+                    break
+                continue
+
+            idle_count = 0
+
+            # Exit handling
+            if self._is_exit(user_input):
+                break
+
+            # ---------------------------------------------------------
+            # Deterministic "go deeper" handling (session-scoped)
+            # ---------------------------------------------------------
+            lower_input = user_input.lower()
+            if (
+                "go deeper" in lower_input
+                or "deeper" in lower_input
+                or "more detail" in lower_input
+            ):
+                file_id = self.prefs.get("_session_current_doc_id")
+                name = self.prefs.get("_session_current_doc_name", "this document")
+                mime = self.prefs.get("_session_current_doc_mime")
+
+                if file_id:
+                    resp = await self._export_file_content(file_id, mime)
+
+                    if resp and resp.status_code == 200:
+                        content = resp.text or ""
+
+                        words = content.split()
+                        if len(words) > 3000:
+                            content = " ".join(words[:3000])
+
+                        prompt = (
+                            f"Provide a more detailed explanation of the following document.\n\n"
+                            f"Document title: {name}\n\n"
+                            f"{content}"
+                        )
+
+                        deeper = self.capability_worker.text_to_text_response(
+                            prompt,
+                            system_prompt="Provide a deeper explanation. Conversational. No bullet points."
+                        )
+
+                        if deeper:
+                            await self.capability_worker.speak(deeper.strip())
+                            turn_count += 1
+                            continue
+
+            # ---------------------------------------------------------
+            # Deterministic selection from recent_results
+            # ---------------------------------------------------------
+            match = self._resolve_from_recent(user_input)
+            if match:
+                await self._run_read_doc(match.get("name"))
+                turn_count += 1
+                continue
+
+            # Re-classify and dispatch
+            classification = self.classify_trigger_context(user_input)
+            await self.dispatch(classification)
+
+            turn_count += 1
+
+        # Graceful exit message (optional)
+        await self.capability_worker.speak("Let me know if you need anything else.")
+        return
+
+    # =========================================================================
+    # Relative Timestamp Utility (P1)
+    # =========================================================================
+
+    def _format_relative_time(self, iso_string: str) -> str:
+        """
+        Convert ISO 8601 timestamp (Drive modifiedTime) into
+        natural spoken relative time.
+
+        Behavior:
+        - < 60 seconds → "just now"
+        - < 60 minutes → "X minutes ago"
+        - < 24 hours → "X hours ago"
+        - 1 day → "Yesterday"
+        - < 7 days → "X days ago"
+        - < 30 days → "X weeks ago"
+        - < 365 days → "X months ago"
+        - ≥ 365 days → "X years ago"
+
+        If relative-time calculation fails but the timestamp
+        can still be parsed, returns an absolute date in the
+        format: "on February 12, 2026".
+
+        If parsing completely fails, returns the original string.
+        """
+
+        if not iso_string or not isinstance(iso_string, str):
+            return iso_string
+
+        try:
+            # Handle trailing Z (UTC)
+            if iso_string.endswith("Z"):
+                iso_string = iso_string.replace("Z", "+00:00")
+
+            dt = datetime.fromisoformat(iso_string)
+
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+
+            now = datetime.now(timezone.utc)
+            delta = now - dt
+
+            seconds = int(delta.total_seconds())
+
+            if seconds < 60:
+                return "just now"
+
+            minutes = seconds // 60
+            if minutes < 60:
+                return f"{minutes} minute{'s' if minutes != 1 else ''} ago"
+
+            hours = minutes // 60
+            if hours < 24:
+                return f"{hours} hour{'s' if hours != 1 else ''} ago"
+
+            days = hours // 24
+
+            if days == 1:
+                return "Yesterday"
+
+            if days < 7:
+                return f"{days} days ago"
+
+            if days < 30:
+                weeks = days // 7
+                return f"{weeks} week{'s' if weeks != 1 else ''} ago"
+
+            if days < 365:
+                months = days // 30
+                return f"{months} month{'s' if months != 1 else ''} ago"
+
+            years = days // 365
+            return f"{years} year{'s' if years != 1 else ''} ago"
+
+        except Exception:
+            # Fallback to date-only readable format if possible
+            try:
+                dt = datetime.fromisoformat(iso_string.replace("Z", "+00:00"))
+                return dt.strftime("on %B %d, %Y")
+            except Exception:
+                return iso_string
+
+    # =========================================================================
     # Find Files — P0 Core
     # =========================================================================
 
-    async def _run_find(self, query: str):
-        """Execute the find-files flow: search, process, speak results."""
+    async def _run_find(self, query: str, classification: Optional[Dict[str, Any]] = None):
+        """Enhanced find: supports MIME filtering + name/content search + LLM-formatted output."""
         if not query.strip():
             await self.capability_worker.speak(
                 "I need a file name to search for."
             )
             return
+
         await self.capability_worker.speak("Searching your Drive.")
 
-        resp = await self.search_files_by_name(query)
+        # -------------------------------------------------------------
+        # Determine file_type (default any)
+        # -------------------------------------------------------------
+        file_type = "any"
+        if classification:
+            file_type = classification.get("file_type", "any")
+
+        mime_map = {
+            "doc": "application/vnd.google-apps.document",
+            "sheet": "application/vnd.google-apps.spreadsheet",
+            "slides": "application/vnd.google-apps.presentation",
+            "pdf": "application/pdf",
+        }
+
+        # -------------------------------------------------------------
+        # Build Drive query
+        # -------------------------------------------------------------
+        safe_query = (query or "").strip().replace("'", "\\'")
+        # Use name OR fullText for better recall (content search support without extra schema)
+        search_clause = (
+            f"(name contains '{safe_query}' or fullText contains '{safe_query}')"
+        )
+
+        q_parts = ["trashed = false", search_clause]
+
+        if file_type in mime_map:
+            q_parts.append(f"mimeType = '{mime_map[file_type]}'")
+        else:
+            # Avoid folders polluting results unless explicitly searching for folders
+            q_parts.append("mimeType != 'application/vnd.google-apps.folder'")
+
+        drive_query = " and ".join(q_parts)
+
+        resp = await self.drive_request(
+            "GET",
+            "/files",
+            params={
+                "q": drive_query,
+                "fields": "files(id,name,mimeType,modifiedTime)",
+                "pageSize": 8,
+                "orderBy": "modifiedTime desc",
+            },
+        )
 
         if resp is None:
             await self.capability_worker.speak(
@@ -198,10 +481,7 @@ class GDriveVoiceManager(MatchingCapability):
             return
 
         if resp.status_code != 200:
-            self.worker.editor_logging_handler.error(
-                f"[GDrive] Search returned {resp.status_code}: "
-                f"{resp.text[:300]}"
-            )
+            self._log_err(f"Find failed: {resp.status_code} {resp.text[:200]}")
             await self.capability_worker.speak(
                 "Something went wrong while searching your Drive."
             )
@@ -212,11 +492,11 @@ class GDriveVoiceManager(MatchingCapability):
 
         if not files:
             await self.capability_worker.speak(
-                "I didn't find anything matching that in your Drive. "
-                "Try different keywords."
+                f"I couldn't find any files matching {query}."
             )
             return
 
+        # Let the existing LLM formatter speak naturally + cache summarized results.
         await self.handle_search_results(files, query)
 
     # =========================================================================
@@ -225,8 +505,20 @@ class GDriveVoiceManager(MatchingCapability):
 
     def _is_exit(self, text: str) -> bool:
         """Check if user input matches an exit phrase."""
+        if not text:
+            return False
+
         lower = text.lower().strip()
-        return any(word in lower for word in EXIT_WORDS)
+
+        for word in EXIT_WORDS:
+            # Exact match
+            if lower == word:
+                return True
+            # Prefix match (e.g., "stop please")
+            if lower.startswith(word + " "):
+                return True
+
+        return False
 
     def _mime_label(self, mime_type: str) -> str:
         """Convert a MIME type string to a spoken label."""
@@ -300,7 +592,7 @@ class GDriveVoiceManager(MatchingCapability):
         Persist self.prefs using delete-then-write pattern.
 
         - Delete file if it exists
-        - Write json.dumps(self.prefs)
+        - Write json.dumps(filtered prefs without _session_ keys)
         - temp=False (persistent)
         """
 
@@ -314,7 +606,13 @@ class GDriveVoiceManager(MatchingCapability):
                     PREFS_FILE, False
                 )
 
-            serialized = json.dumps(self.prefs)
+            # Strip session-only keys before persisting
+            to_persist = {
+                k: v for k, v in self.prefs.items()
+                if not k.startswith("_session_")
+            }
+
+            serialized = json.dumps(to_persist)
 
             await self.capability_worker.write_file(
                 PREFS_FILE,
@@ -331,46 +629,78 @@ class GDriveVoiceManager(MatchingCapability):
     # OAuth Setup Flow
     # =========================================================================
 
-    async def run_oauth_setup_flow(self) -> bool:
-        """Guide user through Google OAuth setup via voice."""
+    async def run_oauth_setup_flow(self, skip_walkthrough: bool = False) -> bool:
+        """
+        Guide user through Google OAuth setup.
+
+        If skip_walkthrough is True, collect Client ID/Secret directly.
+        Otherwise, run full Google Cloud Console walkthrough.
+        """
         try:
             # ---------------------------------------------------------
             # Step 1: Walk through Google Cloud Console setup
             # ---------------------------------------------------------
-            await self.capability_worker.speak(
-                "To connect Google Drive, you'll need to create "
-                "credentials in the Google Cloud Console. "
-                "I'll walk you through it."
-            )
-            await self.capability_worker.speak(
-                "Step one. Go to console dot cloud dot google dot com. "
-                "Create a new project or pick an existing one."
-            )
-            await self.capability_worker.speak(
-                "Step two. In the navigation menu on your left, go to APIs and Services, "
-                "then Library. Search for Google Drive API and enable it."
-            )
-            await self.capability_worker.speak(
-                "Step three. Go to APIs and Services, then Credentials. "
-                "Click Create Credentials and choose OAuth client ID."
-            )
-            await self.capability_worker.speak(
-                "If it asks you to configure a consent screen, "
-                "choose External, fill in the app name, add your email, "
-                "and save."
-            )
-
-            await self.capability_worker.speak(
-                "Then click on the nagivation menu again, then APIs and Services, "
-                "then OAuth Consent Screen. Click Audience, then click Add Users "
-                "at the bottom. Then add your email as a test user."
-            )
-
-            await self.capability_worker.speak(
-                "Step four. Create the OAuth client. Choose Desktop App "
-                "as the type. Name it whatever you like. "
-                "Then copy the Client ID and Client Secret."
-            )
+            if not skip_walkthrough:
+                await self.capability_worker.speak(
+                    "To connect Google Drive, you'll need to create "
+                    "credentials in the Google Cloud Console."
+                )
+                await self.capability_worker.speak(
+                    "I'll walk you through it."
+                )
+                await self.capability_worker.speak(
+                    "Step one. Go to console dot cloud dot google dot com."
+                )
+                await self.capability_worker.speak(
+                    "Create a new project or pick an existing one."
+                )
+                await self.capability_worker.speak(
+                    "Step two. In the navigation menu on your left, "
+                    "go to APIs and Services, then Library."
+                )
+                await self.capability_worker.speak(
+                    "Search for Google Drive API and enable it."
+                )
+                await self.capability_worker.speak(
+                    "Step three. Go to APIs and Services, then Credentials. "
+                    "Click Create Credentials and choose OAuth client ID."
+                )
+                await self.capability_worker.speak(
+                    "If it asks you to configure a consent screen, "
+                    "choose External."
+                )
+                await self.capability_worker.speak(
+                    "Fill in the app name and add your email."
+                )
+                await self.capability_worker.speak(
+                    "Then click save."
+                )
+                await self.capability_worker.speak(
+                    "Open the navigation menu again."
+                )
+                await self.capability_worker.speak(
+                    "Go to APIs and Services, then OAuth Consent Screen."
+                )
+                await self.capability_worker.speak(
+                    "Click Audience, then click Add Users at the bottom."
+                )
+                await self.capability_worker.speak(
+                    "Add your email as a test user."
+                )
+                await self.capability_worker.speak(
+                    "Step four. Create the OAuth client. Choose Desktop App "
+                    "as the type."
+                )
+                await self.capability_worker.speak(
+                    "Name it whatever you like."
+                )
+                await self.capability_worker.speak(
+                    "Then copy the Client ID and Client Secret."
+                )
+            else:
+                await self.capability_worker.speak(
+                    "Great. Let's connect your existing credentials."
+                )
 
             # ---------------------------------------------------------
             # Step 2: Collect Client ID
@@ -437,15 +767,32 @@ class GDriveVoiceManager(MatchingCapability):
             self._log(f"Consent URL: {consent_url}")
 
             await self.capability_worker.speak(
-                "Now I need you to authorize access. "
-                "I've sent an authorization link. Open it in your browser "
-                "and sign in with your Google account."
+                "Now I need you to authorize access."
+            )
+            await self.capability_worker.speak(
+                "I've sent an authorization link."
+            )
+            await self.capability_worker.speak(
+                "Open it in your browser and sign in with your Google account."
             )
             await self.capability_worker.speak(
                 "After you approve, the browser will try to redirect "
-                "and show an error page. That's expected. "
-                "Look at the URL bar. Copy everything after code equals, "
-                "up to the ampersand symbol. Then paste that code here."
+                "and show an error page."
+            )
+            await self.capability_worker.speak(
+                "That's expected."
+            )
+            await self.capability_worker.speak(
+                "Look at the URL bar."
+            )
+            await self.capability_worker.speak(
+                "Copy everything after code equals."
+            )
+            await self.capability_worker.speak(
+                "Stop at the ampersand symbol."
+            )
+            await self.capability_worker.speak(
+                "Then paste that code here."
             )
 
             # ---------------------------------------------------------
@@ -503,6 +850,7 @@ class GDriveVoiceManager(MatchingCapability):
 
             self.prefs["refresh_token"] = refresh_token
             self.prefs["access_token"] = access_token
+            self.prefs["token_expires_at"] = time.time() + int(expires_in) - 60
 
 
             # Handle refresh token rotation — Google may return a new one
@@ -734,6 +1082,20 @@ class GDriveVoiceManager(MatchingCapability):
             if not path.startswith("/"):
                 path = "/" + path
 
+            # -------------------------------------------------------------
+            # Ensure uploadType=multipart for upload endpoint
+            # -------------------------------------------------------------
+            if upload:
+                if params is None:
+                    params = {}
+                else:
+                    # Avoid mutating original caller dict
+                    params = dict(params)
+
+                # Only set if not already provided explicitly
+                if "uploadType" not in params:
+                    params["uploadType"] = "multipart"
+
             url = base + path
 
             # -------------------------------------------------------------
@@ -854,10 +1216,15 @@ class GDriveVoiceManager(MatchingCapability):
             # Build structured context for LLM
             summarized = []
             for f in top_files:
+                rel = None
+                mt = f.get("modifiedTime")
+                if isinstance(mt, str) and mt.strip():
+                    rel = self._format_relative_time(mt)
                 summarized.append({
                     "name": f.get("name"),
+                    "mimeType": f.get("mimeType"),
                     "type": self._mime_label(f.get("mimeType", "")),
-                    "modifiedTime": f.get("modifiedTime"),
+                    "modified": rel,
                     "id": f.get("id"),
                 })
 
@@ -900,6 +1267,658 @@ class GDriveVoiceManager(MatchingCapability):
             )
 
     # =========================================================================
+    # Read Doc — P1
+    # =========================================================================
+
+    def _resolve_from_recent(self, user_input: str) -> Optional[Dict]:
+        """
+        Resolve a file selection from cached recent_results.
+
+        Priority:
+        1. Exact name match
+        2. Partial name match
+        3. Ordinal reference
+        4. LLM fuzzy selection fallback (safe, deterministic ID return)
+        """
+
+        files = self.prefs.get("recent_results", [])
+        if not files or not user_input:
+            return None
+
+        ref = user_input.strip().lower()
+
+        # Exact match
+        for f in files:
+            if (f.get("name") or "").lower() == ref:
+                return f
+
+        # Partial match
+        for f in files:
+            name_lower = (f.get("name") or "").lower()
+            if ref and ref in name_lower:
+                return f
+
+        # Ordinal match
+        ordinal_map = {
+            "first": 0,
+            "second": 1,
+            "third": 2,
+            "fourth": 3,
+            "fifth": 4,
+            "1": 0,
+            "2": 1,
+            "3": 2,
+            "4": 3,
+            "5": 4,
+        }
+
+        for word, idx in ordinal_map.items():
+            if word in ref and idx < len(files):
+                return files[idx]
+
+        # -------------------------------------------------------------
+        # LLM Fuzzy Selection Fallback (safe ID-only resolution)
+        # -------------------------------------------------------------
+        # Only attempt if small candidate set (avoid token bloat)
+        if len(files) <= 20:
+            try:
+                system_prompt = (
+                    "You resolve file selections for a Google Drive assistant.\n"
+                    "The user selected a file from a previously shown list.\n\n"
+                    "Return ONLY valid JSON. No markdown. No explanation.\n"
+                    "Schema:\n"
+                    "{ \"id\": string or null }\n\n"
+                    "Rules:\n"
+                    "- Only return an id that exists in the provided list.\n"
+                    "- If no clear match exists, return null.\n"
+                )
+
+                # Provide minimal safe context
+                candidate_list = [
+                    {"id": f.get("id"), "name": f.get("name")}
+                    for f in files
+                ]
+
+                user_prompt = (
+                    f"User said: '{user_input}'\n\n"
+                    f"Available files:\n{json.dumps(candidate_list)}\n\n"
+                    "Which file did the user mean?"
+                )
+
+                raw = self.capability_worker.text_to_text_response(
+                    user_prompt,
+                    system_prompt=system_prompt,
+                )
+
+                if raw:
+                    cleaned = (
+                        raw.replace("```json", "")
+                        .replace("```", "")
+                        .strip()
+                    )
+
+                    parsed = json.loads(cleaned)
+                    selected_id = parsed.get("id")
+
+                    if selected_id:
+                        for f in files:
+                            if f.get("id") == selected_id:
+                                return f
+
+            except Exception as e:
+                self._log_err(f"LLM fuzzy resolve failed: {e}")
+
+        return None
+
+    # =========================================================================
+    # Shared Export Helper
+    # =========================================================================
+
+    async def _export_file_content(self, file_id: str, mime: str):
+        """Export file content using correct MIME branching."""
+
+        if mime == "application/vnd.google-apps.document":
+            return await self.drive_request(
+                "GET", f"/files/{file_id}/export",
+                params={"mimeType": "text/plain"}
+            )
+
+        if mime == "application/vnd.google-apps.spreadsheet":
+            return await self.drive_request(
+                "GET", f"/files/{file_id}/export",
+                params={"mimeType": "text/csv"}
+            )
+
+        if mime == "application/vnd.google-apps.presentation":
+            return await self.drive_request(
+                "GET", f"/files/{file_id}/export",
+                params={"mimeType": "text/plain"}
+            )
+
+        # Fallback for non-Google files
+        return await self.drive_request(
+            "GET", f"/files/{file_id}", params={"alt": "media"}
+        )
+
+    async def _run_read_doc(self, file_reference: str):
+        """
+        Read and summarize a document.
+
+        Resolution priority:
+        1. Exact name match in recent_results
+        2. Ordinal reference (first, second, 1, 2...)
+        3. Fallback: search by name
+        """
+
+        if not file_reference or not file_reference.strip():
+            await self.capability_worker.speak(
+                "What file should I read?"
+            )
+            return
+
+        target = self._resolve_from_recent(file_reference)
+
+        # -------------------------------------------------------------
+        # 3. Fallback search by name
+        # -------------------------------------------------------------
+        if not target:
+            safe_ref = (file_reference or "").strip().replace("'", "\\'")
+            resp = await self.drive_request(
+                "GET",
+                "/files",
+                params={
+                    "q": (
+                        f"name contains '{safe_ref}' and trashed = false"
+                    ),
+                    "pageSize": 1,
+                    "fields": "files(id,name,mimeType,modifiedTime)",
+                },
+            )
+
+            if resp and resp.status_code == 200:
+                data = resp.json()
+                matches = data.get("files", [])
+                if matches:
+                    target = matches[0]
+
+        if not target:
+            await self.capability_worker.speak(
+                "I couldn't find that file."
+            )
+            return
+
+        file_id = target.get("id")
+        mime = target.get("mimeType", "")
+        name = target.get("name", "Untitled")
+
+        await self.capability_worker.speak(f"Reading {name}.")
+
+        if mime == "application/pdf":
+            await self.capability_worker.speak(
+                "I can't read PDF files aloud yet."
+            )
+            return
+
+        resp = await self._export_file_content(file_id, mime)
+
+        if resp is None:
+            await self.capability_worker.speak(
+                "I couldn't access that file."
+            )
+            return
+
+        if resp.status_code != 200:
+            self._log_err(
+                f"Read export failed: {resp.status_code} {resp.text[:200]}"
+            )
+            await self.capability_worker.speak(
+                "That file may be too large or restricted."
+            )
+            return
+
+        # -------------------------------------------------------------
+        # Content-Length guard (prevent large exports / memory spikes)
+        # -------------------------------------------------------------
+        try:
+            content_length = int(resp.headers.get("Content-Length", "0"))
+        except Exception:
+            content_length = 0
+
+        # Guard at ~8MB (Drive export hard limit is 10MB)
+        if content_length and content_length > 8 * 1024 * 1024:
+            self._log_err(
+                f"Read aborted: file too large ({content_length} bytes)"
+            )
+            await self.capability_worker.speak(
+                "That document is too large for me to read aloud."
+            )
+            return
+
+        content = resp.text
+
+        if not content or not content.strip():
+            await self.capability_worker.speak(
+                "That file appears to be empty."
+            )
+            return
+
+        # -------------------------------------------------------------
+        # Truncate to ~3000 words
+        # -------------------------------------------------------------
+        words = content.split()
+        if len(words) > 3000:
+            content = " ".join(words[:3000])
+
+        # Store session pointer only (not persisted)
+        self.prefs["_session_current_doc_id"] = file_id
+        self.prefs["_session_current_doc_name"] = name
+        self.prefs["_session_current_doc_mime"] = mime
+
+        # -------------------------------------------------------------
+        # Summarize via LLM for voice
+        # -------------------------------------------------------------
+        system_prompt = (
+            "You summarize documents for spoken output.\n"
+            "3 to 5 sentences. Conversational. No bullet points."
+        )
+
+        try:
+            prompt_text = (
+                "Summarize this document for voice output. "
+                "Be concise, 3 to 5 sentences. Focus on key points and conclusions.\n\n"
+                f"Document title: {name}\n"
+                "Content:\n"
+                f"{content}"
+            )
+
+            summary = self.capability_worker.text_to_text_response(
+                prompt_text,
+                system_prompt=system_prompt,
+            )
+
+            if summary:
+                await self.capability_worker.speak(summary.strip())
+                await self.capability_worker.speak(
+                    "Want me to go deeper into this, or would you "
+                    "like me to read another file? If you'd "
+                    "like me to read another file, just say the file's name."
+                )
+            else:
+                await self.capability_worker.speak(
+                    "I couldn't summarize that document."
+                )
+
+        except Exception as e:
+            self._log_err(f"Summarization failed: {e}")
+            await self.capability_worker.speak(
+                "Something went wrong while summarizing the document."
+            )
+
+    # =========================================================================
+    # Folder Browse — P1
+    # =========================================================================
+
+    async def _run_folder_browse(self, folder_name: str):
+        """
+        Browse contents of a folder.
+
+        Resolution priority:
+        1. Exact folder name match (API)
+        2. Partial name match
+        3. Clarify if multiple
+        """
+        # TODO: when multiple folders are found and the user is prompted to clarify, there's no logic to capture their response and continue. The method just returns after speaking the options. The user's answer goes nowhere — it'll fall back to the main flow or follow-up loop (which doesn't exist yet). This is fine for now since the follow-up loop (step 10) will handle re-classification of the user's response, but worth flagging so it doesn't get forgotten. Once the follow-up loop is in place, the user saying "the first one" or "Marketing 2025" after disambiguation should re-enter the dispatcher and resolve correctly.
+
+        if not folder_name or not folder_name.strip():
+            await self.capability_worker.speak(
+                "Which folder would you like to browse?"
+            )
+            return
+
+        safe_name = folder_name.strip().replace("'", "\\'")
+
+        # -------------------------------------------------------------
+        # 1. Find matching folders
+        # -------------------------------------------------------------
+        resp = await self.drive_request(
+            "GET",
+            "/files",
+            params={
+                "q": (
+                    "mimeType = 'application/vnd.google-apps.folder' "
+                    f"and name contains '{safe_name}' "
+                    "and trashed = false"
+                ),
+                "fields": "files(id,name,modifiedTime)",
+                "pageSize": 5,
+            },
+        )
+
+        if resp is None:
+            await self.capability_worker.speak(
+                "I couldn't reach Google Drive."
+            )
+            return
+
+        if resp.status_code != 200:
+            self._log_err(
+                f"Folder search failed: {resp.status_code} {resp.text[:200]}"
+            )
+            await self.capability_worker.speak(
+                "Something went wrong while looking for that folder."
+            )
+            return
+
+        data = resp.json()
+        folders = data.get("files", [])
+
+        if not folders:
+            await self.capability_worker.speak(
+                f"I couldn't find a folder named {folder_name}."
+            )
+            return
+
+        if len(folders) > 1:
+            names = ", ".join(f.get("name", "") for f in folders[:3])
+            await self.capability_worker.speak(
+                f"I found multiple folders: {names}. Which one did you mean?"
+            )
+            return
+
+        folder = folders[0]
+        folder_id = folder.get("id")
+        folder_display_name = folder.get("name", "that folder")
+
+        await self.capability_worker.speak(
+            f"Here are the contents of {folder_display_name}."
+        )
+
+        # -------------------------------------------------------------
+        # 2. List folder contents
+        # -------------------------------------------------------------
+        resp = await self.drive_request(
+            "GET",
+            "/files",
+            params={
+                "q": (
+                    f"'{folder_id}' in parents "
+                    "and trashed = false"
+                ),
+                "orderBy": "modifiedTime desc",
+                "pageSize": 10,
+                "fields": "files(id,name,mimeType,modifiedTime)",
+            },
+        )
+
+        if resp is None:
+            await self.capability_worker.speak(
+                "I couldn't retrieve that folder's contents."
+            )
+            return
+
+        if resp.status_code != 200:
+            self._log_err(
+                f"Folder list failed: {resp.status_code} {resp.text[:200]}"
+            )
+            await self.capability_worker.speak(
+                "Something went wrong while listing that folder."
+            )
+            return
+
+        data = resp.json()
+        files = data.get("files", [])
+
+        if not files:
+            await self.capability_worker.speak(
+                "That folder is empty."
+            )
+            return
+
+        # Use existing LLM formatter
+        await self.handle_search_results(files, f"{folder_display_name} folder")
+
+    # =========================================================================
+    # Set Notes Folder — P2
+    # =========================================================================
+
+    async def _run_set_notes_folder(self, folder_name: str):
+        """
+        Configure a folder where Quick Save will create documents.
+
+        - Searches for matching Drive folders
+        - Stores folder ID in prefs
+        - Used by Quick Save
+        """
+
+        if not folder_name or not folder_name.strip():
+            await self.capability_worker.speak(
+                "Which folder would you like me to use for notes?"
+            )
+            return
+
+        safe_name = folder_name.strip().replace("'", "\\'")
+
+        resp = await self.drive_request(
+            "GET",
+            "/files",
+            params={
+                "q": (
+                    "mimeType = 'application/vnd.google-apps.folder' "
+                    f"and name contains '{safe_name}' "
+                    "and trashed = false"
+                ),
+                "fields": "files(id,name)",
+                "pageSize": 5,
+            },
+        )
+
+        if not resp or resp.status_code != 200:
+            await self.capability_worker.speak(
+                "I couldn't find that folder."
+            )
+            return
+
+        data = resp.json()
+        folders = data.get("files", [])
+
+        if not folders:
+            await self.capability_worker.speak(
+                f"I couldn't find a folder named {folder_name}."
+            )
+            return
+
+        # Pick first match (deterministic)
+        folder = folders[0]
+
+        self.prefs["notes_folder_id"] = folder.get("id")
+        self.prefs["notes_folder_name"] = folder.get("name")
+        await self.save_prefs()
+
+        await self.capability_worker.speak(
+            f"Got it. I'll save future notes to {folder.get('name')}."
+        )
+
+    # =========================================================================
+    # Quick Save — P1
+    # =========================================================================
+
+    async def _run_quick_save(self, note_content: str):
+        """
+        Save a quick note to Drive as a text file.
+
+        Steps:
+        1. Use LLM to extract title + cleaned body.
+        2. Build multipart upload payload.
+        3. POST to /files (upload endpoint).
+        4. Confirm to user.
+        """
+
+        if not note_content or not note_content.strip():
+            await self.capability_worker.speak(
+                "What would you like me to save?"
+            )
+            return
+
+        # -------------------------------------------------------------
+        # 1. Extract title + body via LLM
+        # -------------------------------------------------------------
+        system_prompt = (
+            "You extract structured note data.\n"
+            "Return ONLY valid JSON. No markdown.\n\n"
+            "Schema:\n"
+            "{\n"
+            '  "title": string (3-8 words),\n'
+            '  "body": string (cleaned full note text)\n'
+            "}"
+        )
+
+        try:
+            raw = self.capability_worker.text_to_text_response(
+                note_content,
+                system_prompt=system_prompt,
+            )
+
+            cleaned = (
+                raw.replace("```json", "")
+                .replace("```", "")
+                .strip()
+            )
+
+            parsed = json.loads(cleaned)
+
+            title = parsed.get("title")
+            body = parsed.get("body")
+
+            if not title or not body:
+                raise ValueError("Missing title/body in LLM output")
+
+        except Exception as e:
+            self._log_err(f"Quick Save LLM parse failed: {e}")
+            # Fallback: simple title from first few words
+            words = note_content.strip().split()
+            title = " ".join(words[:6]) or "Quick Note"
+            body = note_content.strip()
+
+        # Sanitize filename
+        safe_title = title.strip().replace("/", "-")
+
+        # -------------------------------------------------------------
+        # 2. Build multipart payload
+        # -------------------------------------------------------------
+        metadata = {
+            "name": safe_title,
+            "mimeType": "application/vnd.google-apps.document",
+        }
+
+        notes_folder_id = self.prefs.get("notes_folder_id")
+        if notes_folder_id:
+            metadata["parents"] = [notes_folder_id]
+
+        boundary = "-------314159265358979323846"
+
+        multipart_body = (
+            f"--{boundary}\r\n"
+            "Content-Type: application/json; charset=UTF-8\r\n\r\n"
+            f"{json.dumps(metadata)}\r\n"
+            f"--{boundary}\r\n"
+            "Content-Type: text/plain\r\n\r\n"
+            f"{body}\r\n"
+            f"--{boundary}--"
+        ).encode("utf-8")
+
+        headers_extra = {
+            "Content-Type": f"multipart/related; boundary={boundary}"
+        }
+
+        # -------------------------------------------------------------
+        # 3. Upload
+        # -------------------------------------------------------------
+        resp = await self.drive_request(
+            "POST",
+            "/files",
+            headers_extra=headers_extra,
+            data=multipart_body,
+            upload=True,
+        )
+
+        if resp is None:
+            await self.capability_worker.speak(
+                "I couldn't reach Google Drive to save that note."
+            )
+            return
+
+        if resp.status_code not in (200, 201):
+            self._log_err(
+                f"Quick Save failed: {resp.status_code} {resp.text[:200]}"
+            )
+            await self.capability_worker.speak(
+                "Something went wrong while saving your note."
+            )
+            return
+
+        await self.capability_worker.speak(
+            f"Saved '{safe_title}' to your Drive."
+        )
+
+    # =========================================================================
+    # What's New Mode (P1)
+    # =========================================================================
+
+    async def _run_whats_new(self):
+        """
+        List the 5 most recently modified non-folder files.
+
+        - Excludes trashed files
+        - Excludes folders
+        - Orders by modifiedTime desc
+        - Uses relative timestamps
+        - Routes through handle_search_results() for natural voice formatting
+        """
+
+        await self.capability_worker.speak("Here are your most recently updated files.")
+
+        resp = await self.drive_request(
+            "GET",
+            "/files",
+            params={
+                "q": (
+                    "trashed = false and "
+                    "mimeType != 'application/vnd.google-apps.folder'"
+                ),
+                "orderBy": "modifiedTime desc",
+                "pageSize": 5,
+                "fields": "files(id,name,mimeType,modifiedTime)",
+            },
+        )
+
+        if resp is None:
+            await self.capability_worker.speak(
+                "I couldn't reach Google Drive right now."
+            )
+            return
+
+        if resp.status_code != 200:
+            self._log_err(
+                f"What's New failed: {resp.status_code} {resp.text[:200]}"
+            )
+            await self.capability_worker.speak(
+                "Something went wrong while checking your recent files."
+            )
+            return
+
+        data = resp.json()
+        files = data.get("files", [])
+
+        if not files:
+            await self.capability_worker.speak(
+                "You don't have any recent files."
+            )
+            return
+
+        # Route through LLM formatter for natural output + caching
+        await self.handle_search_results(files, "recent files")
+
+    # =========================================================================
     # Trigger Classification
     # =========================================================================
 
@@ -934,11 +1953,8 @@ class GDriveVoiceManager(MatchingCapability):
             if not user_messages:
                 return ""
 
-            # Take last 5 user messages
-            recent = user_messages[-5:]
-
-            # Join oldest → newest for context clarity
-            return "\n".join(recent)
+            # Use only most recent user message
+            return user_messages[-1]
 
         except Exception as e:
             self._log_err(f"get_trigger_context error: {e}")
@@ -946,35 +1962,59 @@ class GDriveVoiceManager(MatchingCapability):
 
     def classify_trigger_context(self, text: str) -> Dict[str, Any]:
         """
-        Use LLM to classify trigger into a mode.
+        Classify Google Drive voice command.
 
-        - Call capability_worker.text_to_text_response (synchronous)
-        - Prompt for JSON: {mode, search_query}
-        - Strip markdown fences safely
-        - Return parsed dict
-        - On parse failure: return {"mode": "find", "search_query": None}
-        - Modes: find | whats_new | read_doc | quick_save | folder_browse
+        Returns:
+        {
+          "mode": str,
+          "search_query": str | None,
+          "file_reference": str | None,
+          "folder_name": str | None,
+          "note_content": str | None,
+          "file_type": str
+        }
+
+        file_type ∈ {"doc","sheet","slides","pdf","any"}
         """
 
         if not text or not text.strip():
-            return {"mode": "find", "search_query": None}
+            return {
+                "mode": "find",
+                "search_query": None,
+                "file_reference": None,
+                "folder_name": None,
+                "note_content": None,
+                "file_type": "any",
+            }
+
+        text = self._strip_activation_phrase(text)
 
         system_prompt = (
-            "You are a classifier for a Google Drive voice assistant.\n"
-            "Return ONLY valid JSON. No markdown. No explanation.\n\n"
+            "You classify voice commands for a Google Drive assistant.\n"
+            "Return ONLY valid JSON. No markdown fences. No explanation.\n\n"
             "Schema:\n"
             "{\n"
-            '  "mode": "find | whats_new | read_doc | quick_save | folder_browse",\n'
-            '  "search_query": string or null\n'
+            '  "mode": "find | whats_new | read_doc | quick_save | folder_browse | set_notes_folder",\n'
+            '  "search_query": string or null,\n'
+            '  "file_reference": string or null,\n'
+            '  "folder_name": string or null,\n'
+            '  "note_content": string or null,\n'
+            '  "file_type": "doc | sheet | slides | pdf | any"\n'
             "}\n\n"
             "Rules:\n"
-            "- If user wants to search for a file, mode = find.\n"
+            "- If user wants to search for files, mode = find.\n"
             "- If asking what’s new or recent files, mode = whats_new.\n"
-            "- If asking to open or read a document, mode = read_doc.\n"
-            "- If asking to save something quickly, mode = quick_save.\n"
-            "- If asking to browse folders, mode = folder_browse.\n"
-            "- If unsure, default to mode = find.\n"
-            "- Extract a clean search_query when possible.\n"
+            "- If asking to read/open a file, mode = read_doc.\n"
+            "- If asking to save a note, mode = quick_save.\n"
+            "- If asking about folder contents, mode = folder_browse.\n"
+            "- If asking to set or change the notes folder, mode = set_notes_folder.\n"
+            "- Extract a clean search_query for searches.\n"
+            "- Extract file_reference for read_doc.\n"
+            "- Extract folder_name for folder browsing.\n"
+            "- Extract note_content for quick saves.\n"
+            "- Detect file_type from words like spreadsheet, sheet, slides, presentation, doc, document, pdf.\n"
+            "- If no file type specified, use 'any'.\n"
+            "- If unsure about mode, default to find.\n"
         )
 
         try:
@@ -986,20 +2026,16 @@ class GDriveVoiceManager(MatchingCapability):
             if not raw_response:
                 raise ValueError("Empty LLM response")
 
-            cleaned = raw_response.strip()
-
-            # Safe markdown fence stripping
-            cleaned = cleaned.replace("```json", "")
-            cleaned = cleaned.replace("```", "")
-            cleaned = cleaned.strip()
+            cleaned = (
+                raw_response.replace("```json", "")
+                .replace("```", "")
+                .strip()
+            )
 
             parsed = json.loads(cleaned)
 
             if not isinstance(parsed, dict):
                 raise ValueError("Parsed response is not a dict")
-
-            mode = parsed.get("mode", "find")
-            search_query = parsed.get("search_query")
 
             allowed_modes = {
                 "find",
@@ -1007,19 +2043,52 @@ class GDriveVoiceManager(MatchingCapability):
                 "read_doc",
                 "quick_save",
                 "folder_browse",
+                "set_notes_folder",
             }
 
+            allowed_types = {"doc", "sheet", "slides", "pdf", "any"}
+
+            mode = parsed.get("mode", "find")
             if mode not in allowed_modes:
                 mode = "find"
 
-            if search_query is not None and not isinstance(search_query, str):
-                search_query = None
+            file_type = parsed.get("file_type", "any")
+            if file_type not in allowed_types:
+                file_type = "any"
+
+            def safe_str(val):
+                return val if isinstance(val, str) and val.strip() else None
 
             return {
                 "mode": mode,
-                "search_query": search_query,
+                "search_query": safe_str(parsed.get("search_query")),
+                "file_reference": safe_str(parsed.get("file_reference")),
+                "folder_name": safe_str(parsed.get("folder_name")),
+                "note_content": safe_str(parsed.get("note_content")),
+                "file_type": file_type,
             }
 
         except Exception as e:
             self._log_err(f"Classification failed: {e}")
-            return {"mode": "find", "search_query": None}
+            return {
+                "mode": "find",
+                "search_query": None,
+                "file_reference": None,
+                "folder_name": None,
+                "note_content": None,
+                "file_type": "any",
+            }
+
+    def _strip_activation_phrase(self, text: str) -> str:
+        if not text:
+            return text
+
+        lowered = text.lower()
+
+        for hotword in self.matching_hotwords:
+            hw = hotword.lower()
+            if lowered.startswith(hw):
+                # remove only first occurrence at start
+                return text[len(hotword):].strip(" .,")
+
+        return text
