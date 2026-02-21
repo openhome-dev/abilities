@@ -210,7 +210,8 @@ def main():
 
     full_output = "\n".join(output_lines)
 
-    with open(output_file, "w") as f:
+    # using UTF-8 encoding to ensure emojis are written correctly
+    with open(output_file, "w", encoding="utf-8") as f:
         f.write(full_output)
 
     if summary_file:
