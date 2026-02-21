@@ -554,7 +554,7 @@ class TwilioSmsCapability(MatchingCapability):
                     break
 
                 classify_prompt = f"""You are a voice command router. Classify the user's intent based on their input.
-                Intents: 
+                Intents:
                 - send_text (e.g., "send a text to john", "message mom")
                 - read_texts (e.g., "read my messages", "check texts", "any new texts")
                 - read_from (e.g., "what did robot say", "read texts from john")
@@ -565,7 +565,7 @@ class TwilioSmsCapability(MatchingCapability):
                 - list_contacts (e.g., "who is in my contacts", "show contacts")
                 - exit (e.g., "stop", "exit")
                 - unknown
-                
+
                 User said: "{user_input}"
                 Return ONLY valid JSON: {{"intent": "string"}}"""
 
