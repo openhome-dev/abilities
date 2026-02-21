@@ -43,31 +43,56 @@ BLOCKED_IMPORTS = [
 
 BLOCKED_PATTERNS = [
     (r"\bprint\s*\(", "Use self.worker.editor_logging_handler instead of print()"),
-    (r"\basyncio\.sleep\s*\(", "Use self.worker.session_tasks.sleep() instead of asyncio.sleep()"),
-    (r"\basyncio\.create_task\s*\(", "Use self.worker.session_tasks.create() instead of asyncio.create_task()"),
+    (
+        r"\basyncio\.sleep\s*\(",
+        "Use self.worker.session_tasks.sleep() instead of asyncio.sleep()",
+    ),
+    (
+        r"\basyncio\.create_task\s*\(",
+        "Use self.worker.session_tasks.create() instead of asyncio.create_task()",
+    ),
     (r"\bexec\s*\(", "exec() is not allowed for security reasons"),
     (r"\beval\s*\(", "eval() is not allowed for security reasons"),
     (r"\bpickle\.", "pickle is not allowed for security reasons"),
     (r"\bdill\.", "dill is not allowed for security reasons"),
     (r"\bshelve\.", "shelve is not allowed for security reasons"),
     (r"\bmarshal\.", "marshal is not allowed for security reasons"),
-    (r"\bopen\s*\(", "raw open() is not allowed — use capability_worker file helpers (read_file, write_file, etc.) instead"),
-    (r"\bassert\s+", "assert statements are not allowed — use proper error handling instead"),
-    (r"\bhashlib\.md5\s*\(", "MD5 is a weak hash and not allowed — use a stronger algorithm like SHA-256"),
+    (
+        r"\bopen\s*\(",
+        "raw open() is not allowed — use capability_worker file helpers (read_file, write_file, etc.) instead",
+    ),
+    (
+        r"\bassert\s+",
+        "assert statements are not allowed — use proper error handling instead",
+    ),
+    (
+        r"\bhashlib\.md5\s*\(",
+        "MD5 is a weak hash and not allowed — use a stronger algorithm like SHA-256",
+    ),
 ]
 
 REQUIRED_PATTERNS = [
-    (r"resume_normal_flow\s*\(", "resume_normal_flow() must be called — without it, the Personality gets stuck"),
+    (
+        r"resume_normal_flow\s*\(",
+        "resume_normal_flow() must be called — without it, the Personality gets stuck",
+    ),
     (r"class\s+\w+.*MatchingCapability", "Class must extend MatchingCapability"),
     (r"def\s+call\s*\(", "Must have a call() method"),
-    (r"worker\s*:\s*AgentWorker\s*=\s*None", "Must declare 'worker: AgentWorker = None' as a class attribute"),
-    (r"capability_worker\s*:\s*CapabilityWorker\s*=\s*None", "Must declare 'capability_worker: CapabilityWorker = None' as a class attribute"),
+    (
+        r"worker\s*:\s*AgentWorker\s*=\s*None",
+        "Must declare 'worker: AgentWorker = None' as a class attribute",
+    ),
+    (
+        r"capability_worker\s*:\s*CapabilityWorker\s*=\s*None",
+        "Must declare 'capability_worker: CapabilityWorker = None' as a class attribute",
+    ),
 ]
 
 
 # ============================================================================
 # VALIDATION LOGIC
 # ============================================================================
+
 
 class ValidationResult:
     def __init__(self):
@@ -94,8 +119,8 @@ def validate_ability(path: str) -> ValidationResult:
     parent_dir = os.path.basename(os.path.dirname(os.path.abspath(path)))
 
     if parent_dir == "community":
-        if re.search(r'[_ ]', folder_name):
-            suggested = re.sub(r'[_ ]+', '-', folder_name)
+        if re.search(r"[_ ]", folder_name):
+            suggested = re.sub(r"[_ ]+", "-", folder_name)
             result.error(
                 f"Folder name '{folder_name}' contains underscores or spaces — "
                 f"only hyphens (-) are allowed. Rename to: '{suggested}'"
@@ -147,12 +172,16 @@ def validate_ability(path: str) -> ValidationResult:
         ]
         for kp in key_patterns:
             if re.search(kp, code):
-                result.warn("Possible hardcoded API key detected — use placeholders instead")
+                result.warn(
+                    "Possible hardcoded API key detected — use placeholders instead"
+                )
 
         # Check for only one class
         classes = re.findall(r"^class\s+\w+", code, re.MULTILINE)
         if len(classes) > 1:
-            result.warn(f"Found {len(classes)} classes — only one class per main.py is recommended")
+            result.warn(
+                f"Found {len(classes)} classes — only one class per main.py is recommended"
+            )
 
     return result
 
@@ -160,6 +189,7 @@ def validate_ability(path: str) -> ValidationResult:
 # ============================================================================
 # CLI
 # ============================================================================
+
 
 def main():
     if len(sys.argv) < 2:

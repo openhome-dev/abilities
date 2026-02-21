@@ -296,7 +296,7 @@ class OutlookConnectorCapability(MatchingCapability):
     # REGISTRATION
     # =========================================================================
 
-    # {{register capability}}
+    #{{register capability}}
 
     # =========================================================================
     # ENTRY POINT
