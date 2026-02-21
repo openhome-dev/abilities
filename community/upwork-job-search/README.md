@@ -1,6 +1,6 @@
 # Upwork Job Search
 
-![Static Badge](https://img.shields.io/badge/:badgeContent)
+![Abilities Badge](https://img.shields.io/badge/Abilities-Open-green.svg)io%2Fbadge%2FAbilities-Open-green)
 ![Community](https://img.shields.io/badge/OpenHome-Community-orange?style=flat-square)
 ![Author](https://img.shields.io/badge/Author-@khushi0433-lightgrey?style=flat-square)
 
