@@ -41,3 +41,4 @@ htmlcov/
 
 # Bandit reports
 bandit-report.json
+validation_output.txt
