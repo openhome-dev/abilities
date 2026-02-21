@@ -7,12 +7,16 @@ Usage:
     python validate_ability.py official/weather/
 
 Checks:
-    - Required files exist (main.py, README.md)
+    - Required files exist (main.py, README.md, __init__.py)
+    - Folder name uses only hyphens (no underscores or spaces)
     - main.py follows SDK patterns
-    - register_capability() classmethod boilerplate is present
+    - #{{register capability}} tag is present
     - No blocked imports or patterns
     - resume_normal_flow() is called
     - No print() statements
+    - No raw open() calls
+    - No assert statements
+    - No weak hashes (MD5)
 
 Exit codes:
     0 = All checks passed
@@ -47,25 +51,17 @@ BLOCKED_PATTERNS = [
     (r"\bdill\.", "dill is not allowed for security reasons"),
     (r"\bshelve\.", "shelve is not allowed for security reasons"),
     (r"\bmarshal\.", "marshal is not allowed for security reasons"),
+    (r"\bopen\s*\(", "raw open() is not allowed — use capability_worker file helpers (read_file, write_file, etc.) instead"),
+    (r"\bassert\s+", "assert statements are not allowed — use proper error handling instead"),
+    (r"\bhashlib\.md5\s*\(", "MD5 is a weak hash and not allowed — use a stronger algorithm like SHA-256"),
 ]
 
 REQUIRED_PATTERNS = [
     (r"resume_normal_flow\s*\(", "resume_normal_flow() must be called — without it, the Personality gets stuck"),
     (r"class\s+\w+.*MatchingCapability", "Class must extend MatchingCapability"),
-    (r"def\s+register_capability", "Must have a register_capability() classmethod"),
     (r"def\s+call\s*\(", "Must have a call() method"),
-]
-
-# --- register_capability boilerplate fragments that MUST be present ---
-REGISTER_CAPABILITY_CHECKS = [
-    (r"@classmethod\s*\n\s*def\s+register_capability\s*\(\s*cls\s*\)",
-     "register_capability() must be decorated with @classmethod"),
-    (r'os\.path\.join\s*\(\s*os\.path\.dirname\s*\(\s*os\.path\.abspath\s*\(\s*__file__\s*\)\s*\)\s*,\s*["\']config\.json["\']\s*\)',
-     "register_capability() must read config.json using: os.path.join(os.path.dirname(os.path.abspath(__file__)), \"config.json\")"),
-    (r'unique_name\s*=\s*data\s*\[\s*["\']unique_name["\']\s*\]',
-     "register_capability() must set unique_name from config: unique_name=data[\"unique_name\"]"),
-    (r'matching_hotwords\s*=\s*data\s*\[\s*["\']matching_hotwords["\']\s*\]',
-     "register_capability() must set matching_hotwords from config: matching_hotwords=data[\"matching_hotwords\"]"),
+    (r"worker\s*:\s*AgentWorker\s*=\s*None", "Must declare 'worker: AgentWorker = None' as a class attribute"),
+    (r"capability_worker\s*:\s*CapabilityWorker\s*=\s*None", "Must declare 'capability_worker: CapabilityWorker = None' as a class attribute"),
 ]
 
 
@@ -92,6 +88,18 @@ class ValidationResult:
 def validate_ability(path: str) -> ValidationResult:
     result = ValidationResult()
     path = path.rstrip("/")
+
+    # --- Check folder name format (community folders only) ---
+    folder_name = os.path.basename(path)
+    parent_dir = os.path.basename(os.path.dirname(os.path.abspath(path)))
+
+    if parent_dir == "community":
+        if re.search(r'[_ ]', folder_name):
+            suggested = re.sub(r'[_ ]+', '-', folder_name)
+            result.error(
+                f"Folder name '{folder_name}' contains underscores or spaces — "
+                f"only hyphens (-) are allowed. Rename to: '{suggested}'"
+            )
 
     # --- Check required files ---
     for f in REQUIRED_FILES:
@@ -120,16 +128,14 @@ def validate_ability(path: str) -> ValidationResult:
                 result.error(msg)
 
         # ----------------------------------------------------------
-        # Check register_capability() boilerplate
+        # Check for register capability tag
         # ----------------------------------------------------------
-        if re.search(r"def\s+register_capability", code):
-            for pattern, msg in REGISTER_CAPABILITY_CHECKS:
-                if not re.search(pattern, code, re.DOTALL):
-                    result.error(msg)
-        else:
+        has_register_tag = bool(re.search(r"#\{\{register capability\}\}", code))
+
+        if not has_register_tag:
             result.error(
-                "register_capability() classmethod is missing — "
-                "copy the boilerplate exactly from the template. "
+                "Missing register capability tag — add the following line to your class:\n"
+                "    #{{register capability}}\n"
                 "See: https://docs.openhome.com/how_to_build_an_ability"
             )
 

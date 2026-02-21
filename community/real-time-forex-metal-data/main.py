@@ -43,15 +43,15 @@ EXIT_RESPONSES: list[str] = [
 ]
 
 FORCE_EXIT_PHRASES: list[str] = [
-    "market pulse out",
-    "exit market pulse",
-    "close market pulse",
+    "forex data out",
+    "exit forex",
+    "close forex data",
     "shut down",
 ]
 
 
-class MarketPulseAbility(MatchingCapability):
-    """OpenHome ability for real-time currency exchange rates and commodity prices."""
+class RealTimeForexMetalDataAbility(MatchingCapability):
+    """OpenHome ability for real-time forex exchange rates and metal prices."""
 
     worker: Optional[AgentWorker] = None
     capability_worker: Optional[CapabilityWorker] = None
@@ -125,13 +125,13 @@ class MarketPulseAbility(MatchingCapability):
                     return None, "API limit reached."
                 elif "Error Message" in data:
                     self.worker.editor_logging_handler.error(
-                        f"[MarketPulse] API error: {data['Error Message']}"
+                        f"[ForexMetalData] API error: {data['Error Message']}"
                     )
                     return None, "Something went wrong with the API."
             return None, f"API returned status {resp.status_code}."
         except Exception as e:
             self.worker.editor_logging_handler.error(
-                f"[MarketPulse] {metal} price error: {e}"
+                f"[ForexMetalData] {metal} price error: {e}"
             )
             return None, None
 
@@ -185,7 +185,7 @@ class MarketPulseAbility(MatchingCapability):
                     return float(rate), None
         except Exception as e:
             self.worker.editor_logging_handler.error(
-                f"[MarketPulse] Alpha Vantage exchange rate error: {e}"
+                f"[ForexMetalData] Alpha Vantage exchange rate error: {e}"
             )
 
         # Tier 2: Frankfurter (free, no API key, no rate limit)
@@ -202,7 +202,7 @@ class MarketPulseAbility(MatchingCapability):
                     return float(rates[to_curr]), None
         except Exception as e:
             self.worker.editor_logging_handler.error(
-                f"[MarketPulse] Frankfurter exchange rate error: {e}"
+                f"[ForexMetalData] Frankfurter exchange rate error: {e}"
             )
 
         return None, "Both exchange rate APIs unavailable."
@@ -406,7 +406,7 @@ class MarketPulseAbility(MatchingCapability):
         else:
             # Fallback for unknown queries
             fallback_response = self.capability_worker.text_to_text_response(
-                f'You are Market Pulse, a professional price-tracking assistant. The user said: "{user_input}". '
+                f'You are Real Time Forex and Metal Data, a professional price-tracking assistant. The user said: "{user_input}". '
                 "If they are greeting you, greet them professionally. "
                 "If they are chatting or asking something else, briefly explain that you track gold, silver, and exchange rates. "
                 "Keep your response concise and professional, under 2 short sentences."
@@ -467,7 +467,7 @@ class MarketPulseAbility(MatchingCapability):
 
             # Full Mode
             await self.capability_worker.speak(
-                "Market Pulse here. Ask me about exchange rates or gold prices."
+                "Real Time Forex and Metal Data here. Ask me about exchange rates or gold and silver prices."
             )
 
             idle_count = 0
@@ -502,7 +502,7 @@ class MarketPulseAbility(MatchingCapability):
                 await self.capability_worker.speak("Is there anything else?")
 
         except Exception as e:
-            self.worker.editor_logging_handler.error(f"[MarketPulse] Error: {e}")
+            self.worker.editor_logging_handler.error(f"[ForexMetalData] Error: {e}")
             await self.capability_worker.speak("Something went wrong. Try again later.")
         finally:
             self.capability_worker.resume_normal_flow()
