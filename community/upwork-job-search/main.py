@@ -1,5 +1,4 @@
 import json
-import os
 import requests
 from src.agent.capability import MatchingCapability
 from src.main import AgentWorker
@@ -25,7 +24,7 @@ UPWORK_GRAPHQL_URL = "https://api.upwork.com/graphql/v2"
 
 
 class UpworkJobSearchCapability(MatchingCapability):
-    #{{register capability}}
+    # {{register capability}}
     worker: AgentWorker = None
     capability_worker: CapabilityWorker = None
     access_token: str = None
@@ -37,7 +36,7 @@ class UpworkJobSearchCapability(MatchingCapability):
         config_str = capability_worker.read_file("config.json")
         data = json.loads(config_str)
 
-        #{{register capability}}
+        # {{register capability}}
         return cls(
             unique_name=data['unique_name'],
             matching_hotwords=data["matching_hotwords"],
