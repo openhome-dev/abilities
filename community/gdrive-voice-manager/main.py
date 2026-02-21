@@ -120,15 +120,9 @@ class GDriveVoiceManager(MatchingCapability):
                 return
 
             # -----------------------------------------------------------------
-            # Classify trigger context
+            # Unified conversation loop
             # -----------------------------------------------------------------
-            classification = self.classify_trigger_context(trigger_context)
-            await self.dispatch(classification)
-
-            # ---------------------------------------------------------
-            # Follow-up conversation loop (P1)
-            # ---------------------------------------------------------
-            await self._follow_up_loop()
+            await self._conversation_loop(trigger_context)
 
             self.capability_worker.resume_normal_flow()
             return
@@ -154,7 +148,7 @@ class GDriveVoiceManager(MatchingCapability):
         Does NOT call resume_normal_flow().
         """
 
-        mode = classification.get("mode", "find")
+        mode = classification.get("mode", "name_search")
         search_query = classification.get("search_query")
         file_reference = classification.get("file_reference")
         folder_name = classification.get("folder_name")
@@ -162,12 +156,25 @@ class GDriveVoiceManager(MatchingCapability):
         file_type = classification.get("file_type", "any")
 
         # ----------------------------
-        # FIND
+        # NAME SEARCH (default)
         # ----------------------------
-        if mode == "find":
+        if mode == "name_search":
             if not search_query:
                 await self.capability_worker.speak(
-                    "What should I search for?"
+                    "What file title should I search for?"
+                )
+                return
+
+            await self._run_find(search_query, classification)
+            return
+
+        # ----------------------------
+        # CONTENT SEARCH
+        # ----------------------------
+        if mode == "content_search":
+            if not search_query:
+                await self.capability_worker.speak(
+                    "What phrase should I search for inside documents?"
                 )
                 return
 
@@ -234,6 +241,13 @@ class GDriveVoiceManager(MatchingCapability):
             return
 
         # ----------------------------
+        # EXPAND DOC
+        # ----------------------------
+        if mode == "expand_doc":
+            await self._run_expand_doc()
+            return
+
+        # ----------------------------
         # Fallback
         # ----------------------------
         await self.capability_worker.speak(
@@ -242,28 +256,40 @@ class GDriveVoiceManager(MatchingCapability):
         )
 
     # =========================================================================
-    # Follow-Up Conversation Loop (P1)
+    # Unified Conversation Loop
     # =========================================================================
 
-    async def _follow_up_loop(self):
+    async def _conversation_loop(self, trigger_context: str = ""):
         """
-        Allows natural multi-turn interaction after an initial command.
+        Single conversation loop that handles all turns uniformly.
 
-        - Re-runs classification each turn
-        - Uses central dispatcher
-        - Stops on exit phrases
-        - Stops after 2 idle turns
-        - Hard cap of 10 turns
+        Turn 0: classify and dispatch the trigger context (if any).
+        Turn 1+: listen → resolve-from-recent shortcut → classify → dispatch.
+
+        - Idle counter: 2 consecutive silent turns → exit
+        - Exit words → exit
+        - Hard cap of 20 turns
         """
 
-        idle_count = 0
-        max_turns = 10
+        max_turns = 20
         turn_count = 0
+        idle_count = 0
 
+        # ---------------------------------------------------------
+        # Turn 0: handle the trigger that activated the ability
+        # ---------------------------------------------------------
+        if trigger_context and trigger_context.strip():
+            classification = self.classify_trigger_context(trigger_context)
+            await self.dispatch(classification)
+            turn_count += 1
+
+        # ---------------------------------------------------------
+        # Subsequent turns: listen → route
+        # ---------------------------------------------------------
         while turn_count < max_turns:
             user_input = await self.capability_worker.user_response()
 
-            # No response / silence
+            # Silence handling
             if not user_input or not user_input.strip():
                 idle_count += 1
                 if idle_count >= 2:
@@ -277,46 +303,26 @@ class GDriveVoiceManager(MatchingCapability):
                 break
 
             # ---------------------------------------------------------
-            # Deterministic "go deeper" handling (session-scoped)
+            # Deterministic shortcut: expand currently open document
+            # (belt-and-suspenders for "go deeper" style requests)
             # ---------------------------------------------------------
-            lower_input = user_input.lower()
+            lower_input = user_input.lower().strip()
             if (
-                "go deeper" in lower_input
-                or "deeper" in lower_input
-                or "more detail" in lower_input
+                self.prefs.get("_session_current_doc_id")
+                and any(phrase in lower_input for phrase in [
+                    "go deeper",
+                    "more detail",
+                    "expand",
+                    "more about this",
+                ])
             ):
-                file_id = self.prefs.get("_session_current_doc_id")
-                name = self.prefs.get("_session_current_doc_name", "this document")
-                mime = self.prefs.get("_session_current_doc_mime")
-
-                if file_id:
-                    resp = await self._export_file_content(file_id, mime)
-
-                    if resp and resp.status_code == 200:
-                        content = resp.text or ""
-
-                        words = content.split()
-                        if len(words) > 3000:
-                            content = " ".join(words[:3000])
-
-                        prompt = (
-                            f"Provide a more detailed explanation of the following document.\n\n"
-                            f"Document title: {name}\n\n"
-                            f"{content}"
-                        )
-
-                        deeper = self.capability_worker.text_to_text_response(
-                            prompt,
-                            system_prompt="Provide a deeper explanation. Conversational. No bullet points."
-                        )
-
-                        if deeper:
-                            await self.capability_worker.speak(deeper.strip())
-                            turn_count += 1
-                            continue
+                await self._run_expand_doc()
+                turn_count += 1
+                continue
 
             # ---------------------------------------------------------
-            # Deterministic selection from recent_results
+            # Deterministic shortcut: resolve from recent results
+            # (handles "the second one", partial name matches, etc.)
             # ---------------------------------------------------------
             match = self._resolve_from_recent(user_input)
             if match:
@@ -324,15 +330,85 @@ class GDriveVoiceManager(MatchingCapability):
                 turn_count += 1
                 continue
 
-            # Re-classify and dispatch
+            # ---------------------------------------------------------
+            # Classify and dispatch
+            # ---------------------------------------------------------
             classification = self.classify_trigger_context(user_input)
             await self.dispatch(classification)
 
             turn_count += 1
 
-        # Graceful exit message (optional)
+        # Graceful exit
         await self.capability_worker.speak("Let me know if you need anything else.")
-        return
+
+    # =========================================================================
+    # Expand Doc — extracted from old "go deeper" logic
+    # =========================================================================
+
+    async def _run_expand_doc(self):
+        """
+        Provide a more detailed explanation of the currently active document.
+
+        Relies on session state:
+        - _session_current_doc_id
+        - _session_current_doc_name
+        - _session_current_doc_mime
+
+        If no document is active, tells the user.
+        """
+
+        file_id = self.prefs.get("_session_current_doc_id")
+        name = self.prefs.get("_session_current_doc_name", "this document")
+        mime = self.prefs.get("_session_current_doc_mime")
+
+        if not file_id:
+            await self.capability_worker.speak(
+                "I don't have a document open right now. "
+                "Try searching for a file first, then ask me to go deeper."
+            )
+            return
+
+        resp = await self._export_file_content(file_id, mime)
+
+        if not resp or resp.status_code != 200:
+            await self.capability_worker.speak(
+                "I couldn't retrieve that document for a deeper read."
+            )
+            return
+
+        content = resp.text or ""
+
+        words = content.split()
+        if len(words) > 3000:
+            content = " ".join(words[:3000])
+
+        if not content.strip():
+            await self.capability_worker.speak(
+                "That document appears to be empty."
+            )
+            return
+
+        prompt = (
+            f"Provide a more detailed explanation of the following document.\n\n"
+            f"Document title: {name}\n\n"
+            f"{content}"
+        )
+
+        await self.capability_worker.speak(
+            f"I'm preparing a deeper summary of {name} for you."
+        )
+
+        deeper = self.capability_worker.text_to_text_response(
+            prompt,
+            system_prompt="Provide a deeper explanation. Conversational. No bullet points.",
+        )
+
+        if deeper:
+            await self.capability_worker.speak(deeper.strip())
+        else:
+            await self.capability_worker.speak(
+                "I wasn't able to generate a deeper summary."
+            )
 
     # =========================================================================
     # Relative Timestamp Utility (P1)
@@ -428,7 +504,16 @@ class GDriveVoiceManager(MatchingCapability):
             )
             return
 
-        await self.capability_worker.speak("Searching your Drive.")
+        mode = classification.get("mode") if classification else "name_search"
+
+        if mode == "content_search":
+            await self.capability_worker.speak(
+                f"Searching inside documents for {query}."
+            )
+        else:
+            await self.capability_worker.speak(
+                f"Searching file titles for {query}."
+            )
 
         # -------------------------------------------------------------
         # Determine file_type (default any)
@@ -448,10 +533,10 @@ class GDriveVoiceManager(MatchingCapability):
         # Build Drive query
         # -------------------------------------------------------------
         safe_query = (query or "").strip().replace("'", "\\'")
-        # Use name OR fullText for better recall (content search support without extra schema)
-        search_clause = (
-            f"(name contains '{safe_query}' or fullText contains '{safe_query}')"
-        )
+        if mode == "content_search":
+            search_clause = f"fullText contains '{safe_query}'"
+        else:
+            search_clause = f"name contains '{safe_query}'"
 
         q_parts = ["trashed = false", search_clause]
 
@@ -1278,11 +1363,15 @@ class GDriveVoiceManager(MatchingCapability):
         1. Exact name match
         2. Partial name match
         3. Ordinal reference
-        4. LLM fuzzy selection fallback (safe, deterministic ID return)
         """
 
         files = self.prefs.get("recent_results", [])
         if not files or not user_input:
+            return None
+
+        # Guard: only treat short utterances as file selections.
+        # Longer commands (e.g., "save a note to drive...") should be classified normally.
+        if len(user_input.split()) > 6:
             return None
 
         ref = user_input.strip().lower()
@@ -1315,58 +1404,6 @@ class GDriveVoiceManager(MatchingCapability):
         for word, idx in ordinal_map.items():
             if word in ref and idx < len(files):
                 return files[idx]
-
-        # -------------------------------------------------------------
-        # LLM Fuzzy Selection Fallback (safe ID-only resolution)
-        # -------------------------------------------------------------
-        # Only attempt if small candidate set (avoid token bloat)
-        if len(files) <= 20:
-            try:
-                system_prompt = (
-                    "You resolve file selections for a Google Drive assistant.\n"
-                    "The user selected a file from a previously shown list.\n\n"
-                    "Return ONLY valid JSON. No markdown. No explanation.\n"
-                    "Schema:\n"
-                    "{ \"id\": string or null }\n\n"
-                    "Rules:\n"
-                    "- Only return an id that exists in the provided list.\n"
-                    "- If no clear match exists, return null.\n"
-                )
-
-                # Provide minimal safe context
-                candidate_list = [
-                    {"id": f.get("id"), "name": f.get("name")}
-                    for f in files
-                ]
-
-                user_prompt = (
-                    f"User said: '{user_input}'\n\n"
-                    f"Available files:\n{json.dumps(candidate_list)}\n\n"
-                    "Which file did the user mean?"
-                )
-
-                raw = self.capability_worker.text_to_text_response(
-                    user_prompt,
-                    system_prompt=system_prompt,
-                )
-
-                if raw:
-                    cleaned = (
-                        raw.replace("```json", "")
-                        .replace("```", "")
-                        .strip()
-                    )
-
-                    parsed = json.loads(cleaned)
-                    selected_id = parsed.get("id")
-
-                    if selected_id:
-                        for f in files:
-                            if f.get("id") == selected_id:
-                                return f
-
-            except Exception as e:
-                self._log_err(f"LLM fuzzy resolve failed: {e}")
 
         return None
 
@@ -1422,6 +1459,9 @@ class GDriveVoiceManager(MatchingCapability):
         # 3. Fallback search by name
         # -------------------------------------------------------------
         if not target:
+            await self.capability_worker.speak(
+                "Searching file titles for that document."
+            )
             safe_ref = (file_reference or "").strip().replace("'", "\\'")
             resp = await self.drive_request(
                 "GET",
@@ -1674,8 +1714,46 @@ class GDriveVoiceManager(MatchingCapability):
             )
             return
 
-        # Use existing LLM formatter
-        await self.handle_search_results(files, f"{folder_display_name} folder")
+        # Deterministic folder listing (no LLM)
+        top_files = files[:5]
+
+        # Cache for follow-up selection
+        summarized = []
+        for f in top_files:
+            summarized.append({
+                "name": f.get("name"),
+                "mimeType": f.get("mimeType"),
+                "type": self._mime_label(f.get("mimeType", "")),
+                "id": f.get("id"),
+            })
+        self.prefs["recent_results"] = summarized
+        await self.save_prefs()
+
+        descriptions = []
+        for f in top_files:
+            name = f.get("name", "Untitled")
+            mime = f.get("mimeType", "")
+            file_type = self._mime_label(mime)
+
+            modified = None
+            mt = f.get("modifiedTime")
+            if isinstance(mt, str) and mt.strip():
+                modified = self._format_relative_time(mt)
+
+            if modified:
+                descriptions.append(
+                    f"{file_type} titled \"{name}\" modified {modified}"
+                )
+            else:
+                descriptions.append(
+                    f"{file_type} titled \"{name}\""
+                )
+
+        if descriptions:
+            joined = ". ".join(descriptions) + "."
+            await self.capability_worker.speak(
+                f"In {folder_display_name}, I see: {joined}"
+            )
 
     # =========================================================================
     # Set Notes Folder — P2
@@ -1875,7 +1953,7 @@ class GDriveVoiceManager(MatchingCapability):
         - Routes through handle_search_results() for natural voice formatting
         """
 
-        await self.capability_worker.speak("Here are your most recently updated files.")
+        await self.capability_worker.speak("I'm pulling up your most recently updated files.")
 
         resp = await self.drive_request(
             "GET",
@@ -1979,7 +2057,7 @@ class GDriveVoiceManager(MatchingCapability):
 
         if not text or not text.strip():
             return {
-                "mode": "find",
+                "mode": "name_search",
                 "search_query": None,
                 "file_reference": None,
                 "folder_name": None,
@@ -1989,12 +2067,14 @@ class GDriveVoiceManager(MatchingCapability):
 
         text = self._strip_activation_phrase(text)
 
+        session_context = ""
+
         system_prompt = (
             "You classify voice commands for a Google Drive assistant.\n"
             "Return ONLY valid JSON. No markdown fences. No explanation.\n\n"
             "Schema:\n"
             "{\n"
-            '  "mode": "find | whats_new | read_doc | quick_save | folder_browse | set_notes_folder",\n'
+            '  "mode": "name_search | content_search | whats_new | read_doc | quick_save | folder_browse | set_notes_folder | expand_doc",\n'
             '  "search_query": string or null,\n'
             '  "file_reference": string or null,\n'
             '  "folder_name": string or null,\n'
@@ -2002,19 +2082,22 @@ class GDriveVoiceManager(MatchingCapability):
             '  "file_type": "doc | sheet | slides | pdf | any"\n'
             "}\n\n"
             "Rules:\n"
-            "- If user wants to search for files, mode = find.\n"
-            "- If asking what’s new or recent files, mode = whats_new.\n"
+            "- If user wants to search for files by title, mode = name_search.\n"
+            "- If user says search inside, search content, or refers to what's inside documents, mode = content_search.\n"
+            "- If asking what's new or recent files, mode = whats_new.\n"
             "- If asking to read/open a file, mode = read_doc.\n"
             "- If asking to save a note, mode = quick_save.\n"
             "- If asking about folder contents, mode = folder_browse.\n"
             "- If asking to set or change the notes folder, mode = set_notes_folder.\n"
+            "- If asking for more detail, to go deeper, or to expand on a document, mode = expand_doc.\n"
             "- Extract a clean search_query for searches.\n"
             "- Extract file_reference for read_doc.\n"
             "- Extract folder_name for folder browsing.\n"
             "- Extract note_content for quick saves.\n"
             "- Detect file_type from words like spreadsheet, sheet, slides, presentation, doc, document, pdf.\n"
             "- If no file type specified, use 'any'.\n"
-            "- If unsure about mode, default to find.\n"
+            "- If unsure about mode, default to name_search.\n"
+            + ("\n" + session_context if session_context else "")
         )
 
         try:
@@ -2038,19 +2121,21 @@ class GDriveVoiceManager(MatchingCapability):
                 raise ValueError("Parsed response is not a dict")
 
             allowed_modes = {
-                "find",
+                "name_search",
+                "content_search",
                 "whats_new",
                 "read_doc",
                 "quick_save",
                 "folder_browse",
                 "set_notes_folder",
+                "expand_doc",
             }
 
             allowed_types = {"doc", "sheet", "slides", "pdf", "any"}
 
-            mode = parsed.get("mode", "find")
+            mode = parsed.get("mode", "name_search")
             if mode not in allowed_modes:
-                mode = "find"
+                mode = "name_search"
 
             file_type = parsed.get("file_type", "any")
             if file_type not in allowed_types:
@@ -2071,7 +2156,7 @@ class GDriveVoiceManager(MatchingCapability):
         except Exception as e:
             self._log_err(f"Classification failed: {e}")
             return {
-                "mode": "find",
+                "mode": "name_search",
                 "search_query": None,
                 "file_reference": None,
                 "folder_name": None,
