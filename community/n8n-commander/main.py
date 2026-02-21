@@ -62,7 +62,7 @@ class N8nCommanderCapability(MatchingCapability):
     Supports fire-and-forget and round-trip response workflows.
     """
 
-    #{{register capability}}
+    # {{register capability}}
     worker: AgentWorker = None
     capability_worker: CapabilityWorker = None
     initial_request: Optional[str] = None
