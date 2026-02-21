@@ -83,46 +83,57 @@ class WewrwewCapability(MatchingCapability):
     """Market intelligence via Polymarket prediction markets and CoinGecko."""
 
     CAPABILITY_NAME = "market-intelligence"
+    worker: AgentWorker = None
+    capability_worker: CapabilityWorker = None
 
     @classmethod
     def register_capability(cls) -> "MatchingCapability":
+        with open(
+            os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.json")
+        ) as file:
+            data = json.load(file)
         return cls(
-            hotwords=MATCHING_HOTWORDS,
-            agent_description=(
-                "A market intelligence assistant that provides prediction "
-                "market data from Polymarket and crypto prices from CoinGecko. "
-                "Ask about geopolitical events, crypto markets, macro trends, "
-                "or any topic with active prediction markets."
-            ),
+            unique_name=data["unique_name"],
+            matching_hotwords=data["matching_hotwords"],
         )
 
     def call(self, worker: AgentWorker):
+        self.worker = worker
+        self.capability_worker = CapabilityWorker(self.worker)
+        self.worker.session_tasks.create(self._run())
+
+    async def _run(self):
         user_input = self._best_initial_input()
         if not user_input:
-            worker.speak(
+            await self.capability_worker.speak(
                 "I'm your market intelligence assistant. Ask me about "
                 "prediction markets, crypto prices, or geopolitical odds. "
                 "For example: 'What's the market saying about Iran?' or "
                 "'How's Bitcoin doing?' Say stop to exit."
             )
-            user_input = worker.listen()
+            user_input = await self.capability_worker.user_response()
+
+        if not user_input:
+            self.capability_worker.resume_normal_flow()
+            return
 
         history = []
         while user_input and not self._is_exit(user_input):
-            response = self._handle_query(user_input, history, worker)
+            response = self._handle_query(user_input, history)
             if response:
-                worker.speak(response)
+                await self.capability_worker.speak(response)
                 history.append({"role": "user", "content": user_input})
                 history.append({"role": "assistant", "content": response})
             else:
-                worker.speak(
+                await self.capability_worker.speak(
                     "I couldn't find relevant data for that query. "
                     "Try asking about a specific topic like Iran, Bitcoin, "
                     "or interest rates."
                 )
-            user_input = worker.listen()
+            user_input = await self.capability_worker.user_response()
 
-        worker.speak("Goodbye!")
+        await self.capability_worker.speak("Goodbye!")
+        self.capability_worker.resume_normal_flow()
 
     def _best_initial_input(self) -> str:
         input_text = self.worker_input or ""
@@ -146,7 +157,7 @@ class WewrwewCapability(MatchingCapability):
         return text.strip().lower() in exit_words
 
     def _handle_query(
-        self, user_input: str, history: List[Dict], worker: AgentWorker
+        self, user_input: str, history: List[Dict]
     ) -> Optional[str]:
         category = self._classify_query(user_input)
 
@@ -155,7 +166,7 @@ class WewrwewCapability(MatchingCapability):
 
         markets = self._search_polymarket(user_input)
         if markets:
-            return self._format_market_response(markets, user_input, worker)
+            return self._format_market_response(markets, user_input)
 
         if category == "crypto":
             return self._handle_crypto_price(user_input)
@@ -225,7 +236,7 @@ class WewrwewCapability(MatchingCapability):
             return []
 
     def _format_market_response(
-        self, markets: List[Dict], query: str, worker: AgentWorker
+        self, markets: List[Dict], query: str
     ) -> str:
         if not markets:
             return None
