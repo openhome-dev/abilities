@@ -296,7 +296,7 @@ class OutlookConnectorCapability(MatchingCapability):
     # REGISTRATION
     # =========================================================================
 
-    #{{register capability}}
+    # {{register capability}}
 
     # =========================================================================
     # ENTRY POINT
@@ -482,7 +482,7 @@ class OutlookConnectorCapability(MatchingCapability):
             clean = (response or "").replace("```json", "").replace("```", "").strip()
             start, end = clean.find("{"), clean.rfind("}")
             if start != -1 and end > start:
-                clean = clean[start : end + 1]
+                clean = clean[start: end + 1]
             result = json.loads(clean)
             if isinstance(result, dict):
                 return result
@@ -1016,7 +1016,7 @@ class OutlookConnectorCapability(MatchingCapability):
                 clean = (raw or "").replace("```json", "").replace("```", "").strip()
                 start, end = clean.find("{"), clean.rfind("}")
                 if start != -1 and end > start:
-                    clean = clean[start : end + 1]
+                    clean = clean[start: end + 1]
                 extracted = json.loads(clean)
                 if isinstance(extracted, dict):
                     recipient = recipient or extracted.get("recipient")
@@ -1115,7 +1115,7 @@ class OutlookConnectorCapability(MatchingCapability):
                     )
                     start, end = clean.find("{"), clean.rfind("}")
                     if start != -1 and end > start:
-                        clean = clean[start : end + 1]
+                        clean = clean[start: end + 1]
                     ex = json.loads(clean)
                     if isinstance(ex, dict):
                         extracted_recipient = ex.get("recipient")
@@ -1307,7 +1307,7 @@ class OutlookConnectorCapability(MatchingCapability):
             clean = (raw or "").replace("```json", "").replace("```", "").strip()
             start, end = clean.find("{"), clean.rfind("}")
             if start != -1 and end > start:
-                clean = clean[start : end + 1]
+                clean = clean[start: end + 1]
             params = json.loads(clean)
             if isinstance(params, dict):
                 sender = (
@@ -1794,12 +1794,12 @@ class OutlookConnectorCapability(MatchingCapability):
             "reply with ",
         ):
             if lower.startswith(prefix):
-                rest = action[len(prefix) :].strip()
+                rest = action[len(prefix):].strip()
                 return rest if rest else None
         # "Reply — X", "Reply, X", "Reply X"
         for prefix in ("reply — ", "reply—", "reply, ", "reply , ", "reply "):
             if lower.startswith(prefix):
-                rest = action[len(prefix) :].strip()
+                rest = action[len(prefix):].strip()
                 return rest if rest else None
         if lower.startswith("reply"):
             rest = action[5:].strip().lstrip("—,-:")
@@ -1829,7 +1829,7 @@ class OutlookConnectorCapability(MatchingCapability):
             before = text
             for prefix in prefixes:
                 if text.lower().startswith(prefix):
-                    text = text[len(prefix) :].strip()
+                    text = text[len(prefix):].strip()
                     break
             if text == before:
                 break
