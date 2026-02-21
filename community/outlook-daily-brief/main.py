@@ -95,7 +95,7 @@ class OutlookBriefCapability(MatchingCapability):
     # REGISTRATION & ENTRY
     # -------------------------------------------------------------------------
 
-    # {{register capability}}
+    #{{register capability}}
 
     def call(self, worker: AgentWorker):
         self.worker = worker
