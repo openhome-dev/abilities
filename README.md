@@ -54,26 +54,16 @@ cp -r abilities/templates/basic-template my-first-ability
 
 ```python
 import json
-import os
 from src.agent.capability import MatchingCapability
 from src.main import AgentWorker
 from src.agent.capability_worker import CapabilityWorker
-
 
 class MyFirstCapability(MatchingCapability):
     worker: AgentWorker = None
     capability_worker: CapabilityWorker = None
 
-    @classmethod
-    def register_capability(cls) -> "MatchingCapability":
-        with open(
-            os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.json")
-        ) as file:
-            data = json.load(file)
-        return cls(
-            unique_name=data["unique_name"],
-            matching_hotwords=data["matching_hotwords"],
-        )
+    # Do not change following tag of register capability
+    #{{register capability}}
 
     def call(self, worker: AgentWorker):
         self.worker = worker
@@ -83,7 +73,6 @@ class MyFirstCapability(MatchingCapability):
     async def run(self):
         await self.capability_worker.speak("Hi! Tell me what's on your mind.")
         user_input = await self.capability_worker.user_response()
-
         response = self.capability_worker.text_to_text_response(
             f"Give a short, helpful response to: {user_input}"
         )
@@ -91,7 +80,7 @@ class MyFirstCapability(MatchingCapability):
         self.capability_worker.resume_normal_flow()
 ```
 
-> **Note:** The `register_capability` method is required boilerplate — copy it exactly. The platform handles `config.json` automatically; you never need to create or edit it.
+> **Note:** The `#{{register_capability}}` This line is required boilerplate — copy it exactly. The platform handles `config.json` automatically; you never need to create or edit it.
 
 **3. Upload to OpenHome**
 
