@@ -2,7 +2,6 @@ import asyncio
 import json
 import re
 from datetime import datetime, timedelta
-from pathlib import Path
 from typing import List, Dict, Optional
 
 import requests
@@ -116,11 +115,11 @@ TRIGGER_INTENT_PROMPT = (
     "Rules:\n"
     '- "summary" = user wants overview of inbox. Mode: quick if asking a count, '
     'full if asking to "go through" or "catch me up". When the user asks ONLY '
-    "for the number of unread emails (e.g. \"how many unread\", \"do I have any "
-    "new email\"), set details.count_only to true and mode to quick.\n"
+    'for the number of unread emails (e.g. "how many unread", "do I have any '
+    'new email"), set details.count_only to true and mode to quick.\n'
     '- "read_specific" = user wants to hear a specific email. Mode: quick. '
-    "IMPORTANT: Questions like \"did [Name] message me\", \"did [Name] email me\", "
-    "\"did Cursor message me\", \"any email from [Name]\" are read_specific — set "
+    'IMPORTANT: Questions like "did [Name] message me", "did [Name] email me", '
+    '"did Cursor message me", "any email from [Name]" are read_specific — set '
     'sender_name to the name or company (e.g. "Cursor", "Cursor Team", "Sarah") '
     "so we can match from the inbox list by display name.\n"
     '- "reply" = user wants to reply to an email. Mode: quick\n'
@@ -201,7 +200,7 @@ SUMMARY_PROMPT = (
     "Do NOT end with a question or offer — just the summary.\n\n"
     "Example voice output:\n"
     '"You have 7 unread emails. Two look important — Sarah sent the Q3 deck '
-    'and flagged two issues, and Mike is asking about the API spec. The rest '
+    "and flagged two issues, and Mike is asking about the API spec. The rest "
     'are newsletters and notifications."\n\n'
     "Emails:\n"
     "{emails}\n"
@@ -231,7 +230,7 @@ DRAFT_REPLY_PROMPT = (
     "Rules:\n"
     "- Write the FULL reply body. Use the recipient's name in the greeting "
     '(e.g. "Hi Sarah,") since you know who they are.\n'
-    "- Use a simple sign-off like \"Thanks,\" or \"Best,\" only — never use "
+    '- Use a simple sign-off like "Thanks," or "Best," only — never use '
     "placeholders like [Your Name], [My Name], [Recipient's Name], [Name], "
     "or [Anything in brackets].\n"
     "- Keep it concise and natural. Output only the email body text, ready "
@@ -246,7 +245,7 @@ DRAFT_COMPOSE_PROMPT = (
     "If the user says something casual like:\n"
     '- "tell him yeah I\'ll get it done by Friday no worries"\n\n'
     "You should turn it into something like:\n"
-    '- "Hi Mike, I\'ll have the API spec ready by Friday. Let me know if you '
+    "- \"Hi Mike, I'll have the API spec ready by Friday. Let me know if you "
     'need anything before then."\n\n'
     "Turn this spoken request into a complete, sendable email body. Use the "
     "actual recipient and subject below.\n\n"
@@ -257,7 +256,7 @@ DRAFT_COMPOSE_PROMPT = (
     "Rules:\n"
     "- Write the FULL email body. Use the recipient's name in the greeting "
     '(e.g. "Hi Mike,").\n'
-    "- Use a simple sign-off like \"Thanks,\" or \"Best,\" only — never use "
+    '- Use a simple sign-off like "Thanks," or "Best," only — never use '
     "placeholders like [Your Name], [My Name], [Recipient's Name], [Name], "
     "or [Anything in brackets].\n"
     "- Output only the email body text, ready to send. No placeholders.\n"
@@ -286,23 +285,18 @@ class OutlookConnectorCapability(MatchingCapability):
     in_triage: bool = False
     triage_index: int = 0
     _just_gave_summary: bool = False  # "yes" after summary → start triage
-    _triage_just_sent_reply: bool = False  # after "Sent." in triage, advance to next email
-    _just_finished_read: bool = False  # after "Want to reply, archive, or read?" → same reply/archive/read handlers
+    _triage_just_sent_reply: bool = (
+        False  # after "Sent." in triage, advance to next email
+    )
+    _just_finished_read: bool = (
+        False  # after "Want to reply, archive, or read?" → same reply/archive/read handlers
+    )
 
     # =========================================================================
     # REGISTRATION
     # =========================================================================
-    # Do not change following tag of register capability
-    # {{register capability}}
 
-    @classmethod
-    def register_capability(cls) -> "MatchingCapability":
-        config_path = Path(__file__).resolve().parent / "config.json"
-        data = json.loads(config_path.read_text(encoding="utf-8"))
-        return cls(
-            unique_name=data["unique_name"],
-            matching_hotwords=data["matching_hotwords"],
-        )
+    # {{register capability}}
 
     # =========================================================================
     # ENTRY POINT
@@ -488,7 +482,7 @@ class OutlookConnectorCapability(MatchingCapability):
             clean = (response or "").replace("```json", "").replace("```", "").strip()
             start, end = clean.find("{"), clean.rfind("}")
             if start != -1 and end > start:
-                clean = clean[start:end + 1]
+                clean = clean[start : end + 1]
             result = json.loads(clean)
             if isinstance(result, dict):
                 return result
@@ -749,7 +743,9 @@ class OutlookConnectorCapability(MatchingCapability):
 
         summary = self.capability_worker.text_to_text_response(prompt)
         to_speak = ((summary or "").strip() + " Want me to go through them?").strip()
-        await self.capability_worker.speak(to_speak or "You have unread emails. Want me to go through them?")
+        await self.capability_worker.speak(
+            to_speak or "You have unread emails. Want me to go through them?"
+        )
         self._just_gave_summary = True  # "yes" in session_loop starts triage
 
     speak_summary = handle_summary  # alias
@@ -816,9 +812,7 @@ class OutlookConnectorCapability(MatchingCapability):
             if self._is_confirm_yes(follow_up):
                 await self.capability_worker.speak(body_text[:3000])
 
-        await self.capability_worker.speak(
-            "Want to reply, archive, or read?"
-        )
+        await self.capability_worker.speak("Want to reply, archive, or read?")
         self._just_finished_read = True
 
     async def _read_full_current_email(self) -> bool:
@@ -847,8 +841,10 @@ class OutlookConnectorCapability(MatchingCapability):
 
     async def start_reply(self, details: Optional[Dict] = None):
         details = details or {}
-        if not self.current_email and self.emails and (
-            details.get("sender_name") or details.get("subject_keywords")
+        if (
+            not self.current_email
+            and self.emails
+            and (details.get("sender_name") or details.get("subject_keywords"))
         ):
             email = self._select_email_for_details(details)
             if email:
@@ -884,15 +880,17 @@ class OutlookConnectorCapability(MatchingCapability):
 
         if self.pending_reply["waiting_for"] == "which_email":
             email = self._select_email_for_details(
-                {"sender_name": user_input.strip(), "subject_keywords": user_input.strip()}
+                {
+                    "sender_name": user_input.strip(),
+                    "subject_keywords": user_input.strip(),
+                }
             )
             if not email and self.emails:
                 q = user_input.strip().lower()
                 for e in self.emails:
                     from_name = (
-                        (e.get("from", {}).get("emailAddress", {}).get("name") or "")
-                        .lower()
-                    )
+                        e.get("from", {}).get("emailAddress", {}).get("name") or ""
+                    ).lower()
                     subj = (e.get("subject") or "").lower()
                     if q in from_name or q in subj:
                         email = e
@@ -911,7 +909,11 @@ class OutlookConnectorCapability(MatchingCapability):
         if self.pending_reply["waiting_for"] == "body":
             # Don't draft when user said only "Reply" or something too short (would produce generic reply)
             stripped = user_input.strip()
-            if not stripped or len(stripped) < 4 or stripped.lower().rstrip(".,") in ("reply", "reply,"):
+            if (
+                not stripped
+                or len(stripped) < 4
+                or stripped.lower().rstrip(".,") in ("reply", "reply,")
+            ):
                 await self.capability_worker.speak("What do you want to say?")
                 return
             replying_to = "the sender"
@@ -1014,7 +1016,7 @@ class OutlookConnectorCapability(MatchingCapability):
                 clean = (raw or "").replace("```json", "").replace("```", "").strip()
                 start, end = clean.find("{"), clean.rfind("}")
                 if start != -1 and end > start:
-                    clean = clean[start:end + 1]
+                    clean = clean[start : end + 1]
                 extracted = json.loads(clean)
                 if isinstance(extracted, dict):
                     recipient = recipient or extracted.get("recipient")
@@ -1059,7 +1061,9 @@ class OutlookConnectorCapability(MatchingCapability):
                 "waiting_for": "confirm",
             }
             recipient_spoken = (
-                self.format_email_for_speech(recipient) if "@" in recipient else recipient
+                self.format_email_for_speech(recipient)
+                if "@" in recipient
+                else recipient
             )
             await self.capability_worker.speak(
                 f"To {recipient_spoken}, subject: {subject_for_email}. "
@@ -1106,10 +1110,12 @@ class OutlookConnectorCapability(MatchingCapability):
                     raw = self.capability_worker.text_to_text_response(
                         COMPOSE_EXTRACT_PROMPT.format(user_input=user_input)
                     )
-                    clean = (raw or "").replace("```json", "").replace("```", "").strip()
+                    clean = (
+                        (raw or "").replace("```json", "").replace("```", "").strip()
+                    )
                     start, end = clean.find("{"), clean.rfind("}")
                     if start != -1 and end > start:
-                        clean = clean[start:end + 1]
+                        clean = clean[start : end + 1]
                     ex = json.loads(clean)
                     if isinstance(ex, dict):
                         extracted_recipient = ex.get("recipient")
@@ -1126,7 +1132,9 @@ class OutlookConnectorCapability(MatchingCapability):
             resolved = self._resolve_recipient_address(recipient_val)
             if resolved:
                 self.pending_compose["recipient"] = resolved
-                if self.pending_compose.get("subject") and self.pending_compose.get("body"):
+                if self.pending_compose.get("subject") and self.pending_compose.get(
+                    "body"
+                ):
                     draft = self.capability_worker.text_to_text_response(
                         DRAFT_COMPOSE_PROMPT.format(
                             recipient=self.pending_compose["recipient"],
@@ -1136,7 +1144,11 @@ class OutlookConnectorCapability(MatchingCapability):
                     )
                     self.pending_compose["draft"] = draft
                     self.pending_compose["waiting_for"] = "confirm"
-                    recipient_spoken = self.format_email_for_speech(resolved) if "@" in resolved else resolved
+                    recipient_spoken = (
+                        self.format_email_for_speech(resolved)
+                        if "@" in resolved
+                        else resolved
+                    )
                     await self.capability_worker.speak(
                         f"To {recipient_spoken}, subject: {self.pending_compose['subject']}. "
                         f"Here's what I'll send: {draft}. Should I send it?"
@@ -1198,7 +1210,11 @@ class OutlookConnectorCapability(MatchingCapability):
                 self.pending_compose["draft"] = draft
                 self.pending_compose["waiting_for"] = "confirm"
                 recipient = self.pending_compose["recipient"]
-                recipient_spoken = self.format_email_for_speech(recipient) if "@" in recipient else recipient
+                recipient_spoken = (
+                    self.format_email_for_speech(recipient)
+                    if "@" in recipient
+                    else recipient
+                )
                 await self.capability_worker.speak(
                     f"To {recipient_spoken}, subject: {subject_normalized}. "
                     f"Here's what I'll send: {draft}. Should I send it?"
@@ -1223,7 +1239,11 @@ class OutlookConnectorCapability(MatchingCapability):
             self.pending_compose["waiting_for"] = "confirm"
 
             recipient = self.pending_compose["recipient"]
-            recipient_spoken = self.format_email_for_speech(recipient) if "@" in recipient else recipient
+            recipient_spoken = (
+                self.format_email_for_speech(recipient)
+                if "@" in recipient
+                else recipient
+            )
             await self.capability_worker.speak(
                 f"To {recipient_spoken}, subject: {self.pending_compose['subject']}. "
                 f"Here's what I'll send: {draft}. Should I send it?"
@@ -1280,20 +1300,32 @@ class OutlookConnectorCapability(MatchingCapability):
         search_input = json.dumps(details) if details else ""
         try:
             raw = self.capability_worker.text_to_text_response(
-                SEARCH_EXTRACT_PROMPT.format(user_input=search_input or "search my email")
+                SEARCH_EXTRACT_PROMPT.format(
+                    user_input=search_input or "search my email"
+                )
             )
             clean = (raw or "").replace("```json", "").replace("```", "").strip()
             start, end = clean.find("{"), clean.rfind("}")
             if start != -1 and end > start:
-                clean = clean[start:end + 1]
+                clean = clean[start : end + 1]
             params = json.loads(clean)
             if isinstance(params, dict):
-                sender = params.get("sender") or details.get("email_address") or details.get("sender_name")
-                keywords = params.get("keywords") or details.get("subject_keywords") or details.get("body_content")
+                sender = (
+                    params.get("sender")
+                    or details.get("email_address")
+                    or details.get("sender_name")
+                )
+                keywords = (
+                    params.get("keywords")
+                    or details.get("subject_keywords")
+                    or details.get("body_content")
+                )
                 date_range = params.get("date_range") or details.get("date_range")
             else:
                 sender = details.get("email_address") or details.get("sender_name")
-                keywords = details.get("subject_keywords") or details.get("body_content")
+                keywords = details.get("subject_keywords") or details.get(
+                    "body_content"
+                )
                 date_range = details.get("date_range")
         except (json.JSONDecodeError, Exception):
             sender = details.get("email_address") or details.get("sender_name")
@@ -1388,7 +1420,9 @@ class OutlookConnectorCapability(MatchingCapability):
             return
         email_id = self.current_email.get("id")
         if not email_id:
-            await self.capability_worker.speak("I don't have a reference to that email.")
+            await self.capability_worker.speak(
+                "I don't have a reference to that email."
+            )
             return
         await self.capability_worker.speak("Marking it as read.")
         try:
@@ -1412,7 +1446,9 @@ class OutlookConnectorCapability(MatchingCapability):
             return
         email_id = self.current_email.get("id")
         if not email_id:
-            await self.capability_worker.speak("I don't have a reference to that email.")
+            await self.capability_worker.speak(
+                "I don't have a reference to that email."
+            )
             return
 
         if not self.archive_folder_id:
@@ -1459,9 +1495,7 @@ class OutlookConnectorCapability(MatchingCapability):
         if not self.in_triage:
             self.in_triage = True
             self.triage_index = 0
-            await self.capability_worker.speak(
-                "Let's go through them."
-            )
+            await self.capability_worker.speak("Let's go through them.")
 
         max_index = min(len(self.emails), MAX_TRIAGE_BATCH)
 
@@ -1476,7 +1510,9 @@ class OutlookConnectorCapability(MatchingCapability):
             preview = (email.get("bodyPreview") or "").strip()[:300]
             one_sentence = self.capability_worker.text_to_text_response(
                 TRIAGE_SUMMARY_PROMPT.format(
-                    from_name=from_name, subject=subject, preview=preview or "(no preview)"
+                    from_name=from_name,
+                    subject=subject,
+                    preview=preview or "(no preview)",
                 )
             )
             one_sentence = (one_sentence or f"{from_name} sent {subject}.").strip()
@@ -1751,14 +1787,19 @@ class OutlookConnectorCapability(MatchingCapability):
             return None
         lower = action.lower().strip()
         # "could you reply saying X" / "can you reply saying X"
-        for prefix in ("could you reply saying ", "can you reply saying ", "reply saying ", "reply with "):
+        for prefix in (
+            "could you reply saying ",
+            "can you reply saying ",
+            "reply saying ",
+            "reply with ",
+        ):
             if lower.startswith(prefix):
-                rest = action[len(prefix):].strip()
+                rest = action[len(prefix) :].strip()
                 return rest if rest else None
         # "Reply — X", "Reply, X", "Reply X"
         for prefix in ("reply — ", "reply—", "reply, ", "reply , ", "reply "):
             if lower.startswith(prefix):
-                rest = action[len(prefix):].strip()
+                rest = action[len(prefix) :].strip()
                 return rest if rest else None
         if lower.startswith("reply"):
             rest = action[5:].strip().lstrip("—,-:")
@@ -1788,12 +1829,12 @@ class OutlookConnectorCapability(MatchingCapability):
             before = text
             for prefix in prefixes:
                 if text.lower().startswith(prefix):
-                    text = text[len(prefix):].strip()
+                    text = text[len(prefix) :].strip()
                     break
             if text == before:
                 break
         if text.lower().endswith(" instead"):
-            text = text[:-len(" instead")].strip()
+            text = text[: -len(" instead")].strip()
         if text and len(text) >= 3:
             return text
         return None
@@ -1910,11 +1951,17 @@ class OutlookConnectorCapability(MatchingCapability):
         if "today" in lowered:
             start = now.replace(hour=0, minute=0, second=0, microsecond=0)
         elif "yesterday" in lowered:
-            start = (now - timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
+            start = (now - timedelta(days=1)).replace(
+                hour=0, minute=0, second=0, microsecond=0
+            )
         elif "this week" in lowered:
-            start = (now - timedelta(days=now.weekday())).replace(hour=0, minute=0, second=0, microsecond=0)
+            start = (now - timedelta(days=now.weekday())).replace(
+                hour=0, minute=0, second=0, microsecond=0
+            )
         elif "last week" in lowered:
-            start = (now - timedelta(days=now.weekday() + 7)).replace(hour=0, minute=0, second=0, microsecond=0)
+            start = (now - timedelta(days=now.weekday() + 7)).replace(
+                hour=0, minute=0, second=0, microsecond=0
+            )
         elif "last month" in lowered:
             month = now.month - 1 or 12
             year = now.year - 1 if now.month == 1 else now.year
@@ -1991,12 +2038,18 @@ class OutlookConnectorCapability(MatchingCapability):
                 PREFS_FILE, False
             )
             if not exists:
-                return {"max_emails_in_summary": MAX_UNREAD_FETCH, "triage_order": "newest_first"}
+                return {
+                    "max_emails_in_summary": MAX_UNREAD_FETCH,
+                    "triage_order": "newest_first",
+                }
 
             raw = await self.capability_worker.read_file(PREFS_FILE, False)
             return json.loads(raw)
         except Exception:
-            return {"max_emails_in_summary": MAX_UNREAD_FETCH, "triage_order": "newest_first"}
+            return {
+                "max_emails_in_summary": MAX_UNREAD_FETCH,
+                "triage_order": "newest_first",
+            }
 
     async def load_json(self, filename: str, temp: bool = False) -> Dict:
         """Check exists + read JSON."""
