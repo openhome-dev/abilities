@@ -493,34 +493,34 @@ class CryptoSolWalletCapability(MatchingCapability):
                             f"I don't have a contact named {contact_name}. Your contacts are {', '.join(names) or 'none'}."
                         )
                         continue
-                    amt = float(amount) if amount is not None else None
+                    amt=float(amount) if amount is not None else None
                     if amt is None or amt <= 0:
                         await self.capability_worker.speak("How much do you want to send? Say the amount and token, like 50 USDC or 1 SOL.")
                         continue
-                    tok = "usdc" if token == "usdc" else "sol"
-                    price_usd, _ = self._get_sol_price()
-                    usd_approx = (amt * price_usd) if (tok == "sol" and price_usd) else (amt if tok == "usdc" else None)
-                    confirm_msg = f"I'll create a link to send {amt} {tok.upper()} to {contact_name}."
+                    tok="usdc" if token == "usdc" else "sol"
+                    price_usd, _=self._get_sol_price()
+                    usd_approx=(amt * price_usd) if (tok == "sol" and price_usd) else (amt if tok == "usdc" else None)
+                    confirm_msg=f"I'll create a link to send {amt} {tok.upper()} to {contact_name}."
                     if usd_approx is not None:
                         confirm_msg += f" That's about {usd_approx:.0f} dollars."
                     confirm_msg += " Shall I send the link to your phone?"
                     if usd_approx is not None and usd_approx > 500:
-                        ok = await self.capability_worker.run_confirmation_loop(confirm_msg)
+                        ok=await self.capability_worker.run_confirmation_loop(confirm_msg)
                         if not ok:
                             await self.capability_worker.speak("No problem.")
                             continue
-                        ok2 = await self.capability_worker.run_confirmation_loop(
+                        ok2=await self.capability_worker.run_confirmation_loop(
                             f"Just to be sure — that's about {usd_approx:.0f} dollars. Are you certain?"
                         )
                         if not ok2:
                             await self.capability_worker.speak("Cancelled.")
                             continue
                     else:
-                        ok = await self.capability_worker.run_confirmation_loop(confirm_msg)
+                        ok=await self.capability_worker.run_confirmation_loop(confirm_msg)
                         if not ok:
                             await self.capability_worker.speak("No problem.")
                             continue
-                    url = self._build_solana_pay_url(
+                    url=self._build_solana_pay_url(
                         to_address, amt, tok, "OpenHome", "From your speaker"
                     )
                     await self._push_payment_link(
