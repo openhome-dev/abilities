@@ -1,6 +1,5 @@
 import asyncio
 import json
-import os
 import re
 import time
 from datetime import datetime
@@ -12,7 +11,7 @@ from src.main import AgentWorker
 
 
 class PomodoroFocusTimerCapability(MatchingCapability):
-    #{{register capability}}
+    # {{register capability}}
     worker: AgentWorker = None
     capability_worker: CapabilityWorker = None
 
@@ -35,7 +34,6 @@ class PomodoroFocusTimerCapability(MatchingCapability):
         "eighteen": 18, "nineteen": 19, "twenty": 20, "thirty": 30,
         "forty": 40, "fifty": 50
     }
-
 
     def call(self, worker: AgentWorker):
         self.worker = worker
