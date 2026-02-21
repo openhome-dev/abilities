@@ -54,7 +54,7 @@ class UpworkJobSearchCapability(MatchingCapability):
         try:
             # Create Basic auth header from client key and secret
             auth = (UPWORK_CLIENT_KEY, UPWORK_CLIENT_SECRET)
-            
+
             # Request new token (in production, you'd cache this)
             response = requests.post(
                 UPWORK_AUTH_URL,
@@ -62,7 +62,7 @@ class UpworkJobSearchCapability(MatchingCapability):
                 auth=auth,
                 timeout=30
             )
-            
+
             if response.status_code == 200:
                 data = response.json()
                 self.access_token = data.get("access_token")
@@ -72,7 +72,7 @@ class UpworkJobSearchCapability(MatchingCapability):
                     f"[UpworkJobSearch] Auth failed: {response.status_code} - {response.text}"
                 )
                 return False
-                
+
         except Exception as e:
             self.worker.editor_logging_handler.error(
                 f"[UpworkJobSearch] Auth error: {e}"
@@ -137,11 +137,11 @@ class UpworkJobSearchCapability(MatchingCapability):
 
             if response.status_code == 200:
                 data = response.json()
-                
+
                 # Parse the GraphQL response
                 jobs = []
                 edges = data.get("data", {}).get("jobSearch", {}).get("edges", [])
-                
+
                 for edge in edges:
                     job = edge.get("node", {})
                     jobs.append({
@@ -156,9 +156,9 @@ class UpworkJobSearchCapability(MatchingCapability):
                         "client_country": job.get("client", {}).get("location", {}).get("country", "Unknown"),
                         "posted_at": job.get("postedAt", "")
                     })
-                
+
                 return jobs
-                
+
             elif response.status_code == 401:
                 # Token expired, try to refresh
                 self.access_token = None
@@ -181,7 +181,7 @@ class UpworkJobSearchCapability(MatchingCapability):
         duration = job.get("duration", "Not specified")
         workload = job.get("workload", "Not specified")
         rating = job.get("client_rating", "N/A")
-        
+
         return f"Job {index + 1}: {title}. Budget: {budget_str}. Duration: {duration}. Workload: {workload}. Client rating: {rating} out of 5."
 
     async def run(self):
@@ -195,7 +195,7 @@ class UpworkJobSearchCapability(MatchingCapability):
 
             # Step 2: Get search query from user
             user_input = await self.capability_worker.user_response()
-            
+
             if not user_input or not user_input.strip():
                 await self.capability_worker.speak(
                     "I didn't catch that. Please try again with a job category or skill."
@@ -207,7 +207,7 @@ class UpworkJobSearchCapability(MatchingCapability):
             await self.capability_worker.speak(
                 f"Searching for {user_input} jobs on Upwork..."
             )
-            
+
             jobs = await self.search_jobs(user_input)
 
             # Step 4: Speak results
@@ -215,20 +215,20 @@ class UpworkJobSearchCapability(MatchingCapability):
                 await self.capability_worker.speak(
                     f"I found {len(jobs)} jobs matching '{user_input}'. Here are the top results:"
                 )
-                
+
                 # Speak each job (limit to 3 for voice)
                 for i, job in enumerate(jobs[:3]):
                     job_summary = self.format_job_for_speech(job, i)
                     await self.capability_worker.speak(job_summary)
-                
+
                 # Add closing message
                 await self.capability_worker.speak(
                     "Would you like me to search for a different category? Say stop to exit."
                 )
-                
+
                 # Listen for follow-up
                 follow_up = await self.capability_worker.user_response()
-                
+
                 if follow_up and any(word in follow_up.lower() for word in ["yes", "sure", "another", "more", "search"]):
                     await self.capability_worker.speak("What would you like to search for?")
                     new_query = await self.capability_worker.user_response()
