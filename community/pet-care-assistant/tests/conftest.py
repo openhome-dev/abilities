@@ -85,6 +85,7 @@ def capability(mock_worker, mock_capability_worker):
     cap.pet_data = {}
     cap.activity_log = []
     cap._geocode_cache = {}
+    cap._corrected_name = None
 
     # Initialize all services
     cap.pet_data_service = PetDataService(mock_capability_worker, mock_worker)

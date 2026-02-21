@@ -27,6 +27,9 @@ class PetDataService:
     async def load_json(self, filename: str, default=None):
         """Load a JSON file, returning default if not found or corrupt.
 
+        If the main file is corrupt, attempts to recover from the backup
+        file created by save_json. Only resets if both are unusable.
+
         Args:
             filename: Name of file to load
             default: Default value if file doesn't exist or is corrupt
@@ -34,15 +37,42 @@ class PetDataService:
         Returns:
             Loaded JSON data or default value
         """
+        backup_filename = f"{filename}.backup"
+
         if await self.capability_worker.check_if_file_exists(filename, False):
             try:
                 raw = await self.capability_worker.read_file(filename, False)
+                if not raw or not raw.strip():
+                    # File exists but is empty — treat as absent (not corrupt)
+                    return default if default is not None else {}
                 return json.loads(raw)
             except json.JSONDecodeError:
                 self.worker.editor_logging_handler.error(
-                    f"[PetCare] Corrupt file {filename}, resetting."
+                    f"[PetCare] Corrupt file {filename}, trying backup."
                 )
                 await self.capability_worker.delete_file(filename, False)
+
+        # Main file missing or corrupt — try backup recovery
+        if await self.capability_worker.check_if_file_exists(backup_filename, False):
+            try:
+                raw = await self.capability_worker.read_file(backup_filename, False)
+                if raw and raw.strip():
+                    data = json.loads(raw)
+                    self.worker.editor_logging_handler.info(
+                        f"[PetCare] Recovered {filename} from backup."
+                    )
+                    # Restore the main file from backup
+                    await self.capability_worker.write_file(
+                        filename, json.dumps(data), False
+                    )
+                    await self.capability_worker.delete_file(backup_filename, False)
+                    return data
+            except (json.JSONDecodeError, Exception) as e:
+                self.worker.editor_logging_handler.error(
+                    f"[PetCare] Backup {backup_filename} also corrupt: {e}"
+                )
+                await self.capability_worker.delete_file(backup_filename, False)
+
         return default if default is not None else {}
 
     async def save_json(self, filename: str, data):
@@ -75,6 +105,9 @@ class PetDataService:
                 self.worker.editor_logging_handler.info(
                     f"[PetCare] Created backup: {backup_filename}"
                 )
+                # Delete original so write_file always creates a fresh file
+                # Ensure a clean file write by removing the existing file.
+                await self.capability_worker.delete_file(filename, False)
 
             await self.capability_worker.write_file(filename, json.dumps(data), False)
 

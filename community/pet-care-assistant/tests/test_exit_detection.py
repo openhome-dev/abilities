@@ -348,6 +348,117 @@ class TestIsExitPropertyBased:
         assert result1 == result2
 
 
+class TestIsHardExit:
+    """Test is_hard_exit() — onboarding-safe exit detection that ignores 'no'/'done' etc."""
+
+    def test_no_is_not_hard_exit(self, capability):
+        """'no' must NOT trigger hard exit (it's a valid answer to allergy questions)."""
+        assert capability.llm_service.is_hard_exit("no") is False
+
+    def test_done_is_not_hard_exit(self, capability):
+        """'done' must NOT trigger hard exit."""
+        assert capability.llm_service.is_hard_exit("done") is False
+
+    def test_bye_is_not_hard_exit(self, capability):
+        """'bye' must NOT trigger hard exit."""
+        assert capability.llm_service.is_hard_exit("bye") is False
+
+    def test_nope_is_not_hard_exit(self, capability):
+        """'nope' must NOT trigger hard exit."""
+        assert capability.llm_service.is_hard_exit("nope") is False
+
+    def test_stop_is_hard_exit(self, capability):
+        """'stop' must trigger hard exit."""
+        assert capability.llm_service.is_hard_exit("stop") is True
+
+    def test_quit_is_hard_exit(self, capability):
+        """'quit' must trigger hard exit."""
+        assert capability.llm_service.is_hard_exit("quit") is True
+
+    def test_exit_is_hard_exit(self, capability):
+        """'exit' must trigger hard exit."""
+        assert capability.llm_service.is_hard_exit("exit") is True
+
+    def test_cancel_is_hard_exit(self, capability):
+        """'cancel' must trigger hard exit."""
+        assert capability.llm_service.is_hard_exit("cancel") is True
+
+    def test_start_over_is_hard_exit(self, capability):
+        """'start over' must trigger hard exit (key onboarding bug fix)."""
+        assert capability.llm_service.is_hard_exit("start over") is True
+
+    def test_wanna_start_over_is_hard_exit(self, capability):
+        """'wanna start over' must trigger hard exit."""
+        assert capability.llm_service.is_hard_exit("Wanna start over") is True
+        assert capability.llm_service.is_hard_exit("wanna start over.") is True
+
+    def test_want_to_start_over_is_hard_exit(self, capability):
+        """'want to start over' must trigger hard exit."""
+        assert capability.llm_service.is_hard_exit("I want to start over") is True
+
+    def test_restart_is_hard_exit(self, capability):
+        """'restart' must trigger hard exit."""
+        assert capability.llm_service.is_hard_exit("restart") is True
+        assert capability.llm_service.is_hard_exit("I want to restart") is True
+
+    def test_reset_everything_is_hard_exit(self, capability):
+        """'reset everything' must trigger hard exit."""
+        assert capability.llm_service.is_hard_exit("reset everything") is True
+
+    def test_start_from_scratch_is_hard_exit(self, capability):
+        """'start from scratch' must trigger hard exit."""
+        assert capability.llm_service.is_hard_exit("start from scratch") is True
+
+    def test_force_exit_phrase_is_hard_exit(self, capability):
+        """Force-exit phrases (Tier 1) must also trigger hard exit."""
+        assert capability.llm_service.is_hard_exit("exit petcare") is True
+        assert capability.llm_service.is_hard_exit("close petcare") is True
+
+    def test_normal_pet_answer_is_not_hard_exit(self, capability):
+        """Normal onboarding answers must NOT trigger hard exit."""
+        assert capability.llm_service.is_hard_exit("golden retriever") is False
+        assert capability.llm_service.is_hard_exit("She has no allergies") is False
+        assert capability.llm_service.is_hard_exit("Dr Smith") is False
+        assert capability.llm_service.is_hard_exit("Austin Texas") is False
+
+    def test_empty_is_not_hard_exit(self, capability):
+        """Empty string must NOT trigger hard exit."""
+        assert capability.llm_service.is_hard_exit("") is False
+
+    def test_none_is_not_hard_exit(self, capability):
+        """None must NOT trigger hard exit."""
+        assert capability.llm_service.is_hard_exit(None) is False
+
+
+class TestResetNotExit:
+    """Reset phrases must NOT be detected as exits by is_exit().
+
+    'Start over', 'restart', etc. mean reset_all, not 'goodbye'.
+    The main loop guards against the LLM exit fallback misclassifying these.
+    """
+
+    def test_start_over_is_not_exit(self, capability):
+        """'Start over' should NOT be an exit — it's a reset command."""
+        assert capability.llm_service.is_exit("start over") is False
+        assert capability.llm_service.is_exit("Start over.") is False
+
+    def test_restart_is_not_exit(self, capability):
+        """'restart' should NOT be an exit — it's a reset command."""
+        assert capability.llm_service.is_exit("restart") is False
+
+    def test_start_from_scratch_is_not_exit(self, capability):
+        """'start from scratch' should NOT be an exit."""
+        assert capability.llm_service.is_exit("start from scratch") is False
+
+    def test_reset_everything_is_not_exit(self, capability):
+        """'reset everything' should NOT be an exit."""
+        assert capability.llm_service.is_exit("reset everything") is False
+
+    def test_wanna_start_over_is_not_exit(self, capability):
+        """'I wanna start over' should NOT be an exit."""
+        assert capability.llm_service.is_exit("I wanna start over") is False
+
+
 class TestIsExitIntegration:
     """Integration tests for exit detection in realistic scenarios."""
 

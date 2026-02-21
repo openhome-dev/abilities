@@ -127,15 +127,33 @@ class TestExtractSpecies:
         assert result == "dog"
 
     @pytest.mark.asyncio
-    async def test_unclear_species(self, capability):
-        """Should handle unclear species input."""
-        capability.capability_worker.text_to_text_response.return_value = "dog"
+    async def test_unclear_species_returns_unknown(self, capability):
+        """Should return 'unknown' when species is not explicitly mentioned."""
+        capability.capability_worker.text_to_text_response.return_value = "unknown"
 
         result = await capability.llm_service.extract_species_async(
             "Just a regular pet"
         )
 
-        assert result == "dog"
+        assert result == "unknown"
+
+    @pytest.mark.asyncio
+    async def test_name_only_returns_unknown(self, capability):
+        """Should return 'unknown' for a pet name with no species info (no hallucination)."""
+        capability.capability_worker.text_to_text_response.return_value = "unknown"
+
+        result = await capability.llm_service.extract_species_async("Luna")
+
+        assert result == "unknown"
+
+    @pytest.mark.asyncio
+    async def test_trigger_phrase_returns_unknown(self, capability):
+        """Trigger phrase 'Pet care Luna' must NOT hallucinate a species."""
+        capability.capability_worker.text_to_text_response.return_value = "unknown"
+
+        result = await capability.llm_service.extract_species_async("Pet care Luna")
+
+        assert result == "unknown"
 
 
 class TestExtractBreed:

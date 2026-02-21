@@ -80,7 +80,7 @@ class TestEmergencyVetAPI:
         assert "BluePearl Pet Hospital" in speak_text
         # Details for chosen vet spoken after pick
         assert "open now" in speak_text
-        assert "4.5" in speak_text
+        assert "5, 1, 2" in speak_text  # phone number spoken
 
     @pytest.mark.asyncio
     @responses.activate
