@@ -1,5 +1,6 @@
 import asyncio
 import json
+import os
 import re
 import uuid
 from datetime import datetime, timedelta
@@ -154,50 +155,13 @@ class PetCareAssistantCapability(MatchingCapability):
 
     @classmethod
     def register_capability(cls) -> "MatchingCapability":
+        with open(
+            os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.json")
+        ) as file:
+            data = json.load(file)
         return cls(
-            unique_name="pet_care_assistant",
-            matching_hotwords=[
-                "pet care",
-                "pet assistant",
-                "pet tracker",
-                "my pets",
-                "pet log",
-                "I fed",
-                "I just fed",
-                "gave medication",
-                "got her medicine",
-                "got his medicine",
-                "we walked",
-                "went for a walk",
-                "weighs",
-                "log pet activity",
-                "when did I last feed",
-                "has had",
-                "how many walks",
-                "last vet visit",
-                "check on",
-                "emergency vet",
-                "find a vet",
-                "vet near me",
-                "I need a vet",
-                "is it safe outside",
-                "pet weather",
-                "can I walk",
-                "too hot for",
-                "too cold for",
-                "pet food recall",
-                "food recall check",
-                "is my dog food safe",
-                "is my cat food safe",
-                "any food recalls",
-                "add a pet",
-                "remove a pet",
-                "delete pet",
-                "update pet info",
-                "change my vet",
-                "pet info",
-                "clear activity log",
-            ],
+            unique_name=data["unique_name"],
+            matching_hotwords=data["matching_hotwords"],
         )
 
     def call(self, worker: AgentWorker):
