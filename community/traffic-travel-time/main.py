@@ -164,7 +164,7 @@ class TrafficTravelTimeCapability(MatchingCapability):
     _last_destination: str = None
     _last_dest_name: str = None
 
-    #{{register capability}}  # noqa: E265
+    # {{register capability}}  # noqa: E265
 
     def call(self, worker: AgentWorker):
         self.worker = worker
