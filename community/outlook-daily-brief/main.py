@@ -227,7 +227,7 @@ class OutlookBriefCapability(MatchingCapability):
             clean = (raw or "").replace("```json", "").replace("```", "").strip()
             start, end = clean.find("{"), clean.rfind("}")
             if start != -1 and end > start:
-                clean = clean[start : end + 1]
+                clean = clean[start: end + 1]
             out = json.loads(clean)
             if isinstance(out, dict) and out.get("mode") in ("full", "urgent"):
                 return out
@@ -648,7 +648,7 @@ class OutlookBriefCapability(MatchingCapability):
             "change my location to ",
         ):
             if lower.startswith(prefix):
-                out = text[len(prefix) :].strip()
+                out = text[len(prefix):].strip()
                 break
         if out is None and " to " in lower:
             out = text.split(" to ", 1)[-1].strip()
