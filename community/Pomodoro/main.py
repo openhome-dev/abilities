@@ -12,6 +12,7 @@ from src.main import AgentWorker
 
 
 class PomodoroFocusTimerCapability(MatchingCapability):
+    #{{register capability}}
     worker: AgentWorker = None
     capability_worker: CapabilityWorker = None
 
