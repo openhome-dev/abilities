@@ -1,0 +1,89 @@
+{
+  "n8n_base_url": "https://your-n8n-instance.app.n8n.cloud",
+  "workflows": {
+    "slack": {
+      "name": "Post to Slack",
+      "webhook_url": "REPLACE_WITH_YOUR_WEBHOOK_URL",
+      "description": "Posts a message to a Slack channel",
+      "default_params": {
+        "channel": "#general"
+      },
+      "trigger_phrases": ["post to slack", "tell the team", "message the channel", "slack message"],
+      "confirm_before_send": true,
+      "expects_response": false
+    },
+    "task": {
+      "name": "Create Task",
+      "webhook_url": "REPLACE_WITH_YOUR_WEBHOOK_URL",
+      "description": "Creates a task in the project management tool",
+      "default_params": {
+        "project": "General",
+        "priority": "medium"
+      },
+      "trigger_phrases": ["add a task", "create a task", "new task", "add to my to-do", "remind me to"],
+      "confirm_before_send": true,
+      "expects_response": false
+    },
+    "log_to_sheet": {
+      "name": "Log to Spreadsheet",
+      "webhook_url": "REPLACE_WITH_YOUR_WEBHOOK_URL",
+      "description": "Appends a row to a Google Sheet",
+      "default_params": {
+        "sheet_name": "Log"
+      },
+      "trigger_phrases": ["log this", "add to the spreadsheet", "record this", "log to sheet"],
+      "confirm_before_send": false,
+      "expects_response": false
+    },
+    "create_issue": {
+      "name": "Create Bug Report",
+      "webhook_url": "REPLACE_WITH_YOUR_WEBHOOK_URL",
+      "description": "Creates a Jira or GitHub issue",
+      "default_params": {
+        "project": "MAIN",
+        "type": "bug",
+        "priority": "medium"
+      },
+      "trigger_phrases": ["create a bug", "file a ticket", "report an issue", "new jira ticket", "create an issue"],
+      "confirm_before_send": true,
+      "expects_response": true
+    },
+    "daily_summary": {
+      "name": "Daily Summary",
+      "webhook_url": "REPLACE_WITH_YOUR_WEBHOOK_URL",
+      "description": "Fetches today's tasks, calendar, and unread messages",
+      "default_params": {},
+      "trigger_phrases": ["daily summary", "what's on my plate", "what do I have today", "morning briefing"],
+      "confirm_before_send": false,
+      "expects_response": true
+    },
+    "draft_email": {
+      "name": "Draft Email",
+      "webhook_url": "REPLACE_WITH_YOUR_WEBHOOK_URL",
+      "description": "Creates a Gmail draft (does NOT send)",
+      "default_params": {},
+      "trigger_phrases": ["draft an email", "write an email", "compose an email", "email draft"],
+      "confirm_before_send": true,
+      "expects_response": true
+    },
+    "smart_home": {
+      "name": "Smart Home Control",
+      "webhook_url": "REPLACE_WITH_YOUR_WEBHOOK_URL",
+      "description": "Controls Home Assistant devices",
+      "default_params": {},
+      "trigger_phrases": ["turn on", "turn off", "set the", "lights", "thermostat", "lock the", "unlock the"],
+      "confirm_before_send": false,
+      "expects_response": false
+    }
+  },
+  "webhook_auth": {
+    "type": "header",
+    "header_name": "X-OpenHome-Key",
+    "header_value": "REPLACE_WITH_YOUR_SECRET_KEY"
+  },
+  "phone_number": "",
+  "twilio_account_sid": "",
+  "twilio_auth_token": "",
+  "twilio_from_number": "",
+  "times_used": 0
+}
