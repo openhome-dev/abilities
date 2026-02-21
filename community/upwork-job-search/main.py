@@ -25,18 +25,21 @@ UPWORK_GRAPHQL_URL = "https://api.upwork.com/graphql/v2"
 
 
 class UpworkJobSearchCapability(MatchingCapability):
+    #{{register capability}}
     worker: AgentWorker = None
     capability_worker: CapabilityWorker = None
     access_token: str = None
 
     @classmethod
     def register_capability(cls) -> "MatchingCapability":
-        with open(
-            os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.json")
-        ) as file:
-            data = json.load(file)
+        from src.agent.capability_worker import CapabilityWorker
+        capability_worker = CapabilityWorker(None)  # pass None if worker not available yet
+        config_str = capability_worker.read_file("config.json")
+        data = json.loads(config_str)
+
+        #{{register capability}}
         return cls(
-            unique_name=data["unique_name"],
+            unique_name=data['unique_name'],
             matching_hotwords=data["matching_hotwords"],
         )
 
