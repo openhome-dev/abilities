@@ -1,4 +1,4 @@
-from typing import ClassVar, Set, Dict, Any
+from typing import ClassVar, Dict
 import json
 import os
 from datetime import datetime
@@ -10,10 +10,10 @@ from src.main import AgentWorker
 from src.agent.capability_worker import CapabilityWorker
 
 
-COMPOSIO_API_KEY           = "ak_xxx" #Your api key
-COMPOSIO_USER_ID           = "pg-test-xxxxxxxx" #Your user id
-COMPOSIO_CONNECTED_ACCOUNT_ID = "ca_xxxx" #Your account i
-COMPOSIO_BASE_URL          = "https://backend.composio.dev/api/v3"
+COMPOSIO_API_KEY = "ak_xxx"  # Your api key
+COMPOSIO_USER_ID = "pg-test-xxxxxxxx"  # Your user id
+COMPOSIO_CONNECTED_ACCOUNT_ID = "ca_xxxx"  # Your account i
+COMPOSIO_BASE_URL = "https://backend.composio.dev/api/v3"
 
 
 class FlightInformationEmailCapability(MatchingCapability):
@@ -109,7 +109,7 @@ class FlightInformationEmailCapability(MatchingCapability):
             else:
                 await self.handle_search(trigger_text, prefs)
 
-        except Exception as e:
+        except Exception:
             await self.capability_worker.speak("Something went wrong. Try again?")
 
         finally:
