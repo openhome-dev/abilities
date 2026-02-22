@@ -2,8 +2,6 @@
 Package Tracker — Voice ability to track parcels via real tracking numbers.
 Uses TrackingMore API (external integration).
 """
-import json
-import os
 import re
 from typing import ClassVar, Set
 
@@ -30,19 +28,16 @@ CARRIER_ALIASES: ClassVar[dict] = {
 }
 
 
-class PackageTrackerCapability(MatchingCapability):
+class PackageTracker(MatchingCapability):
+    # {{register capability}}
     worker: AgentWorker = None
     capability_worker: CapabilityWorker = None
 
     @classmethod
     def register_capability(cls) -> "MatchingCapability":
-        with open(
-            os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.json")
-        ) as file:
-            data = json.load(file)
         return cls(
-            unique_name=data["unique_name"],
-            matching_hotwords=data["matching_hotwords"],
+            unique_name="package_tracker",
+            matching_hotwords=["track my package", "where's my package", "package status", "tracking"],
         )
 
     def call(self, worker: AgentWorker):
