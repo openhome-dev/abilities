@@ -802,8 +802,6 @@ class PetCareAssistantCapability(MatchingCapability):
 
                 consecutive_unknown = 0
                 await self._route_intent(intent)
-
-                await self.capability_worker.speak("What else can I help with?")
             else:
                 await self.capability_worker.speak(EXIT_MESSAGE)
 
@@ -1580,19 +1578,6 @@ class PetCareAssistantCapability(MatchingCapability):
         await self.capability_worker.speak(
             f"Got it. Logged {pet['name']}'s {activity_type} at {time_str}."
         )
-
-        await self.capability_worker.speak("Anything else to log?")
-        await self.worker.session_tasks.sleep(4)
-        follow = await self.capability_worker.user_response()
-        if follow and not self.llm_service.is_exit(follow):
-            cleaned = follow.lower().strip()
-            if any(
-                w in cleaned for w in ["no", "nope", "nah", "that's it", "that's all"]
-            ):
-                return
-            follow_intent = await self.llm_service.classify_intent_async(follow)
-            if follow_intent.get("mode") == "log":
-                await self._handle_log(follow_intent)
 
     # === Quick Lookup ===
 
