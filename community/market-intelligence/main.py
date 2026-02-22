@@ -1,5 +1,4 @@
 import json
-import os
 import re
 from typing import Dict, List, Optional
 
@@ -81,23 +80,14 @@ CRYPTO_IDS = {
 }
 
 
-class WewrwewCapability(MatchingCapability):
+class MarketIntelligenceCapability(MatchingCapability):
     """Market intelligence via Polymarket prediction markets and CoinGecko."""
 
     CAPABILITY_NAME = "market-intelligence"
     worker: AgentWorker = None
     capability_worker: CapabilityWorker = None
 
-    @classmethod
-    def register_capability(cls) -> "MatchingCapability":
-        with open(
-            os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.json")
-        ) as file:
-            data = json.load(file)
-        return cls(
-            unique_name=data["unique_name"],
-            matching_hotwords=data["matching_hotwords"],
-        )
+    #{{register capability}}
 
     def call(self, worker: AgentWorker):
         self.worker = worker

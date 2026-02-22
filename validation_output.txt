@@ -1,0 +1,3 @@
+
+📋 Validating: community/market-intelligence/
+  ✅ All checks passed!
