@@ -2,8 +2,6 @@
 Package Tracker — Voice ability to track parcels via real tracking numbers.
 Uses TrackingMore API (external integration).
 """
-import json
-import os
 import re
 from typing import ClassVar, Set
 
@@ -31,7 +29,7 @@ CARRIER_ALIASES: ClassVar[dict] = {
 
 
 class PackageTracker(MatchingCapability):
-    #{{register capability}}
+    # {{register capability}}
     worker: AgentWorker = None
     capability_worker: CapabilityWorker = None
 
