@@ -1,0 +1,25 @@
+{
+  "unique_name": "google_tasks",
+  "matching_hotwords": [
+    "task",
+    "tasks",
+    "to do",
+    "todo",
+    "add a task",
+    "new task",
+    "remind me",
+    "my tasks",
+    "what's due",
+    "task list",
+    "mark done",
+    "complete task",
+    "check off",
+    "task summary",
+    "daily tasks",
+    "overdue",
+    "switch list",
+    "google tasks",
+    "what do I need to do",
+    "finish task"
+  ]
+}
