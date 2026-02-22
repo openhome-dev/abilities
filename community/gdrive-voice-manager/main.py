@@ -188,7 +188,7 @@ class GDriveVoiceManager(MatchingCapability):
         file_reference = classification.get("file_reference")
         folder_name = classification.get("folder_name")
         note_content = classification.get("note_content")
-        file_type = classification.get("file_type", "any")
+        classification.get("file_type", "any")
 
         # ----------------------------
         # NAME SEARCH (default)
@@ -1079,7 +1079,6 @@ class GDriveVoiceManager(MatchingCapability):
             self.prefs["refresh_token"] = refresh_token
             self.prefs["access_token"] = access_token
             self.prefs["token_expires_at"] = time.time() + int(expires_in) - 60
-
 
             # Handle refresh token rotation — Google may return a new one
             if "refresh_token" in token_data:
