@@ -1,6 +1,5 @@
 import asyncio
 import json
-import os
 import re
 import uuid
 from datetime import datetime, timedelta
@@ -10,17 +9,443 @@ from src.agent.capability import MatchingCapability
 from src.agent.capability_worker import CapabilityWorker
 from src.main import AgentWorker
 
-# Service imports — relative for OpenHome runtime, absolute fallback for local tests
-try:
-    from .activity_log_service import ActivityLogService
-    from .external_api_service import ExternalAPIService
-    from .llm_service import LLMService
-    from .pet_data_service import PetDataService
-except ImportError:
-    from activity_log_service import ActivityLogService  # noqa: E402
-    from external_api_service import ExternalAPIService  # noqa: E402
-    from llm_service import LLMService  # noqa: E402
-    from pet_data_service import PetDataService  # noqa: E402
+# ===========================================================================
+# Activity Log Service
+# ===========================================================================
+
+class ActivityLogService:
+    def __init__(self, worker, max_log_entries=500):
+        self.worker = worker
+        self.max_log_entries = max_log_entries
+
+    def add_activity(self, activity_log, pet_name, activity_type, details="", value=None):
+        entry = {
+            "pet_name": pet_name,
+            "type": activity_type,
+            "timestamp": datetime.now().isoformat(),
+            "details": details,
+        }
+        if value is not None:
+            entry["value"] = value
+        activity_log.append(entry)
+        if len(activity_log) > self.max_log_entries:
+            removed = len(activity_log) - self.max_log_entries
+            activity_log = activity_log[-self.max_log_entries:]
+            self.worker.editor_logging_handler.warning(
+                f"[PetCare] Activity log size limit reached. Removed {removed} old entries."
+            )
+        return activity_log
+
+    def get_recent_activities(self, activity_log, pet_name=None, activity_type=None, limit=10):
+        filtered = activity_log
+        if pet_name:
+            filtered = [a for a in filtered if a.get("pet_name") == pet_name]
+        if activity_type:
+            filtered = [a for a in filtered if a.get("type") == activity_type]
+        return list(reversed(filtered[-limit:]))
+
+
+# ===========================================================================
+# Pet Data Service
+# ===========================================================================
+
+class PetDataService:
+    def __init__(self, capability_worker, worker):
+        self.capability_worker = capability_worker
+        self.worker = worker
+
+    async def load_json(self, filename, default=None):
+        backup_filename = f"{filename}.backup"
+        if await self.capability_worker.check_if_file_exists(filename, False):
+            try:
+                raw = await self.capability_worker.read_file(filename, False)
+                if not raw or not raw.strip():
+                    return default if default is not None else {}
+                return json.loads(raw)
+            except json.JSONDecodeError:
+                self.worker.editor_logging_handler.error(
+                    f"[PetCare] Corrupt file {filename}, trying backup."
+                )
+                await self.capability_worker.delete_file(filename, False)
+        if await self.capability_worker.check_if_file_exists(backup_filename, False):
+            try:
+                raw = await self.capability_worker.read_file(backup_filename, False)
+                if raw and raw.strip():
+                    data = json.loads(raw)
+                    self.worker.editor_logging_handler.info(
+                        f"[PetCare] Recovered {filename} from backup."
+                    )
+                    await self.capability_worker.write_file(filename, json.dumps(data), False)
+                    await self.capability_worker.delete_file(backup_filename, False)
+                    return data
+            except (json.JSONDecodeError, Exception) as e:
+                self.worker.editor_logging_handler.error(
+                    f"[PetCare] Backup {backup_filename} also corrupt: {e}"
+                )
+                await self.capability_worker.delete_file(backup_filename, False)
+        return default if default is not None else {}
+
+    async def save_json(self, filename, data):
+        backup_filename = f"{filename}.backup"
+        try:
+            if await self.capability_worker.check_if_file_exists(filename, False):
+                content = await self.capability_worker.read_file(filename, False)
+                await self.capability_worker.write_file(backup_filename, content, False)
+                self.worker.editor_logging_handler.info(
+                    f"[PetCare] Created backup: {backup_filename}"
+                )
+                await self.capability_worker.delete_file(filename, False)
+            await self.capability_worker.write_file(filename, json.dumps(data), False)
+            if await self.capability_worker.check_if_file_exists(backup_filename, False):
+                await self.capability_worker.delete_file(backup_filename, False)
+                self.worker.editor_logging_handler.info(
+                    f"[PetCare] Successfully saved {filename}, backup cleaned up"
+                )
+        except Exception as e:
+            self.worker.editor_logging_handler.error(
+                f"[PetCare] Failed to save {filename}: {e}"
+            )
+            if await self.capability_worker.check_if_file_exists(backup_filename, False):
+                self.worker.editor_logging_handler.warning(
+                    f"[PetCare] Backup file {backup_filename} retained for recovery"
+                )
+            raise
+
+    def resolve_pet(self, pet_data, pet_name=None):
+        pets = pet_data.get("pets", [])
+        if not pets:
+            return None
+        if len(pets) == 1:
+            return pets[0]
+        if pet_name:
+            name_lower = pet_name.lower().strip()
+            for p in pets:
+                if p["name"].lower() == name_lower:
+                    return p
+            for p in pets:
+                if p["name"].lower().startswith(name_lower) or name_lower.startswith(p["name"].lower()):
+                    return p
+        return pets[0]
+
+    async def resolve_pet_async(self, pet_data, pet_name=None, is_exit_fn=None):
+        pets = pet_data.get("pets", [])
+        if not pets:
+            await self.capability_worker.speak("You don't have any pets set up yet.")
+            return None
+        if len(pets) == 1:
+            return pets[0]
+        if pet_name:
+            name_lower = pet_name.lower().strip()
+            for p in pets:
+                if p["name"].lower() == name_lower:
+                    return p
+            for p in pets:
+                if p["name"].lower().startswith(name_lower) or name_lower.startswith(p["name"].lower()):
+                    return p
+        names = " or ".join(p["name"] for p in pets)
+        await self.capability_worker.speak(f"Which pet? {names}?")
+        response = await self.capability_worker.user_response()
+        if response and (not is_exit_fn or not is_exit_fn(response)):
+            return self.resolve_pet(pet_data, response)
+        return None
+
+
+# ===========================================================================
+# LLM Service
+# ===========================================================================
+
+_FORCE_EXIT_PHRASES = [
+    "exit petcare",
+    "close petcare",
+    "shut down pets",
+    "petcare out",
+]
+
+_EXIT_COMMANDS = ["exit", "stop", "quit", "cancel"]
+
+_EXIT_RESPONSES = [
+    "no", "nope", "done", "bye", "goodbye", "thanks", "thank you",
+    "no thanks", "nothing else", "all good", "i'm good", "that's all",
+    "that's it", "i'm done", "we're done",
+]
+
+_CLASSIFY_PROMPT = (
+    "You are an intent classifier for a pet care assistant. "
+    "The user manages one or more pets. Known pets: {pet_names}.\n\n"
+    "CRITICAL INSTRUCTIONS:\n"
+    "1. Input comes from speech-to-text and WILL be garbled, noisy, or incomplete. "
+    "Always try to infer the most plausible intent, even from fragments.\n"
+    "2. Only return mode 'unknown' if you truly cannot extract ANY plausible intent "
+    "after trying hard. When in doubt, pick the closest match.\n"
+    "3. Ignore filler words, background noise, repeated words, or STT artifacts.\n"
+    "4. If the input sounds like an information request — contains words like 'give me', "
+    "'tell me', 'show me', 'get me', 'what', 'when', 'how', 'information', 'info', "
+    "'details', 'data', 'history', 'record' — classify as 'lookup', NOT 'unknown'.\n"
+    "5. If the input sounds like reporting an activity (feeding, walk, weight, medication, "
+    "grooming) — classify as 'log', NOT 'unknown'.\n"
+    "6. IMPORTANT - past vs future distinction:\n"
+    "   - PAST events (already happened): 'I fed', 'we walked', 'she ate', 'went to vet', "
+    "'got groomed' -> 'log'\n"
+    "   - FUTURE plans (haven't happened yet): 'I wanna go', 'need to go', 'going to', "
+    "'have an appointment', 'scheduled for', 'plan to', 'want to take', 'next Monday', "
+    "'tomorrow', 'next week', 'this Friday' -> 'reminder' with action 'set'\n"
+    "   - If the input mentions a future time reference AND an activity, it is a REMINDER, not a LOG.\n\n"
+    "Return ONLY valid JSON with no markdown fences.\n\n"
+    "Possible modes:\n"
+    '- {{"mode": "log", "pet_name": "<name or null>", "activity_type": "feeding|medication|walk|weight|vet_visit|grooming|other", "details": "<short description>", "value": null}}\n'
+    '- {{"mode": "lookup", "pet_name": "<name or null>", "query": "<the user\'s question>"}}\n'
+    '- {{"mode": "emergency_vet"}}\n'
+    '- {{"mode": "weather", "pet_name": "<name or null>"}}\n'
+    '- {{"mode": "food_recall"}}\n'
+    '- {{"mode": "edit_pet", "action": "add_pet|update_pet|change_vet|update_weight|remove_pet|clear_log|reset_all", "pet_name": "<name or null>", "details": "<what to change>"}}\n'
+    '- {{"mode": "reminder", "action": "set|list|delete", "pet_name": "<name or null>", "activity": "<feeding|medication|walk|other>", "time_description": "<raw time the user said>"}}\n'
+    '- {{"mode": "greeting"}}\n'
+    '- {{"mode": "exit"}}\n'
+    '- {{"mode": "unknown"}}\n\n'
+    "Rules:\n"
+    "- 'I fed', 'ate', 'breakfast', 'dinner', 'kibble', 'food' => log feeding\n"
+    "- 'medicine', 'medication', 'pill', 'flea', 'heartworm', 'dose' => log medication\n"
+    "- 'walk', 'walked', 'run', 'jog', 'hike' => log walk\n"
+    "- 'weighs', 'pounds', 'lbs', 'kilos', 'weight is' => log weight (extract numeric value)\n"
+    "- 'vet visit', 'went to vet', 'checkup' => log vet_visit\n"
+    "- 'groom', 'bath', 'nails', 'haircut' => log grooming\n"
+    "- 'when did', 'last time', 'how many', 'has had', 'check on', 'tell me about' => lookup\n"
+    "- 'emergency vet', 'find a vet', 'vet near me', 'need a vet' => emergency_vet\n"
+    "- 'safe outside', 'weather', 'too hot', 'too cold', 'can I walk', 'go outside' => weather\n"
+    "- 'food recall', 'recall check', 'food safe' => food_recall\n"
+    "- 'add a pet', 'new pet', 'update', 'change vet', 'edit pet' => edit_pet\n"
+    "- 'remove pet', 'delete pet' => edit_pet with action remove_pet\n"
+    "- 'clear log', 'clear activity log', 'delete all logs', 'clear history' => edit_pet with action clear_log\n"
+    "- 'start over', 'reset everything', 'delete everything', 'wipe all data', 'fresh start' => edit_pet with action reset_all\n"
+    "- 'what pets', 'do I have any pets', 'any animals', 'list my pets', 'how many pets' => lookup with query 'list registered pets'\n"
+    "- 'remind me', 'set a reminder', 'alert me' => reminder with action set\n"
+    "- 'my reminders', 'list reminders', 'what reminders' => reminder with action list\n"
+    "- 'delete reminder', 'cancel reminder', 'remove reminder' => reminder with action delete\n"
+    "- 'stop', 'done', 'quit', 'exit', 'bye' => exit\n"
+    "- Trigger phrases with no specific action ('pet care', 'hello', 'hey', 'hi') => greeting\n"
+    "- If only one pet exists and no name is mentioned, use that pet's name.\n"
+    "- If multiple pets and no name mentioned, set pet_name to null.\n\n"
+    "Examples:\n"
+    '"I just fed Luna" -> {{"mode": "log", "pet_name": "Luna", "activity_type": "feeding", "details": "fed", "value": null}}\n'
+    '"Luna weighs 48 pounds now" -> {{"mode": "log", "pet_name": "Luna", "activity_type": "weight", "details": "48 lbs", "value": 48}}\n'
+    '"When did I last feed Luna?" -> {{"mode": "lookup", "pet_name": "Luna", "query": "when was last feeding"}}\n'
+    '"Find an emergency vet" -> {{"mode": "emergency_vet"}}\n'
+    '"Is it safe for Luna outside?" -> {{"mode": "weather", "pet_name": "Luna"}}\n'
+    '"Any pet food recalls?" -> {{"mode": "food_recall"}}\n'
+    '"Start over" -> {{"mode": "edit_pet", "action": "reset_all", "pet_name": null, "details": "reset all data"}}\n'
+    '"Remind me to feed Luna in 2 hours" -> {{"mode": "reminder", "action": "set", "pet_name": "Luna", "activity": "feeding", "time_description": "in 2 hours"}}\n'
+    '"pet care" -> {{"mode": "greeting"}}\n'
+)
+
+
+def _strip_llm_fences(text):
+    text = text.strip()
+    text = re.sub(r"^```(?:json)?\s*", "", text)
+    text = re.sub(r"\s*```$", "", text)
+    return text.strip()
+
+
+class LLMService:
+    def __init__(self, capability_worker, worker, pet_data):
+        self.capability_worker = capability_worker
+        self.worker = worker
+        self.pet_data = pet_data
+
+    def classify_intent(self, user_input):
+        pet_names = [p["name"] for p in self.pet_data.get("pets", [])]
+        prompt_filled = _CLASSIFY_PROMPT.format(
+            pet_names=", ".join(pet_names) if pet_names else "none",
+        )
+        try:
+            raw = self.capability_worker.text_to_text_response(
+                f"User said: {user_input}", system_prompt=prompt_filled,
+            )
+            return json.loads(_strip_llm_fences(raw))
+        except (json.JSONDecodeError, Exception) as e:
+            self.worker.editor_logging_handler.error(f"[PetCare] Classification error: {e}")
+            return {"mode": "unknown"}
+
+    async def classify_intent_async(self, user_input):
+        return await asyncio.to_thread(self.classify_intent, user_input)
+
+    def extract_value(self, raw_input, instruction):
+        if not raw_input:
+            return ""
+        try:
+            result = self.capability_worker.text_to_text_response(
+                f"Input: {raw_input}", system_prompt=instruction,
+            )
+            return _strip_llm_fences(result).strip().strip('"')
+        except Exception:
+            return raw_input.strip()
+
+    async def extract_value_async(self, raw_input, instruction):
+        return await asyncio.to_thread(self.extract_value, raw_input, instruction)
+
+    async def extract_pet_name_async(self, raw_input):
+        return await self.extract_value_async(
+            raw_input, "Extract the pet's name from this. Return just the name."
+        )
+
+    async def extract_species_async(self, raw_input):
+        return await self.extract_value_async(
+            raw_input,
+            "Extract the animal species ONLY if it is explicitly mentioned in the text. "
+            "Return one word: dog, cat, bird, rabbit, hamster, etc. "
+            "If no species is clearly stated, return 'unknown'. "
+            "Do NOT guess from pet names or context.",
+        )
+
+    async def extract_breed_async(self, raw_input):
+        return await self.extract_value_async(
+            raw_input,
+            "Extract the breed name ONLY if explicitly mentioned in the text. "
+            "If they say mixed or don't know, return 'mixed'. "
+            "If no breed is mentioned at all, return 'unknown'. "
+            "Do NOT guess from pet names or context.",
+        )
+
+    async def extract_birthday_async(self, raw_input):
+        return await self.extract_value_async(
+            raw_input,
+            "Extract a birthday in YYYY-MM-DD format if possible. "
+            "If they give an age like '3 years old', calculate the approximate birthday "
+            f"from today ({datetime.now().strftime('%Y-%m-%d')}). "
+            "Return just the date string.",
+        )
+
+    async def extract_weight_async(self, raw_input):
+        return await self.extract_value_async(
+            raw_input,
+            "Extract the weight as a number in pounds. If they give kilos, convert to pounds. "
+            "Return just the number.",
+        )
+
+    async def extract_allergies_async(self, raw_input):
+        return await self.extract_value_async(
+            raw_input,
+            "Extract allergies as a JSON array of strings. "
+            'If none, return []. Example: ["chicken", "grain"]. Return only the array.',
+        )
+
+    async def extract_medications_async(self, raw_input):
+        return await self.extract_value_async(
+            raw_input,
+            "Extract medications as a JSON array of objects with 'name' and 'frequency' keys. "
+            'If none, return []. Example: [{"name": "Heartgard", "frequency": "monthly"}]. '
+            "Return only the array.",
+        )
+
+    async def extract_vet_name_async(self, raw_input):
+        return await self.extract_value_async(
+            raw_input, "Extract the veterinarian's name. Return just the name."
+        )
+
+    async def extract_phone_number_async(self, raw_input):
+        return await self.extract_value_async(
+            raw_input,
+            "Extract the phone number as digits only (e.g., 5125551234). Return just digits.",
+        )
+
+    async def extract_location_async(self, raw_input):
+        return await self.extract_value_async(
+            raw_input,
+            "Extract the city and state/country. Return in format 'City, State' or 'City, Country'.",
+        )
+
+    @staticmethod
+    def clean_input(text):
+        if not text:
+            return ""
+        cleaned = text.lower().strip()
+        cleaned = re.sub(r"[^\w\s']", "", cleaned)
+        return cleaned.strip()
+
+    def is_exit(self, text):
+        if not text:
+            return False
+        cleaned = self.clean_input(text)
+        if not cleaned:
+            return False
+        for phrase in _FORCE_EXIT_PHRASES:
+            if phrase in cleaned:
+                return True
+        words = cleaned.split()
+        for cmd in _EXIT_COMMANDS:
+            if cmd in words:
+                return True
+        for resp in _EXIT_RESPONSES:
+            if cleaned == resp:
+                return True
+            if cleaned.startswith(f"{resp} "):
+                return True
+        return False
+
+    def is_hard_exit(self, text: str) -> bool:
+        """Exit detection for mid-question contexts (Tier 1 + 2 only).
+
+        Use instead of is_exit() when 'no', 'done', 'thanks', etc. are valid
+        answers (e.g. onboarding). Only matches explicit abort/reset commands.
+        """
+        if not text:
+            return False
+        cleaned = self.clean_input(text)
+        if not cleaned:
+            return False
+        for phrase in _FORCE_EXIT_PHRASES:
+            if phrase in cleaned:
+                return True
+        words = cleaned.split()
+        for cmd in _EXIT_COMMANDS:
+            if cmd in words:
+                return True
+        reset_phrases = [
+            "start over",
+            "wanna start over",
+            "want to start over",
+            "start from scratch",
+            "restart",
+            "reset everything",
+            "start from beginning",
+        ]
+        return any(phrase in cleaned for phrase in reset_phrases)
+
+    def is_exit_llm(self, text):
+        try:
+            result = self.capability_worker.text_to_text_response(
+                "Does this message mean the user wants to END the conversation? "
+                "Reply with ONLY 'yes' or 'no'.\n\n"
+                f'Message: "{text}"'
+            )
+            return result.strip().lower().startswith("yes")
+        except Exception:
+            return False
+
+    async def is_exit_llm_async(self, text):
+        return await asyncio.to_thread(self.is_exit_llm, text)
+
+    def get_trigger_context(self):
+        initial_request = None
+        try:
+            initial_request = self.worker.transcription
+        except (AttributeError, Exception):
+            pass
+        if not initial_request:
+            try:
+                initial_request = self.worker.last_transcription
+            except (AttributeError, Exception):
+                pass
+        return initial_request.strip() if initial_request else ""
+
+
+# ===========================================================================
+# External API Service (unused directly — logic inlined in main capability)
+# ===========================================================================
+
+class ExternalAPIService:
+    def __init__(self, worker, serper_api_key=None):
+        self.worker = worker
+        self.serper_api_key = serper_api_key
 
 """Pet Care Assistant — voice-first ability for tracking pets' daily lives.
 
@@ -137,7 +562,7 @@ class PetCareAssistantCapability(MatchingCapability):
     """OpenHome ability for multi-pet care tracking with persistent storage,
     emergency vet finder, weather safety, and food recall checks."""
 
-    # {{register capability}}
+    #{{register capability}}
     worker: AgentWorker = None
     capability_worker: CapabilityWorker = None
     pet_data: dict = None
@@ -152,17 +577,6 @@ class PetCareAssistantCapability(MatchingCapability):
     reminders: list = None
     # Stash for a command embedded in a "no more pets" response during onboarding
     _pending_intent_text: str = None
-
-    @classmethod
-    def register_capability(cls) -> "MatchingCapability":
-        with open(
-            os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.json")
-        ) as file:
-            data = json.load(file)
-        return cls(
-            unique_name=data["unique_name"],
-            matching_hotwords=data["matching_hotwords"],
-        )
 
     def call(self, worker: AgentWorker):
         self.worker = worker

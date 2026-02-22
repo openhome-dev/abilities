@@ -17,7 +17,7 @@ class TestCleanInput:
 
     def test_removes_punctuation(self):
         """Should remove all punctuation except apostrophes."""
-        from llm_service import LLMService
+        from main import LLMService
 
         assert LLMService.clean_input("Stop!") == "stop"
         assert LLMService.clean_input("Done.") == "done"
@@ -26,7 +26,7 @@ class TestCleanInput:
 
     def test_preserves_apostrophes(self):
         """Should preserve apostrophes in contractions."""
-        from llm_service import LLMService
+        from main import LLMService
 
         assert LLMService.clean_input("I'm done") == "i'm done"
         assert LLMService.clean_input("That's it") == "that's it"
@@ -34,7 +34,7 @@ class TestCleanInput:
 
     def test_lowercases(self):
         """Should convert all text to lowercase."""
-        from llm_service import LLMService
+        from main import LLMService
 
         assert LLMService.clean_input("STOP") == "stop"
         assert LLMService.clean_input("Exit") == "exit"
@@ -42,20 +42,20 @@ class TestCleanInput:
 
     def test_empty_input(self):
         """Should handle empty strings."""
-        from llm_service import LLMService
+        from main import LLMService
 
         assert LLMService.clean_input("") == ""
 
     def test_whitespace_only(self):
         """Should handle whitespace-only input."""
-        from llm_service import LLMService
+        from main import LLMService
 
         assert LLMService.clean_input("   ") == ""
         assert LLMService.clean_input("\t\n") == ""
 
     def test_multiple_spaces(self):
         """Should normalize multiple spaces."""
-        from llm_service import LLMService
+        from main import LLMService
 
         # Regex will remove extra spaces when punctuation is removed
         result = LLMService.clean_input("no   thanks")
@@ -63,7 +63,7 @@ class TestCleanInput:
 
     def test_mixed_punctuation(self):
         """Should handle mixed punctuation."""
-        from llm_service import LLMService
+        from main import LLMService
 
         assert LLMService.clean_input("Done, thanks!!!") == "done thanks"
         assert LLMService.clean_input("I'm done.") == "i'm done"
@@ -300,7 +300,7 @@ class TestIsExitPropertyBased:
         """Should never crash regardless of input."""
         from unittest.mock import MagicMock
 
-        from llm_service import LLMService
+        from main import LLMService
         from main import PetCareAssistantCapability
 
         # Create capability with mocked dependencies inside test
@@ -321,7 +321,7 @@ class TestIsExitPropertyBased:
     @given(st.text(min_size=1, max_size=100))
     def test_clean_input_returns_string(self, text):
         """_clean_input should always return a string."""
-        from llm_service import LLMService
+        from main import LLMService
 
         result = LLMService.clean_input(text)
         assert isinstance(result, str)
@@ -331,7 +331,7 @@ class TestIsExitPropertyBased:
         """Exit detection should be deterministic (same input = same output)."""
         from unittest.mock import MagicMock
 
-        from llm_service import LLMService
+        from main import LLMService
         from main import PetCareAssistantCapability
 
         # Create capability with mocked dependencies inside test

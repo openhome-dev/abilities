@@ -71,11 +71,13 @@ def mock_capability_worker():
 @pytest.fixture
 def capability(mock_worker, mock_capability_worker):
     """Create a PetCareAssistantCapability instance with mocked dependencies."""
-    from activity_log_service import ActivityLogService
-    from external_api_service import ExternalAPIService
-    from llm_service import LLMService
-    from main import PetCareAssistantCapability
-    from pet_data_service import PetDataService
+    from main import (
+        ActivityLogService,
+        ExternalAPIService,
+        LLMService,
+        PetCareAssistantCapability,
+        PetDataService,
+    )
 
     cap = PetCareAssistantCapability(
         unique_name="test_pet_care", matching_hotwords=["pet care", "my pets"]

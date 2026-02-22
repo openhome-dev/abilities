@@ -16,43 +16,47 @@ A voice-first assistant for managing your pets' daily lives. Track feeding, medi
 
 ## Architecture
 
+All logic lives in a single `main.py` file, following the OpenHome Ability pattern.
+
 ```
                     User Voice Input
                           |
                     OpenHome STT
                           |
-                    ┌─────▼─────┐
-                    │  main.py  │  PetCareAssistantCapability
-                    │  (router) │
-                    └─────┬─────┘
-                          │
-          ┌───────────────┼───────────────┐
-          │               │               │
-    ┌─────▼──────┐  ┌─────▼──────┐  ┌────▼──────────┐
-    │ LLMService │  │PetDataSvc  │  │ActivityLogSvc │
-    │            │  │            │  │               │
-    │ - classify │  │ - load/save│  │ - add entry   │
-    │   intent   │  │   JSON     │  │ - filter/query│
-    │ - extract  │  │ - resolve  │  │ - enforce     │
-    │   values   │  │   pet name │  │   size limit  │
-    │ - is_exit  │  │ - fuzzy    │  │               │
-    │            │  │   match    │  └───────────────┘
-    └────────────┘  └────────────┘
-                          │
-                    ┌─────▼──────────┐
-                    │ExternalAPISvc  │
-                    │                │
-                    │ - Serper Maps  │──► google.serper.dev/maps
-                    │   (vet search) │
-                    │ - Open-Meteo   │──► api.open-meteo.com
-                    │   (weather)    │
-                    │ - openFDA      │──► api.fda.gov
-                    │   (recalls)    │
-                    │ - Serper News  │──► google.serper.dev/news
-                    │   (headlines)  │
-                    │ - ip-api.com   │──► ip-api.com
-                    │   (geolocation)│
-                    └────────────────┘
+                    ┌─────▼──────────────────────────────────────────┐
+                    │                   main.py                      │
+                    │                                                 │
+                    │  ┌─────────────────────────────────────────┐   │
+                    │  │       PetCareAssistantCapability         │   │
+                    │  │  - call() → session_tasks.create(run())  │   │
+                    │  │  - run() → intent router                 │   │
+                    │  │  - _handle_log / _handle_weather / etc.  │   │
+                    │  └─────────────────────────────────────────┘   │
+                    │                                                 │
+                    │  Helper classes (inlined):                      │
+                    │  ┌─────────────┐  ┌─────────────────────────┐  │
+                    │  │ LLMService  │  │     PetDataService       │  │
+                    │  │ - classify  │  │ - load/save JSON         │  │
+                    │  │   intent    │  │ - resolve pet name       │  │
+                    │  │ - extract   │  │ - fuzzy match            │  │
+                    │  │   values    │  └─────────────────────────┘  │
+                    │  │ - is_exit   │                                │
+                    │  └─────────────┘  ┌─────────────────────────┐  │
+                    │                   │   ActivityLogService     │  │
+                    │  ┌─────────────┐  │ - add entry             │  │
+                    │  │ExternalAPI  │  │ - filter/query          │  │
+                    │  │Service      │  │ - enforce size limit    │  │
+                    │  │ - weather   │  └─────────────────────────┘  │
+                    │  │ - vet search│                                │
+                    │  │ - recalls   │                                │
+                    │  │ - geocoding │                                │
+                    │  └─────────────┘                                │
+                    └─────────────────────────────────────────────────┘
+                                        │
+              ┌─────────────────────────┼──────────────────────────┐
+              ▼                         ▼                          ▼
+    google.serper.dev/maps     api.open-meteo.com           api.fda.gov
+    google.serper.dev/news     geocoding-api.open-meteo.com ip-api.com
 
     Persistent Storage (JSON files on OpenHome server):
     ┌──────────────────────┐  ┌────────────────────────┐  ┌──────────────────────┐
@@ -134,7 +138,7 @@ The emergency vet finder and food recall news headlines require a Serper API key
 
 1. Go to [serper.dev](https://serper.dev) and sign up
 2. Copy your API key (2,500 free queries included)
-3. Open `main.py` and find:
+3. At the top of `main.py`, find:
    ```python
    SERPER_API_KEY = "your_serper_api_key_here"
    ```
@@ -312,6 +316,9 @@ Wipe all data and start fresh with a new onboarding session.
 ---
 
 ## Technical Notes
+
+### Single-File Architecture
+All logic — including helper classes (`ActivityLogService`, `PetDataService`, `LLMService`, `ExternalAPIService`) — is inlined directly into `main.py`. This follows the OpenHome platform requirement that only `main.py` is loaded; sibling module imports are not supported.
 
 ### Parallel LLM Extraction
 Onboarding collects all raw user answers first (Phase 1), then extracts all values in a single `asyncio.gather()` call (Phase 2). This reduces onboarding from ~30 seconds to ~3-4 seconds.
