@@ -13,6 +13,7 @@ from src.main import AgentWorker
 # Activity Log Service
 # ===========================================================================
 
+
 class ActivityLogService:
     def __init__(self, worker, max_log_entries=500):
         self.worker = worker
@@ -447,6 +448,7 @@ class ExternalAPIService:
         self.worker = worker
         self.serper_api_key = serper_api_key
 
+
 """Pet Care Assistant — voice-first ability for tracking pets' daily lives.
 
 Stores pet profiles and activity logs, finds emergency vets, checks weather
@@ -562,7 +564,7 @@ class PetCareAssistantCapability(MatchingCapability):
     """OpenHome ability for multi-pet care tracking with persistent storage,
     emergency vet finder, weather safety, and food recall checks."""
 
-    #{{register capability}}
+    # {{register capability}}
     worker: AgentWorker = None
     capability_worker: CapabilityWorker = None
     pet_data: dict = None
