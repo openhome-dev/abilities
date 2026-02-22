@@ -4,6 +4,7 @@ import time
 import asyncio
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
+import re
 
 import requests
 
@@ -37,8 +38,42 @@ MIME_LABELS = {
 }
 
 EXIT_WORDS = {
-    "stop", "exit", "quit", "done", "cancel", "bye",
-    "never mind", "no thanks", "i'm good", "nope",
+    "stop",
+    "exit",
+    "quit",
+    "done",
+    "i'm done",
+    "im done",
+    "cancel",
+    "bye",
+    "never mind",
+    "no thanks",
+    "i'm good",
+    "im good",
+    "nope",
+}
+
+TUTORIAL_EXIT_WORDS = {
+    "stop",
+    "exit",
+    "quit",
+    "cancel",
+    "bye",
+    "never mind",
+}
+
+HELP_WORDS = {
+    "can't",
+    "cannot",
+    "dont",
+    "don't",
+    "where",
+    "help",
+    "confused",
+    "stuck",
+    "not sure",
+    "what",
+    "how",
 }
 
 
@@ -589,21 +624,16 @@ class GDriveVoiceManager(MatchingCapability):
     # =========================================================================
 
     def _is_exit(self, text: str) -> bool:
-        """Check if user input matches an exit phrase."""
         if not text:
             return False
 
-        lower = text.lower().strip()
+        normalized = text.lower().strip()
 
-        for word in EXIT_WORDS:
-            # Exact match
-            if lower == word:
-                return True
-            # Prefix match (e.g., "stop please")
-            if lower.startswith(word + " "):
-                return True
+        # Collapse punctuation to spaces
+        normalized = re.sub(r"[^\w\s']", " ", normalized)
+        normalized = " ".join(normalized.split())
 
-        return False
+        return normalized in EXIT_WORDS
 
     def _mime_label(self, mime_type: str) -> str:
         """Convert a MIME type string to a spoken label."""
@@ -740,12 +770,69 @@ class GDriveVoiceManager(MatchingCapability):
                     "Create a new project or pick an existing one."
                 )
                 await self.capability_worker.speak(
+                    "If you're creating a new project, make sure you click on the project "
+                    "to select it after creating it."
+                )
+                await self.capability_worker.speak(
+                    "Tell me when that's done."
+                )
+                while True:
+                    user_input = (await self.capability_worker.user_response() or "").lower().strip()
+
+                    # --- Exit handling ---
+                    if any(word in user_input for word in TUTORIAL_EXIT_WORDS):
+                        await self.capability_worker.speak(
+                            "No problem. We can finish setup later."
+                        )
+                        return False
+
+                    # --- Help handling ---
+                    if any(word in user_input for word in HELP_WORDS):
+                        await self.capability_worker.speak(
+                            "No worries. Look at the project picker at the top of the page "
+                            "If you're not seeing it, double check that you're at console "
+                            "dot google cloud dot com and you're signed in"
+                        )
+                        await self.capability_worker.speak(
+                            "Tell me when you're ready to continue."
+                        )
+                        continue
+
+                    # --- Default: treat as confirmation ---
+                    break
+                await self.capability_worker.speak(
                     "Step two. In the navigation menu on your left, "
                     "go to APIs and Services, then Library."
                 )
                 await self.capability_worker.speak(
                     "Search for Google Drive API and enable it."
                 )
+                await self.capability_worker.speak(
+                    "Tell me when that's done."
+                )
+                while True:
+                    user_input = (await self.capability_worker.user_response() or "").lower().strip()
+
+                    # --- Exit handling ---
+                    if any(word in user_input for word in TUTORIAL_EXIT_WORDS):
+                        await self.capability_worker.speak(
+                            "No problem. We can finish setup later."
+                        )
+                        return False
+
+                    # --- Help handling ---
+                    if any(word in user_input for word in HELP_WORDS):
+                        await self.capability_worker.speak(
+                            "No worries. Look at the left navigation menu. "
+                            "If you're not seeing it, try expanding the menu icon in the top left."
+                        )
+                        await self.capability_worker.speak(
+                            "Tell me when you're ready to continue."
+                        )
+                        continue
+
+                    # --- Default: treat as confirmation ---
+                    break
                 await self.capability_worker.speak(
                     "Step three. Go to APIs and Services, then Credentials. "
                     "Click Create Credentials and choose OAuth client ID."
@@ -761,6 +848,32 @@ class GDriveVoiceManager(MatchingCapability):
                     "Then click save."
                 )
                 await self.capability_worker.speak(
+                    "Tell me when that's done."
+                )
+                while True:
+                    user_input = (await self.capability_worker.user_response() or "").lower().strip()
+
+                    # --- Exit handling ---
+                    if any(word in user_input for word in TUTORIAL_EXIT_WORDS):
+                        await self.capability_worker.speak(
+                            "No problem. We can finish setup later."
+                        )
+                        return False
+
+                    # --- Help handling ---
+                    if any(word in user_input for word in HELP_WORDS):
+                        await self.capability_worker.speak(
+                            "No worries. Look at the left navigation menu. "
+                            "If you're not seeing it, try expanding the menu icon in the top left."
+                        )
+                        await self.capability_worker.speak(
+                            "Tell me when you're ready to continue."
+                        )
+                        continue
+
+                    # --- Default: treat as confirmation ---
+                    break
+                await self.capability_worker.speak(
                     "Open the navigation menu again."
                 )
                 await self.capability_worker.speak(
@@ -773,8 +886,38 @@ class GDriveVoiceManager(MatchingCapability):
                     "Add your email as a test user."
                 )
                 await self.capability_worker.speak(
-                    "Step four. Create the OAuth client. Choose Desktop App "
-                    "as the type."
+                    "Tell me when that's done."
+                )
+                while True:
+                    user_input = (await self.capability_worker.user_response() or "").lower().strip()
+
+                    # --- Exit handling ---
+                    if any(word in user_input for word in TUTORIAL_EXIT_WORDS):
+                        await self.capability_worker.speak(
+                            "No problem. We can finish setup later."
+                        )
+                        return False
+
+                    # --- Help handling ---
+                    if any(word in user_input for word in HELP_WORDS):
+                        await self.capability_worker.speak(
+                            "No worries. Look at the left navigation menu. "
+                            "If you're not seeing it, try expanding the menu icon in the top left."
+                        )
+                        await self.capability_worker.speak(
+                            "If you can't find the Audience button, look below the button"
+                            "that expands the navigation menu"
+                        )
+                        await self.capability_worker.speak(
+                            "Tell me when you're ready to continue."
+                        )
+                        continue
+
+                    # --- Default: treat as confirmation ---
+                    break
+                await self.capability_worker.speak(
+                    "Step four. Click on clients on the left side of your screen. Then click "
+                    "create client at the top. Choose Desktop App as the type."
                 )
                 await self.capability_worker.speak(
                     "Name it whatever you like."
@@ -794,7 +937,7 @@ class GDriveVoiceManager(MatchingCapability):
                 "When you have your Client ID, paste it here."
             )
 
-            client_id = await self.capability_worker.wait_for_complete_transcription()
+            client_id = await self.capability_worker.user_response()
 
             if not client_id or not client_id.strip():
                 await self.capability_worker.speak(
@@ -1029,6 +1172,19 @@ class GDriveVoiceManager(MatchingCapability):
     # Token Management
     # =========================================================================
 
+    async def _invalidate_tokens(self):
+        """
+        Clear stored OAuth tokens when refresh_token is invalid.
+        Forces full OAuth re-auth next run.
+        """
+        self._log("Invalidating stored OAuth tokens.")
+
+        self.prefs.pop("access_token", None)
+        self.prefs.pop("refresh_token", None)
+        self.prefs.pop("token_expires_at", None)
+
+        await self.save_prefs()
+
     async def refresh_access_token(self) -> bool:
         """
         Refresh the access token using the stored refresh_token.
@@ -1071,13 +1227,21 @@ class GDriveVoiceManager(MatchingCapability):
                 except Exception:
                     error_data = {}
 
-                if error_data.get("error") == "invalid_grant":
-                    self._log_err("Refresh token invalid (invalid_grant).")
-                else:
-                    self._log_err(
-                        f"Token refresh failed: {response.status_code} "
-                        f"{response.text[:300]}"
-                    )
+                error_code = error_data.get("error")
+
+                if error_code in ("invalid_grant", "invalid_client"):
+                    self._log_err(f"Refresh failed ({error_code}). Invalidating tokens.")
+
+                    # Clear stored tokens so OAuth gate triggers
+                    await self._invalidate_tokens()
+
+                    return False
+
+                # Non-invalid_grant/non-invalid_client error
+                self._log_err(
+                    f"Token refresh failed: {response.status_code} "
+                    f"{response.text[:300]}"
+                )
                 return False
 
             token_data = response.json()
@@ -1152,6 +1316,12 @@ class GDriveVoiceManager(MatchingCapability):
                 refreshed = await self.refresh_access_token()
                 if not refreshed:
                     self._log_err("Token refresh failed before request.")
+
+                    await self.capability_worker.speak(
+                        "Your Google authorization has expired. "
+                        "I'll need to reconnect your Drive."
+                    )
+
                     return None
 
             access_token = self.prefs.get("access_token")
@@ -1215,6 +1385,12 @@ class GDriveVoiceManager(MatchingCapability):
                 refreshed = await self.refresh_access_token()
                 if not refreshed:
                     self._log_err("Token refresh failed after 401.")
+
+                    await self.capability_worker.speak(
+                        "Your Google authorization has expired. "
+                        "I'll need to reconnect your Drive."
+                    )
+
                     return None
 
                 access_token = self.prefs.get("access_token")
@@ -1229,6 +1405,31 @@ class GDriveVoiceManager(MatchingCapability):
                     data=data,
                     timeout=10,
                 )
+
+            # -------------------------------------------------------------
+            # Conservative 403 handling (AFTER 401 logic)
+            # -------------------------------------------------------------
+            if response.status_code == 403:
+                try:
+                    error_payload = response.json().get("error", {})
+                    message = error_payload.get("message", "").lower()
+                except Exception:
+                    message = ""
+
+                # Only invalidate if clearly an authentication scope issue
+                if "authentication scopes" in message:
+                    self._log_err(
+                        "403 due to insufficient authentication scopes."
+                    )
+
+                    await self._invalidate_tokens()
+
+                    await self.capability_worker.speak(
+                        "Your Google authorization is no longer valid. "
+                        "I'll need to reconnect your Drive."
+                    )
+
+                    return None
 
             return response
 
