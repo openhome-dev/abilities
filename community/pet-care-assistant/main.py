@@ -33,7 +33,7 @@ class ActivityLogService:
         activity_log.append(entry)
         if len(activity_log) > self.max_log_entries:
             removed = len(activity_log) - self.max_log_entries
-            activity_log = activity_log[-self.max_log_entries :]
+            activity_log = activity_log[-self.max_log_entries:]
             self.worker.editor_logging_handler.warning(
                 f"[PetCare] Activity log size limit reached. Removed {removed} old entries."
             )
@@ -584,7 +584,7 @@ def _fmt_phone_for_speech(phone: str) -> str:
             f"{', '.join(digits[7:])}"
         )
     elif 7 <= len(digits) <= 15:
-        groups = [digits[i : i + 3] for i in range(0, len(digits), 3)]
+        groups = [digits[i: i + 3] for i in range(0, len(digits), 3)]
         return ", ".join(", ".join(group) for group in groups)
     elif len(digits) < 7:
         return "incomplete phone number"
