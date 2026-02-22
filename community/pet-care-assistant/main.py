@@ -19,7 +19,9 @@ class ActivityLogService:
         self.worker = worker
         self.max_log_entries = max_log_entries
 
-    def add_activity(self, activity_log, pet_name, activity_type, details="", value=None):
+    def add_activity(
+        self, activity_log, pet_name, activity_type, details="", value=None
+    ):
         entry = {
             "pet_name": pet_name,
             "type": activity_type,
@@ -31,13 +33,15 @@ class ActivityLogService:
         activity_log.append(entry)
         if len(activity_log) > self.max_log_entries:
             removed = len(activity_log) - self.max_log_entries
-            activity_log = activity_log[-self.max_log_entries:]
+            activity_log = activity_log[-self.max_log_entries :]
             self.worker.editor_logging_handler.warning(
                 f"[PetCare] Activity log size limit reached. Removed {removed} old entries."
             )
         return activity_log
 
-    def get_recent_activities(self, activity_log, pet_name=None, activity_type=None, limit=10):
+    def get_recent_activities(
+        self, activity_log, pet_name=None, activity_type=None, limit=10
+    ):
         filtered = activity_log
         if pet_name:
             filtered = [a for a in filtered if a.get("pet_name") == pet_name]
@@ -49,6 +53,7 @@ class ActivityLogService:
 # ===========================================================================
 # Pet Data Service
 # ===========================================================================
+
 
 class PetDataService:
     def __init__(self, capability_worker, worker):
@@ -76,7 +81,9 @@ class PetDataService:
                     self.worker.editor_logging_handler.info(
                         f"[PetCare] Recovered {filename} from backup."
                     )
-                    await self.capability_worker.write_file(filename, json.dumps(data), False)
+                    await self.capability_worker.write_file(
+                        filename, json.dumps(data), False
+                    )
                     await self.capability_worker.delete_file(backup_filename, False)
                     return data
             except (json.JSONDecodeError, Exception) as e:
@@ -97,7 +104,9 @@ class PetDataService:
                 )
                 await self.capability_worker.delete_file(filename, False)
             await self.capability_worker.write_file(filename, json.dumps(data), False)
-            if await self.capability_worker.check_if_file_exists(backup_filename, False):
+            if await self.capability_worker.check_if_file_exists(
+                backup_filename, False
+            ):
                 await self.capability_worker.delete_file(backup_filename, False)
                 self.worker.editor_logging_handler.info(
                     f"[PetCare] Successfully saved {filename}, backup cleaned up"
@@ -106,7 +115,9 @@ class PetDataService:
             self.worker.editor_logging_handler.error(
                 f"[PetCare] Failed to save {filename}: {e}"
             )
-            if await self.capability_worker.check_if_file_exists(backup_filename, False):
+            if await self.capability_worker.check_if_file_exists(
+                backup_filename, False
+            ):
                 self.worker.editor_logging_handler.warning(
                     f"[PetCare] Backup file {backup_filename} retained for recovery"
                 )
@@ -124,7 +135,9 @@ class PetDataService:
                 if p["name"].lower() == name_lower:
                     return p
             for p in pets:
-                if p["name"].lower().startswith(name_lower) or name_lower.startswith(p["name"].lower()):
+                if p["name"].lower().startswith(name_lower) or name_lower.startswith(
+                    p["name"].lower()
+                ):
                     return p
         return pets[0]
 
@@ -141,7 +154,9 @@ class PetDataService:
                 if p["name"].lower() == name_lower:
                     return p
             for p in pets:
-                if p["name"].lower().startswith(name_lower) or name_lower.startswith(p["name"].lower()):
+                if p["name"].lower().startswith(name_lower) or name_lower.startswith(
+                    p["name"].lower()
+                ):
                     return p
         names = " or ".join(p["name"] for p in pets)
         await self.capability_worker.speak(f"Which pet? {names}?")
@@ -165,9 +180,21 @@ _FORCE_EXIT_PHRASES = [
 _EXIT_COMMANDS = ["exit", "stop", "quit", "cancel"]
 
 _EXIT_RESPONSES = [
-    "no", "nope", "done", "bye", "goodbye", "thanks", "thank you",
-    "no thanks", "nothing else", "all good", "i'm good", "that's all",
-    "that's it", "i'm done", "we're done",
+    "no",
+    "nope",
+    "done",
+    "bye",
+    "goodbye",
+    "thanks",
+    "thank you",
+    "no thanks",
+    "nothing else",
+    "all good",
+    "i'm good",
+    "that's all",
+    "that's it",
+    "i'm done",
+    "we're done",
 ]
 
 _CLASSIFY_PROMPT = (
@@ -259,11 +286,14 @@ class LLMService:
         )
         try:
             raw = self.capability_worker.text_to_text_response(
-                f"User said: {user_input}", system_prompt=prompt_filled,
+                f"User said: {user_input}",
+                system_prompt=prompt_filled,
             )
             return json.loads(_strip_llm_fences(raw))
         except (json.JSONDecodeError, Exception) as e:
-            self.worker.editor_logging_handler.error(f"[PetCare] Classification error: {e}")
+            self.worker.editor_logging_handler.error(
+                f"[PetCare] Classification error: {e}"
+            )
             return {"mode": "unknown"}
 
     async def classify_intent_async(self, user_input):
@@ -274,7 +304,8 @@ class LLMService:
             return ""
         try:
             result = self.capability_worker.text_to_text_response(
-                f"Input: {raw_input}", system_prompt=instruction,
+                f"Input: {raw_input}",
+                system_prompt=instruction,
             )
             return _strip_llm_fences(result).strip().strip('"')
         except Exception:
@@ -443,6 +474,7 @@ class LLMService:
 # External API Service (unused directly — logic inlined in main capability)
 # ===========================================================================
 
+
 class ExternalAPIService:
     def __init__(self, worker, serper_api_key=None):
         self.worker = worker
@@ -552,7 +584,7 @@ def _fmt_phone_for_speech(phone: str) -> str:
             f"{', '.join(digits[7:])}"
         )
     elif 7 <= len(digits) <= 15:
-        groups = [digits[i: i + 3] for i in range(0, len(digits), 3)]
+        groups = [digits[i : i + 3] for i in range(0, len(digits), 3)]
         return ", ".join(", ".join(group) for group in groups)
     elif len(digits) < 7:
         return "incomplete phone number"
@@ -1445,21 +1477,25 @@ class PetCareAssistantCapability(MatchingCapability):
             if vet_input is None:
                 return None  # User wants to abort/restart
 
-            def _is_skip(v): return any(
-                w in v.lower() for w in ["no", "nope", "skip", "don't", "none"]
-            )
+            def _is_skip(v):
+                return any(
+                    w in v.lower() for w in ["no", "nope", "skip", "don't", "none"]
+                )
+
             # Affirmative without a name ("yes", "yeah", "sure") → ask for the name
 
-            def _is_affirmative(v): return v.lower().strip().rstrip(".!?") in {
-                "yes",
-                "yeah",
-                "yep",
-                "yup",
-                "sure",
-                "yea",
-                "uh huh",
-                "uh-huh",
-            }
+            def _is_affirmative(v):
+                return v.lower().strip().rstrip(".!?") in {
+                    "yes",
+                    "yeah",
+                    "yep",
+                    "yup",
+                    "sure",
+                    "yea",
+                    "uh huh",
+                    "uh-huh",
+                }
+
             if vet_input and _is_affirmative(vet_input):
                 vet_input = await self.capability_worker.run_io_loop(
                     "What's their name?"
