@@ -1,9 +1,11 @@
 import json
+import os
 import re
 from typing import Dict, List, Optional
 
 import requests
 from src.agent.capability import MatchingCapability
+from src.agent.capability_worker import CapabilityWorker
 from src.main import AgentWorker
 
 POLYMARKET_GAMMA_URL = "https://gamma-api.polymarket.com/markets"
