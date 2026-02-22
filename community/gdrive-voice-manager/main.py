@@ -1,5 +1,4 @@
 import json
-import os
 import time
 import asyncio
 from datetime import datetime, timezone
@@ -86,7 +85,7 @@ class GDriveVoiceManager(MatchingCapability):
     # Registration
     # =========================================================================
 
-    #{{register capability}}
+    # {{register capability}}
 
     # =========================================================================
     # Entry Point
