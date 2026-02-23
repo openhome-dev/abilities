@@ -525,7 +525,7 @@ class DiscordConnectorCapability(MatchingCapability):
             )
         else:
             await self.capability_worker.speak(
-                f"I couldn't find a channel matching that. "
+                "I couldn't find a channel matching that. "
                 "Say 'list channels' to see what's available."
             )
 
