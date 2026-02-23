@@ -32,7 +32,7 @@ class CodexTaskRunnerCapability(MatchingCapability):
     worker: AgentWorker = None
     capability_worker: CapabilityWorker = None
 
-    # {{register capability}}
+    #{{register capability}}
 
     def call(self, worker: AgentWorker):
         """OpenHome SDK hook; starts async ability flow."""
