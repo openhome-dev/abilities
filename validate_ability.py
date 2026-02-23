@@ -7,11 +7,16 @@ Usage:
     python validate_ability.py official/weather/
 
 Checks:
-    - Required files exist (main.py, README.md)
+    - Required files exist (main.py, README.md, __init__.py)
+    - Folder name uses only hyphens (no underscores or spaces)
     - main.py follows SDK patterns
+    - #{{register capability}} tag is present
     - No blocked imports or patterns
     - resume_normal_flow() is called
     - No print() statements
+    - No raw open() calls
+    - No assert statements
+    - No weak hashes (MD5)
 
 Exit codes:
     0 = All checks passed
@@ -46,13 +51,17 @@ BLOCKED_PATTERNS = [
     (r"\bdill\.", "dill is not allowed for security reasons"),
     (r"\bshelve\.", "shelve is not allowed for security reasons"),
     (r"\bmarshal\.", "marshal is not allowed for security reasons"),
+    (r"\bopen\s*\(", "raw open() is not allowed — use capability_worker file helpers (read_file, write_file, etc.) instead"),
+    (r"\bassert\s+", "assert statements are not allowed — use proper error handling instead"),
+    (r"\bhashlib\.md5\s*\(", "MD5 is a weak hash and not allowed — use a stronger algorithm like SHA-256"),
 ]
 
 REQUIRED_PATTERNS = [
     (r"resume_normal_flow\s*\(", "resume_normal_flow() must be called — without it, the Personality gets stuck"),
     (r"class\s+\w+.*MatchingCapability", "Class must extend MatchingCapability"),
-    (r"def\s+register_capability", "Must have a register_capability() classmethod"),
     (r"def\s+call\s*\(", "Must have a call() method"),
+    (r"worker\s*:\s*AgentWorker\s*=\s*None", "Must declare 'worker: AgentWorker = None' as a class attribute"),
+    (r"capability_worker\s*:\s*CapabilityWorker\s*=\s*None", "Must declare 'capability_worker: CapabilityWorker = None' as a class attribute"),
 ]
 
 
@@ -80,6 +89,18 @@ def validate_ability(path: str) -> ValidationResult:
     result = ValidationResult()
     path = path.rstrip("/")
 
+    # --- Check folder name format (community folders only) ---
+    folder_name = os.path.basename(path)
+    parent_dir = os.path.basename(os.path.dirname(os.path.abspath(path)))
+
+    if parent_dir == "community":
+        if re.search(r'[_ ]', folder_name):
+            suggested = re.sub(r'[_ ]+', '-', folder_name)
+            result.error(
+                f"Folder name '{folder_name}' contains underscores or spaces — "
+                f"only hyphens (-) are allowed. Rename to: '{suggested}'"
+            )
+
     # --- Check required files ---
     for f in REQUIRED_FILES:
         if not os.path.isfile(os.path.join(path, f)):
@@ -105,6 +126,18 @@ def validate_ability(path: str) -> ValidationResult:
         for pattern, msg in REQUIRED_PATTERNS:
             if not re.search(pattern, code):
                 result.error(msg)
+
+        # ----------------------------------------------------------
+        # Check for register capability tag
+        # ----------------------------------------------------------
+        has_register_tag = bool(re.search(r"#\{\{register capability\}\}", code))
+
+        if not has_register_tag:
+            result.error(
+                "Missing register capability tag — add the following line to your class:\n"
+                "    #{{register capability}}\n"
+                "See: https://docs.openhome.com/how_to_build_an_ability"
+            )
 
         # Check for hardcoded API keys (common patterns)
         key_patterns = [
@@ -136,12 +169,17 @@ def main():
 
     paths = sys.argv[1:]
     all_passed = True
+    output_lines = []
 
     for path in paths:
-        print(f"\n📋 Validating: {path}")
+        header = f"\n📋 Validating: {path}"
+        print(header)
+        output_lines.append(header)
 
         if not os.path.isdir(path):
-            print(f"  ❌ Not a directory: {path}")
+            msg = f"  ❌ Not a directory: {path}"
+            print(msg)
+            output_lines.append(msg)
             all_passed = False
             continue
 
@@ -150,15 +188,37 @@ def main():
         if result.errors:
             for e in result.errors:
                 print(e)
+                output_lines.append(e)
         if result.warnings:
             for w in result.warnings:
                 print(w)
+                output_lines.append(w)
 
         if result.passed:
-            print("  ✅ All checks passed!")
+            msg = "  ✅ All checks passed!"
+            print(msg)
+            output_lines.append(msg)
         else:
             all_passed = False
-            print(f"  ❌ {len(result.errors)} error(s) found")
+            msg = f"  ❌ {len(result.errors)} error(s) found"
+            print(msg)
+            output_lines.append(msg)
+
+    # --- Write output for PR comment ---
+    summary_file = os.environ.get("GITHUB_STEP_SUMMARY", "")
+    output_file = os.environ.get("VALIDATION_OUTPUT", "validation_output.txt")
+
+    full_output = "\n".join(output_lines)
+
+    with open(output_file, "w") as f:
+        f.write(full_output)
+
+    if summary_file:
+        with open(summary_file, "a") as f:
+            f.write("## 🔍 Ability Validation Results\n\n")
+            f.write("```\n")
+            f.write(full_output)
+            f.write("\n```\n")
 
     sys.exit(0 if all_passed else 1)
 
