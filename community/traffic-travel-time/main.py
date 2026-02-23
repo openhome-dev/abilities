@@ -1,5 +1,4 @@
 import json
-import os
 import re
 from datetime import datetime, timedelta
 from typing import Optional
@@ -31,7 +30,7 @@ from src.main import AgentWorker
 
 PREFS_FILE = "traffic_prefs.json"
 
-GOOGLE_MAPS_API_KEY = os.environ.get("GOOGLE_MAPS_API_KEY", "")
+GOOGLE_MAPS_API_KEY = ""
 
 ROUTES_API_URL = "https://routes.googleapis.com/directions/v2:computeRoutes"
 DISTANCE_MATRIX_URL = "https://maps.googleapis.com/maps/api/distancematrix/json"
