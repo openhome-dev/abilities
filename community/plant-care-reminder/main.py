@@ -1,5 +1,4 @@
 import json
-import os
 import re
 import uuid
 from datetime import datetime
@@ -80,7 +79,7 @@ class PlantCareReminderCapability(MatchingCapability):
     capability_worker: CapabilityWorker = None
 
     # Do not change following tag of register capability
-    #{{register capability}}
+    # {{register capability}}
 
     def call(self, worker: AgentWorker):
         self.worker = worker
@@ -442,7 +441,7 @@ class PlantCareReminderCapability(MatchingCapability):
 
     def _get_overdue_plants(self) -> list:
         overdue = []
-        today = datetime.now()
+        datetime.now()
         for p in self.plant_data.get("plants", []):
             if self._days_until_water(p) <= 0:
                 overdue.append(p)
