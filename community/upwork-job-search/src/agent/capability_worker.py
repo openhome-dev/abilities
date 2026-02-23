@@ -1,9 +1,8 @@
 # Mock SDK - CapabilityWorker module
-from typing import Optional, Any
 
 class CapabilityWorker:
     """Mock CapabilityWorker class for local development"""
-    
+
     def __init__(self, worker):
         self.worker = worker
 

@@ -3,15 +3,15 @@
 Automated tests for the Upwork Job Search ability (Remotive API backend).
 Covers: imports, _clean_html, search_jobs (live API), format_job_for_speech.
 """
+from main import UpworkJobSearchCapability
+from src.agent.capability_worker import CapabilityWorker
+from src.main import AgentWorker
 import asyncio
 import sys
 import os
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from src.main import AgentWorker
-from src.agent.capability_worker import CapabilityWorker
-from main import UpworkJobSearchCapability
 
 PASS = "\033[92mPASS\033[0m"
 FAIL = "\033[91mFAIL\033[0m"

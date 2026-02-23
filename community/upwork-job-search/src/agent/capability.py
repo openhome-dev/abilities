@@ -1,5 +1,4 @@
 # Mock SDK - Capability module
-from typing import Optional
 
 class MatchingCapability:
     """Mock base class for MatchingCapability"""
