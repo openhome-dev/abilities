@@ -2,7 +2,7 @@ import json
 import os
 import re
 import requests
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 from src.agent.capability import MatchingCapability
 from src.main import AgentWorker
@@ -25,6 +25,7 @@ LATE_NIGHT_CUTOFF = 4
 # =============================================================================
 # TIMEZONE / DATE HELPERS
 # =============================================================================
+
 
 def get_local_now() -> datetime:
     return datetime.now(LOCAL_TZ)
@@ -107,6 +108,7 @@ def get_today_context() -> dict:
 # =============================================================================
 # LLM PROMPTS
 # =============================================================================
+
 
 # Behavioral context injected into extraction prompts so the LLM understands
 # relative time phrases ("this afternoon", "tonight", "this evening") correctly.
