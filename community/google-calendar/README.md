@@ -51,8 +51,8 @@ Two formats are supported:
 
 ```json
 {
-  "Melody": "melody@example.com",
-  "Chris": "chris@example.com"
+  "Dude": "dude@example.com",
+  "Buddy": "buddy@example.com"
 }
 ```
 
@@ -60,13 +60,9 @@ Two formats are supported:
 
 ```json
 {
-  "Vaughn": {
-    "email": "vaughn@example.com",
-    "aliases": ["Von", "Vonne", "Bon"]
-  },
-  "Ju": {
-    "email": "ju@example.com",
-    "aliases": ["Joo", "Drew"]
+  "Friend": {
+    "email": "friend@example.com",
+    "aliases": ["Fren", "Frind", "Fred"]
   }
 }
 ```
