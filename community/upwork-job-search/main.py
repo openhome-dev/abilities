@@ -1,45 +1,34 @@
 import json
 import os
-import requests
+import re
+from typing import Optional, List
+from urllib.parse import urlencode
+
+import httpx
+
 from src.agent.capability import MatchingCapability
 from src.main import AgentWorker
 from src.agent.capability_worker import CapabilityWorker
 
-# =============================================================================
-# UPWORK JOB SEARCH ABILITY
-# Search for freelance jobs on Upwork using the Upwork GraphQL API
-# Pattern: Speak → Ask for search query → Call API → Speak results → Exit
-#
-# Requires OAuth 2.0 authentication with Upwork API
-# =============================================================================
-
-# --- CONFIGURATION ---
-# Get these from https://developers.upwork.com/
-# Replace with your Upwork API credentials
-UPWORK_CLIENT_KEY = "YOUR_UPWORK_CLIENT_KEY"
-UPWORK_CLIENT_SECRET = "YOUR_UPWORK_CLIENT_SECRET"
-
-# Upwork API endpoints
-UPWORK_AUTH_URL = "https://www.upwork.com/api/v3/oauth2/token"
-UPWORK_GRAPHQL_URL = "https://api.upwork.com/graphql/v2"
+# Remotive public API — free, no authentication required
+REMOTIVE_API_URL = "https://remotive.com/api/remote-jobs"
 
 
 class UpworkJobSearchCapability(MatchingCapability):
-    #{{register capability}}
     worker: AgentWorker = None
     capability_worker: CapabilityWorker = None
-    access_token: str = None
+
+    # ---------------- REGISTER ----------------
 
     @classmethod
     def register_capability(cls) -> "MatchingCapability":
-        from src.agent.capability_worker import CapabilityWorker
-        capability_worker = CapabilityWorker(None)  # pass None if worker not available yet
-        config_str = capability_worker.read_file("config.json")
-        data = json.loads(config_str)
+        with open(
+            os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.json")
+        ) as file:
+            data = json.load(file)
 
-        #{{register capability}}
         return cls(
-            unique_name=data['unique_name'],
+            unique_name=data["unique_name"],
             matching_hotwords=data["matching_hotwords"],
         )
 
@@ -48,220 +37,155 @@ class UpworkJobSearchCapability(MatchingCapability):
         self.capability_worker = CapabilityWorker(self.worker)
         self.worker.session_tasks.create(self.run())
 
-    async def get_access_token(self) -> bool:
-        """
-        Get OAuth access token.
-        In production, this would use proper OAuth flow.
-        For this ability, users need to provide their own credentials.
+    # ---------------- HELPERS ----------------
+
+    def _clean_html(self, text: str) -> str:
+        """Strip HTML tags and decode common HTML entities."""
+        # Replace block-level tags with a space so adjacent words don't merge
+        text = re.sub(r"<(br|p|div|li|tr|td|th|h[1-6])[^>]*>", " ", text, flags=re.IGNORECASE)
+        # Strip remaining tags
+        text = re.sub(r"<[^>]+>", "", text)
+        # Decode common HTML entities
+        text = text.replace("&nbsp;", " ")
+        text = text.replace("&amp;", "&")
+        text = text.replace("&lt;", "<")
+        text = text.replace("&gt;", ">")
+        text = text.replace("&quot;", '"')
+        text = text.replace("&#39;", "'")
+        # Collapse whitespace
+        text = re.sub(r"\s+", " ", text)
+        return text.strip()
+
+    # ---------------- SEARCH ----------------
+
+    async def _fetch_jobs_for_query(self, client: httpx.AsyncClient, query: str) -> list:
+        """Single HTTP call to Remotive; returns raw job list (may be empty)."""
+        url = f"{REMOTIVE_API_URL}?{urlencode({'search': query, 'limit': 5})}"
+        response = await client.get(
+            url,
+            headers={
+                "User-Agent": (
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                    "AppleWebKit/537.36 (KHTML, like Gecko) "
+                    "Chrome/120.0.0.0 Safari/537.36"
+                ),
+                "Accept": "application/json",
+            },
+        )
+        if response.status_code != 200:
+            self.worker.editor_logging_handler.error(
+                f"[UpworkJobSearch] HTTP {response.status_code}: {response.text[:200]}"
+            )
+            return []
+        return response.json().get("jobs", [])
+
+    async def search_jobs(self, query: str) -> Optional[List[dict]]:
+        """Fetch the top 5 remote jobs matching the query from the Remotive API.
+
+        Tries the full phrase first; if no results are returned, retries with
+        just the most significant keyword (first word) as a fallback.
         """
         try:
-            # Create Basic auth header from client key and secret
-            auth = (UPWORK_CLIENT_KEY, UPWORK_CLIENT_SECRET)
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                raw_jobs = await self._fetch_jobs_for_query(client, query)
 
-            # Request new token (in production, you'd cache this)
-            response = requests.post(
-                UPWORK_AUTH_URL,
-                data={"grant_type": "client_credentials"},
-                auth=auth,
-                timeout=30
-            )
+                # Fallback: retry with only the first keyword when the full phrase
+                # yields nothing (Remotive does phrase-level matching).
+                if not raw_jobs:
+                    first_keyword = query.strip().split()[0] if query.strip() else ""
+                    if first_keyword and first_keyword.lower() != query.strip().lower():
+                        raw_jobs = await self._fetch_jobs_for_query(client, first_keyword)
 
-            if response.status_code == 200:
-                data = response.json()
-                self.access_token = data.get("access_token")
-                return True
-            else:
-                self.worker.editor_logging_handler.error(
-                    f"[UpworkJobSearch] Auth failed: {response.status_code} - {response.text}"
+            if not raw_jobs:
+                return None
+
+            jobs = []
+            for item in raw_jobs[:5]:
+                description = self._clean_html(item.get("description", ""))
+                if len(description) > 300:
+                    description = description[:300] + "..."
+
+                jobs.append(
+                    {
+                        "title": item.get("title", "Untitled"),
+                        "company": item.get("company_name", "Unknown company"),
+                        "description": description,
+                        "link": item.get("url", ""),
+                        "pub_date": item.get("publication_date", ""),
+                        "salary": item.get("salary", "Not specified"),
+                        "location": item.get("candidate_required_location", "Remote"),
+                        "job_type": item.get("job_type", ""),
+                    }
                 )
-                return False
+
+            return jobs
 
         except Exception as e:
             self.worker.editor_logging_handler.error(
-                f"[UpworkJobSearch] Auth error: {e}"
+                f"[UpworkJobSearch] Network error: {e}"
             )
-            return False
-
-    async def search_jobs(self, query: str, category: str = None) -> list | None:
-        """
-        Search for jobs using Upwork GraphQL API.
-        Returns list of jobs or None on failure.
-        """
-        if not self.access_token:
-            success = await self.get_access_token()
-            if not success:
-                return None
-
-        # GraphQL query for job search
-        graphql_query = {
-            "query": """
-            query JobSearch($query: String!, $first: Int!) {
-                jobSearch(query: $query, first: $first) {
-                    edges {
-                        node {
-                            title
-                            description
-                            skills
-                            budget {
-                                amount
-                                currency
-                            }
-                            duration
-                            workload
-                            client {
-                                feedback
-                                reviewsCount
-                                location {
-                                    country
-                                }
-                            }
-                            postedAt
-                        }
-                    }
-                }
-            }
-            """,
-            "variables": {
-                "query": query,
-                "first": 5  # Return top 5 results for voice response
-            }
-        }
-
-        try:
-            response = requests.post(
-                UPWORK_GRAPHQL_URL,
-                headers={
-                    "Authorization": f"Bearer {self.access_token}",
-                    "Content-Type": "application/json"
-                },
-                json=graphql_query,
-                timeout=30
-            )
-
-            if response.status_code == 200:
-                data = response.json()
-
-                # Parse the GraphQL response
-                jobs = []
-                edges = data.get("data", {}).get("jobSearch", {}).get("edges", [])
-
-                for edge in edges:
-                    job = edge.get("node", {})
-                    jobs.append({
-                        "title": job.get("title", "Untitled"),
-                        "description": job.get("description", "")[:200] + "..." if job.get("description") else "",
-                        "skills": job.get("skills", []),
-                        "budget": job.get("budget", {}),
-                        "duration": job.get("duration", "Not specified"),
-                        "workload": job.get("workload", "Not specified"),
-                        "client_rating": job.get("client", {}).get("feedback", "N/A"),
-                        "client_reviews": job.get("client", {}).get("reviewsCount", 0),
-                        "client_country": job.get("client", {}).get("location", {}).get("country", "Unknown"),
-                        "posted_at": job.get("postedAt", "")
-                    })
-
-                return jobs
-
-            elif response.status_code == 401:
-                # Token expired, try to refresh
-                self.access_token = None
-                return await self.search_jobs(query, category)
-            else:
-                self.worker.editor_logging_handler.error(
-                    f"[UpworkJobSearch] API error: {response.status_code} - {response.text}"
-                )
-                return None
-
-        except Exception as e:
-            self.worker.editor_logging_handler.error(f"[UpworkJobSearch] Search error: {e}")
             return None
 
-    def format_job_for_speech(self, job: dict, index: int) -> str:
-        """Format a job for voice response."""
-        title = job.get("title", "Untitled")
-        budget = job.get("budget", {})
-        budget_str = f"{budget.get('amount', 'N/A')} {budget.get('currency', 'USD')}" if budget else "Budget not specified"
-        duration = job.get("duration", "Not specified")
-        workload = job.get("workload", "Not specified")
-        rating = job.get("client_rating", "N/A")
+    # ---------------- FORMAT ----------------
 
-        return f"Job {index + 1}: {title}. Budget: {budget_str}. Duration: {duration}. Workload: {workload}. Client rating: {rating} out of 5."
+    def format_job_for_speech(self, job: dict, index: int) -> str:
+        title = job.get("title", "Untitled")
+        company = job.get("company", "Unknown company")
+        location = job.get("location", "Remote")
+        salary = job.get("salary", "Not specified")
+        description = job.get("description", "No description available.")
+        short_desc = description[:150].rstrip()
+
+        salary_part = f" Salary: {salary}." if salary and salary != "Not specified" else ""
+        return (
+            f"Job {index + 1}: {title} at {company}. "
+            f"Location: {location}.{salary_part} "
+            f"{short_desc}."
+        )
+
+    # ---------------- MAIN FLOW ----------------
 
     async def run(self):
-        """Main conversation flow."""
         try:
-            # Step 1: Greet and explain
             await self.capability_worker.speak(
-                "I can help you find freelance jobs on Upwork. What type of jobs are you looking for? "
-                "For example, web development, mobile app, data entry, or copy writing."
+                "I can help you find remote freelance jobs. "
+                "What type of jobs are you looking for?"
             )
 
-            # Step 2: Get search query from user
             user_input = await self.capability_worker.user_response()
 
             if not user_input or not user_input.strip():
                 await self.capability_worker.speak(
-                    "I didn't catch that. Please try again with a job category or skill."
+                    "I didn't catch that. Please try again."
                 )
-                self.capability_worker.resume_normal_flow()
                 return
 
-            # Step 3: Search for jobs
             await self.capability_worker.speak(
-                f"Searching for {user_input} jobs on Upwork..."
+                f"Searching for {user_input} jobs..."
             )
 
             jobs = await self.search_jobs(user_input)
 
-            # Step 4: Speak results
-            if jobs and len(jobs) > 0:
+            if jobs:
                 await self.capability_worker.speak(
-                    f"I found {len(jobs)} jobs matching '{user_input}'. Here are the top results:"
+                    f"I found {len(jobs)} jobs. Here are the top results."
                 )
-
-                # Speak each job (limit to 3 for voice)
                 for i, job in enumerate(jobs[:3]):
-                    job_summary = self.format_job_for_speech(job, i)
-                    await self.capability_worker.speak(job_summary)
-
-                # Add closing message
-                await self.capability_worker.speak(
-                    "Would you like me to search for a different category? Say stop to exit."
-                )
-
-                # Listen for follow-up
-                follow_up = await self.capability_worker.user_response()
-
-                if follow_up and any(word in follow_up.lower() for word in ["yes", "sure", "another", "more", "search"]):
-                    await self.capability_worker.speak("What would you like to search for?")
-                    new_query = await self.capability_worker.user_response()
-                    if new_query:
-                        jobs = await self.search_jobs(new_query)
-                        if jobs and len(jobs) > 0:
-                            await self.capability_worker.speak(
-                                f"I found {len(jobs)} jobs. Here are the results:"
-                            )
-                            for i, job in enumerate(jobs[:3]):
-                                job_summary = self.format_job_for_speech(job, i)
-                                await self.capability_worker.speak(job_summary)
-                        else:
-                            await self.capability_worker.speak(
-                                "I couldn't find any jobs matching that search."
-                            )
-                else:
                     await self.capability_worker.speak(
-                        "Happy job hunting! Talk to you later."
+                        self.format_job_for_speech(job, i)
                     )
             else:
                 await self.capability_worker.speak(
-                    f"I couldn't find any jobs matching '{user_input}'. "
-                    "Try a different category or skill. For example, Python programming, logo design, or content writing."
+                    "I couldn't find any jobs matching that search."
                 )
 
         except Exception as e:
-            self.worker.editor_logging_handler.error(f"[UpworkJobSearch] Error: {e}")
-            await self.capability_worker.speak(
-                "Something went wrong while searching for jobs. Please try again later."
+            self.worker.editor_logging_handler.error(
+                f"[UpworkJobSearch] Fatal error: {e}"
             )
+            await self.capability_worker.speak(
+                "Something went wrong while searching."
+            )
+
         finally:
             self.capability_worker.resume_normal_flow()
