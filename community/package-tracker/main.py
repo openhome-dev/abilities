@@ -35,21 +35,14 @@ if not logger.handlers:
 
 
 class PackageTracker(MatchingCapability):
-    # {{register capability}}
+    #{{register capability}}
     worker: AgentWorker = None
     capability_worker: CapabilityWorker = None
 
     @classmethod
     def register_capability(cls) -> "MatchingCapability":
-        config_path = "config.json"
-        try:
-            with open(config_path, 'r', encoding='utf-8') as f:
-                data = json.load(f)
-        except Exception:
-            data = {}
-        unique_name = data.get("unique_name", "package_tracker")
-        hotwords = data.get("matching_hotwords",
-                            ["track my package", "where's my package", "package status", "tracking"])
+        unique_name = "package_tracker"
+        hotwords = ["track my package", "where's my package", "package status", "tracking"]
         return cls(unique_name=unique_name, matching_hotwords=hotwords)
 
     def __init__(self, unique_name: Optional[str] = None, matching_hotwords: Optional[List[str]] = None):
