@@ -1,0 +1,4 @@
+{
+  "unique_name": "earthquake-monitor",
+  "matching_hotwords": ["earthquake", "seismic activity", "earthquake monitor", "recent earthquakes", "earthquake alert"]
+}
