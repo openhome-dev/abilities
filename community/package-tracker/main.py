@@ -2,7 +2,6 @@ import json
 import logging
 from typing import Optional, Any, List
 
-import trackingmore
 import re
 
 try:
@@ -17,8 +16,10 @@ except Exception:
 
     def editor_logging_handler():
         return logging.StreamHandler()
+
     class AgentWorker:
         pass
+
     class CapabilityWorker:
         pass
 
