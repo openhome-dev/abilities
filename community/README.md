@@ -50,6 +50,7 @@ Before submitting, make sure your Ability:
 - [ ] All `requests.*()` calls include a `timeout` parameter
 - [ ] Includes a `README.md` with description and suggested trigger words
 - [ ] PR targets the **`dev`** branch
+- [ ] Should have run code in Openhome alility editor
 
 ---
 
