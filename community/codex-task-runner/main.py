@@ -11,7 +11,6 @@ Client/server example:
 - Server: any webhook server implementation exposing POST /run.
 """
 
-import json
 import requests
 from src.agent.capability import MatchingCapability
 from src.main import AgentWorker
@@ -33,19 +32,7 @@ class CodexTaskRunnerCapability(MatchingCapability):
     worker: AgentWorker = None
     capability_worker: CapabilityWorker = None
 
-    @classmethod
-    def register_capability(cls) -> "MatchingCapability":
-        """Load ability metadata from config.json."""
-        import os
-
-        with open(
-            os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.json")
-        ) as file:
-            data = json.load(file)
-        return cls(
-            unique_name=data["unique_name"],
-            matching_hotwords=data["matching_hotwords"],
-        )
+    #{{register capability}}
 
     def call(self, worker: AgentWorker):
         """OpenHome SDK hook; starts async ability flow."""
