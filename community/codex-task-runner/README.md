@@ -36,6 +36,8 @@ Use the exact same `WEBHOOK_TOKEN` value on both sides.
 ## Minimal Codex Webhook Example (crude)
 
 ```python
+# NOTE: This example runs on a separate webhook server, not inside an OpenHome
+# ability. It is not subject to OpenHome ability SDK restrictions.
 import os
 import subprocess
 import uuid
@@ -44,14 +46,20 @@ from flask import Flask, jsonify, request
 app = Flask(__name__)
 WEBHOOK_TOKEN = os.environ.get("WEBHOOK_TOKEN", "YOUR_WEBHOOK_TOKEN_HERE")
 RUNS_DIR = os.environ.get("RUNS_DIR", "./runs")
-DEFAULT_WORKDIR = os.path.abspath(os.environ.get("CODEX_WORKDIR", "."))
+DEFAULT_WORKDIR = os.path.realpath(
+    os.path.abspath(os.environ.get("CODEX_WORKDIR", "."))
+)
 CODEX_SANDBOX = os.environ.get("CODEX_SANDBOX", "workspace-write")
 CODEX_TIMEOUT_SECONDS = int(os.environ.get("CODEX_TIMEOUT_SECONDS", "600"))
 
 
 def _is_allowed_workdir(path: str) -> bool:
-    target = os.path.abspath(path)
-    return target == DEFAULT_WORKDIR or target.startswith(DEFAULT_WORKDIR + os.sep)
+    target = os.path.realpath(os.path.abspath(path))
+    try:
+        common = os.path.commonpath([DEFAULT_WORKDIR, target])
+    except ValueError:
+        return False
+    return common == DEFAULT_WORKDIR
 
 
 @app.post("/run")
@@ -139,6 +147,9 @@ The ability expects JSON with this shape:
   "request_id": "7fd8c0bf44c1"
 }
 ```
+
+For production deployments, prefer returning relative paths (or opaque IDs/URLs)
+instead of absolute filesystem paths.
 
 ## How It Works
 1. Ask user for a coding task.

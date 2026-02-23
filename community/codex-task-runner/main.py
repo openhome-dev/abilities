@@ -11,6 +11,7 @@ Client/server example:
 - Server: any webhook server implementation exposing POST /run.
 """
 
+import asyncio
 import requests
 from src.agent.capability import MatchingCapability
 from src.main import AgentWorker
@@ -99,7 +100,8 @@ class CodexTaskRunnerCapability(MatchingCapability):
         )
 
         try:
-            webhook_response = requests.post(
+            webhook_response = await asyncio.to_thread(
+                requests.post,
                 WEBHOOK_URL,
                 headers=headers,
                 json={"prompt": user_request},
@@ -155,7 +157,7 @@ class CodexTaskRunnerCapability(MatchingCapability):
                 )
                 return
 
-            # 2) Gather user task and handle fast cancel path.
+            # 1) Gather user task and handle fast cancel path.
             await self.capability_worker.speak(
                 "Tell me the coding task you want Codex to run."
             )
