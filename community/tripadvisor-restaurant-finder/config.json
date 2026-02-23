@@ -1,0 +1,23 @@
+{
+  "unique_name": "tripadvisor-restaurant-finder",
+  "matching_hotwords": [
+    "restaurant",
+    "restaurants",
+    "where to eat",
+    "where should I eat",
+    "find food",
+    "good food",
+    "places to eat",
+    "best restaurant",
+    "food near",
+    "dinner",
+    "lunch",
+    "brunch",
+    "find me a restaurant",
+    "recommend a restaurant",
+    "tripadvisor",
+    "trip advisor",
+    "reviews for",
+    "restaurant reviews"
+  ]
+}
