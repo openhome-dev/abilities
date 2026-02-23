@@ -44,6 +44,14 @@ from flask import Flask, jsonify, request
 app = Flask(__name__)
 WEBHOOK_TOKEN = os.environ.get("WEBHOOK_TOKEN", "YOUR_WEBHOOK_TOKEN_HERE")
 RUNS_DIR = os.environ.get("RUNS_DIR", "./runs")
+DEFAULT_WORKDIR = os.path.abspath(os.environ.get("CODEX_WORKDIR", "."))
+CODEX_SANDBOX = os.environ.get("CODEX_SANDBOX", "workspace-write")
+CODEX_TIMEOUT_SECONDS = int(os.environ.get("CODEX_TIMEOUT_SECONDS", "600"))
+
+
+def _is_allowed_workdir(path: str) -> bool:
+    target = os.path.abspath(path)
+    return target == DEFAULT_WORKDIR or target.startswith(DEFAULT_WORKDIR + os.sep)
 
 
 @app.post("/run")
@@ -52,29 +60,56 @@ def run():
     if auth != f"Bearer {WEBHOOK_TOKEN}":
         return jsonify({"ok": False, "error": "unauthorized"}), 401
 
-    prompt = (request.json or {}).get("prompt", "").strip()
+    req = request.get_json(silent=True) or {}
+    prompt = (req.get("prompt") or "").strip()
     if not prompt:
         return jsonify({"ok": False, "error": "prompt is required"}), 400
+
+    target_workdir = req.get("workdir") or DEFAULT_WORKDIR
+    if not _is_allowed_workdir(target_workdir):
+        return jsonify({"ok": False, "error": "workdir not allowed"}), 403
+    if not os.path.isdir(target_workdir):
+        return jsonify({"ok": False, "error": "workdir not found"}), 400
 
     request_id = uuid.uuid4().hex[:12]
     run_dir = os.path.join(RUNS_DIR, request_id)
     os.makedirs(run_dir, exist_ok=True)
 
     artifact_path = os.path.join(run_dir, "final-message.txt")
+    events_path = os.path.join(run_dir, "events.jsonl")
+    stderr_path = os.path.join(run_dir, "stderr.log")
+
     cmd = [
         "codex",
         "exec",
-        prompt,
-        "--dangerously-bypass-approvals-and-sandbox",
-        "--output-last-message",
+        "-C",
+        target_workdir,
+        "--json",
+        "-o",
         artifact_path,
+        "--full-auto",
+        "--sandbox",
+        CODEX_SANDBOX,
+        prompt,
     ]
 
-    result = subprocess.run(cmd, capture_output=True, text=True)
+    with open(events_path, "w", encoding="utf-8") as out, open(
+        stderr_path, "w", encoding="utf-8"
+    ) as err:
+        result = subprocess.run(
+            cmd,
+            stdout=out,
+            stderr=err,
+            text=True,
+            timeout=CODEX_TIMEOUT_SECONDS,
+            check=False,
+        )
+
     if result.returncode != 0:
         return jsonify({
             "ok": False,
-            "error": (result.stderr or result.stdout or "codex failed")[:500],
+            "error": f"codex failed with exit code {result.returncode}",
+            "events_path": events_path,
             "request_id": request_id,
         }), 500
 
@@ -87,7 +122,7 @@ def run():
         "ok": True,
         "summary": summary,
         "artifact_path": artifact_path,
-        "events_path": "",
+        "events_path": events_path,
         "request_id": request_id,
     })
 ```
