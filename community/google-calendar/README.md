@@ -90,3 +90,18 @@ Aliases are matched phonetically by the LLM, so STT errors like "Von" for "Vaugh
 **Compound confirmations** -- At any confirmation step, the user can say "Sounds good, but also invite Melody" and both actions are handled.
 
 **Session context** -- After any operation, "that meeting" / "this event" resolves to the last touched event without re-searching.
+
+## Recommended Hotwords
+
+Calendar
+Schedule
+What is on my
+Reschedule
+Invite
+Uninvite
+Push back
+What do I have going on
+Who's on
+Who's going to be
+Cancel
+Meeting
