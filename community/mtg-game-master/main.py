@@ -191,13 +191,21 @@ class MtgGameMasterCapability(MatchingCapability):
 
     def _get_trigger_context(self) -> Optional[str]:
         """grab the original speech that triggered this ability"""
-        for attr in ("transcription", "last_transcription", "current_transcription"):
-            try:
-                val = getattr(self.worker, attr, None)
-                if val and val.strip():
-                    return val.strip()
-            except Exception:
-                pass
+        try:
+            if self.worker.transcription and self.worker.transcription.strip():
+                return self.worker.transcription.strip()
+        except Exception:
+            pass
+        try:
+            if self.worker.last_transcription and self.worker.last_transcription.strip():
+                return self.worker.last_transcription.strip()
+        except Exception:
+            pass
+        try:
+            if self.worker.current_transcription and self.worker.current_transcription.strip():
+                return self.worker.current_transcription.strip()
+        except Exception:
+            pass
         return None
 
     # persistent prefs
