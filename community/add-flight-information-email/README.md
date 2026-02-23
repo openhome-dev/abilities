@@ -99,6 +99,9 @@ Troubleshooting
 No flights found
 → Try different dates or cities
 
+## Loom video of the ability working:
+https://www.loom.com/share/4fd69705c2584511bd0297468d9c02e9
+
 ## Future Improvements (optional)
 
 Add real-time Composio response logging
