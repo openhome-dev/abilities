@@ -128,7 +128,7 @@ class DiscordConnectorCapability(MatchingCapability):
     mode: str = "quick"
     history: list = None
 
-    #{{register capability}}
+    # {{register capability}}
 
     def call(self, worker: AgentWorker):
         self.worker = worker
