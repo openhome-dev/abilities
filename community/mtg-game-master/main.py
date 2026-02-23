@@ -143,7 +143,7 @@ TURN_STRUCTURE = (
 class MtgGameMasterCapability(MatchingCapability):
     """Voice-controlled MTG game assistant for OpenHome."""
 
-    #{{register capability}}
+    # {{register capability}}
     worker: AgentWorker = None
     capability_worker: CapabilityWorker = None
 
