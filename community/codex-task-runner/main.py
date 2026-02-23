@@ -53,12 +53,10 @@ class CodexTaskRunnerCapability(MatchingCapability):
 
     def _is_configured(self) -> bool:
         """Return True when placeholders were replaced with real values."""
-        return (
-            WEBHOOK_URL
-            and WEBHOOK_URL != "YOUR_WEBHOOK_URL_HERE"
-            and WEBHOOK_TOKEN
-            and WEBHOOK_TOKEN != "YOUR_WEBHOOK_TOKEN_HERE"
-        )
+        return WEBHOOK_URL not in {"", "YOUR_WEBHOOK_URL_HERE"} and WEBHOOK_TOKEN not in {
+            "",
+            "YOUR_WEBHOOK_TOKEN_HERE",
+        }
 
     def _to_conversational_summary(self, raw_summary: str) -> str:
         """Rewrite structured webhook summary into short natural speech."""
@@ -132,13 +130,13 @@ class CodexTaskRunnerCapability(MatchingCapability):
             )
             return None
 
-        if not isinstance(response_payload, dict):
-            self.worker.editor_logging_handler.error(
-                "[CodexTaskRunner] webhook response is not an object"
-            )
-            return None
+        if isinstance(response_payload, dict):
+            return response_payload
 
-        return response_payload
+        self.worker.editor_logging_handler.error(
+            "[CodexTaskRunner] webhook response is not an object"
+        )
+        return None
 
     async def run(self):
         """Main conversation flow from user prompt to spoken result."""
@@ -172,21 +170,21 @@ class CodexTaskRunnerCapability(MatchingCapability):
                 )
                 return
 
+            request_preview = self._preview(user_request)
             self.worker.editor_logging_handler.info(
                 "[CodexTaskRunner] user_request received "
-                f"preview='{self._preview(user_request)}'"
+                f"preview='{request_preview}'"
             )
 
             lowered = user_request.lower().strip()
-            if any(word in lowered for word in EXIT_WORDS):
+            if any(lowered == word or lowered.startswith(f"{word} ") for word in EXIT_WORDS):
                 self.worker.editor_logging_handler.info(
                     "[CodexTaskRunner] exit word detected; canceling request"
                 )
                 await self.capability_worker.speak("Okay, canceled.")
                 return
 
-            # 3) Explicit confirmation before external execution.
-            request_preview = self._preview(user_request)
+            # 2) Explicit confirmation before external execution.
             self.worker.editor_logging_handler.info(
                 "[CodexTaskRunner] confirmation requested "
                 f"preview='{request_preview}'"
@@ -201,7 +199,7 @@ class CodexTaskRunnerCapability(MatchingCapability):
                 await self.capability_worker.speak("Okay, I won't run it.")
                 return
 
-            # 4) Execute request via webhook.
+            # 3) Execute request via webhook.
             await self.capability_worker.speak(
                 "Running Codex now. This may take up to a few minutes."
             )
@@ -217,9 +215,9 @@ class CodexTaskRunnerCapability(MatchingCapability):
                 )
                 return
 
-            raw_summary = webhook_result.get("summary", "")
-            if not raw_summary:
-                raw_summary = "Codex finished, but the webhook returned no summary text."
+            raw_summary = webhook_result.get("summary") or (
+                "Codex finished, but the webhook returned no summary text."
+            )
             self.worker.editor_logging_handler.info(
                 "[CodexTaskRunner] webhook success "
                 f"request_id={webhook_result.get('request_id', '')} "
@@ -227,12 +225,12 @@ class CodexTaskRunnerCapability(MatchingCapability):
                 f"{len(raw_summary)} artifact_path={webhook_result.get('artifact_path', '')}"
             )
 
+            # 4) Speak concise result.
             spoken_summary = self._to_conversational_summary(raw_summary)
 
             await self.capability_worker.speak(spoken_summary)
 
-            artifact_path = webhook_result.get("artifact_path")
-            if artifact_path:
+            if webhook_result.get("artifact_path"):
                 await self.capability_worker.speak(
                     "I also saved the full output in the run artifacts."
                 )
