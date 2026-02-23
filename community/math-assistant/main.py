@@ -16,7 +16,7 @@ class MathAssistantCapability(MatchingCapability):
     worker: AgentWorker = None
     capability_worker: CapabilityWorker = None
 
-    # {{register capability}}
+    #{{register capability}}
 
     async def run(self):
         """Main entry point for the math assistant capability."""
