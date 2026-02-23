@@ -4,7 +4,6 @@ from typing import Optional, Any, List
 
 import trackingmore
 import re
-import requests
 
 try:
     from openhome import MatchingCapability
@@ -13,6 +12,7 @@ except Exception:
     class MatchingCapability:
         def __init__(self, *args, **kwargs):
             pass
+
     def editor_logging_handler():
         return logging.StreamHandler()
 
@@ -26,8 +26,9 @@ handler.setFormatter(logging.Formatter('%(levelname)s: %(message)s'))
 if not logger.handlers:
     logger.addHandler(handler)
 
+
 class PackageTracker(MatchingCapability):
-    #{{register capability}}
+    # {{register capability}}
 
     @classmethod
     def register_capability(cls) -> "MatchingCapability":
@@ -38,7 +39,7 @@ class PackageTracker(MatchingCapability):
         except Exception:
             data = {}
         unique_name = data.get("unique_name", "package_tracker")
-        hotwords = data.get("matching_hotwords", 
+        hotwords = data.get("matching_hotwords",
                             ["track my package", "where's my package", "package status", "tracking"])
         return cls(unique_name=unique_name, matching_hotwords=hotwords)
 
