@@ -8,6 +8,8 @@ import re
 try:
     from openhome import MatchingCapability
     from openhome import editor_logging_handler
+    from src.agent.capability_worker import CapabilityWorker
+    from src.main import AgentWorker
 except Exception:
     class MatchingCapability:
         def __init__(self, *args, **kwargs):
@@ -15,6 +17,10 @@ except Exception:
 
     def editor_logging_handler():
         return logging.StreamHandler()
+    class AgentWorker:
+        pass
+    class CapabilityWorker:
+        pass
 
 logger = logging.getLogger('package_tracker')
 logger.setLevel(logging.DEBUG)
@@ -29,6 +35,8 @@ if not logger.handlers:
 
 class PackageTracker(MatchingCapability):
     # {{register capability}}
+    worker: AgentWorker = None
+    capability_worker: CapabilityWorker = None
 
     @classmethod
     def register_capability(cls) -> "MatchingCapability":
@@ -53,36 +61,46 @@ class PackageTracker(MatchingCapability):
                 pass
         self.config_path = 'config.json'
         self.packages_path = 'packages.json'
-        self.config = self._load_json_sync(self.config_path, default={})
-        api_key = self.config.get('trackingmore_api_key')
-        if api_key:
-            trackingmore.api_key = api_key
-        self.packages = self._load_json_sync(self.packages_path, default={'packages': []}).get('packages', [])
+        self.config = {}
+        self.packages = []
 
-    def _load_json_sync(self, path: str, default: Any):
-        try:
-            with open(path, 'r', encoding='utf-8') as f:
-                return json.load(f)
-        except FileNotFoundError:
-            return default
-        except Exception as e:
-            logger.error('Failed to load %s: %s', path, e)
-            return default
+    async def _load_packages(self):
+        if self.capability_worker and hasattr(self.capability_worker, 'read_file'):
+            try:
+                content = await self.capability_worker.read_file(self.packages_path, False)
+                self.packages = json.loads(content).get('packages', [])
+            except Exception:
+                self.packages = []
+        else:
+            self.packages = []
 
-    def _save_packages_sync(self):
-        try:
-            with open(self.packages_path, 'w', encoding='utf-8') as f:
-                json.dump({'packages': self.packages}, f, indent=2)
-        except Exception as e:
-            logger.error('Failed to save packages.json: %s', e)
+    async def _load_json_async(self, path: str, default: Any):
+        if self.capability_worker and hasattr(self.capability_worker, 'read_file'):
+            try:
+                content = await self.capability_worker.read_file(path, False)
+                return json.loads(content)
+            except Exception:
+                return default
+        return default
+
+    async def _save_packages_async(self):
+        if self.capability_worker and hasattr(self.capability_worker, 'write_file'):
+            try:
+                await self.capability_worker.write_file(self.packages_path, json.dumps({'packages': self.packages}, indent=2), False)
+            except Exception:
+                logger.error('Failed to save packages.json')
 
     def call(self, worker):
         self.worker = worker
-        self.capability_worker = type('CapabilityWorker', (), {})()
+        if hasattr(worker, 'capability_worker'):
+            self.capability_worker = worker.capability_worker
+        else:
+            self.capability_worker = type('CapabilityWorker', (), {})()
         self.worker.session_tasks.create(self.run())
 
     async def run(self):
         try:
+            await self._load_packages()
             await self.worker.session_tasks.sleep(0.1)
             await self.capability_worker.speak("Package tracker ready. You can ask about your packages.")
             user_input = await self.capability_worker.user_response()
