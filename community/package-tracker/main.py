@@ -35,7 +35,7 @@ if not logger.handlers:
 
 
 class PackageTracker(MatchingCapability):
-    #{{register capability}}
+    # {{register capability}}
     worker: AgentWorker = None
     capability_worker: CapabilityWorker = None
 
