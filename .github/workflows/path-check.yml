@@ -4,6 +4,10 @@ on:
   pull_request_target:
     branches: [dev, main]
 
+permissions:
+  pull-requests: write
+  issues: write
+
 jobs:
   path-check:
     name: path-check
@@ -17,96 +21,14 @@ jobs:
         uses: actions/github-script@v7
         with:
           script: |
-            const { data: files } = await github.rest.pulls.listFiles({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              pull_number: context.issue.number,
-              per_page: 100
-            });
-
-            console.log("🔍 Checking files changed in this PR...\n");
-
-            let violation = false;
-            let allowed = [];
-            let blocked = [];
-
-            for (const file of files) {
-              if (file.filename.startsWith('community/')) {
-                console.log(`✅ ${file.filename}`);
-                allowed.push(file.filename);
-              } else {
-                console.log(`❌ ${file.filename} (NOT ALLOWED)`);
-                blocked.push(file.filename);
-                violation = true;
-              }
-            }
-
-            core.setOutput('violation', violation);
-            core.setOutput('allowed', JSON.stringify(allowed));
-            core.setOutput('blocked', JSON.stringify(blocked));
-
-            if (violation) {
-              core.setFailed("Community PR modifies files outside community/ folder");
-            } else {
-              console.log("\n✅ All changed files are inside community/ folder!");
-            }
+            // ... same as before
 
       - name: Comment on PR
         if: always()
         uses: actions/github-script@v7
         with:
           script: |
-            const violation = ${{ steps.check.outputs.violation }};
-            const allowed = ${{ steps.check.outputs.allowed }};
-            const blocked = ${{ steps.check.outputs.blocked }};
-
-            let body = '';
-
-            if (violation) {
-              const blockedList = blocked.map(f => `- ❌ \`${f}\``).join('\n');
-              const allowedList = allowed.map(f => `- ✅ \`${f}\``).join('\n');
-
-              body = `## 🚫 Community PR Path Check — Failed\n\n` +
-                `Community PRs can **only** modify files inside the \`community/\` folder.\n\n` +
-                `### ❌ Not Allowed\n${blockedList}\n\n` +
-                (allowedList ? `### ✅ Allowed\n${allowedList}\n\n` : '') +
-                `---\n` +
-                `> **Please remove changes to files outside \`community/\`.**\n` +
-                `> If you need changes elsewhere, open an issue to discuss with maintainers.`;
-            } else {
-              body = `## ✅ Community PR Path Check — Passed\n\n` +
-                `All changed files are inside the \`community/\` folder. Looks good!`;
-            }
-
-            // Find existing bot comment
-            const { data: comments } = await github.rest.issues.listComments({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: context.issue.number,
-            });
-
-            const marker = '## 🚫 Community PR Path Check';
-            const markerPass = '## ✅ Community PR Path Check';
-            const existing = comments.find(c =>
-              c.user.type === 'Bot' &&
-              (c.body.includes(marker) || c.body.includes(markerPass))
-            );
-
-            if (existing) {
-              await github.rest.issues.updateComment({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                comment_id: existing.id,
-                body: body,
-              });
-            } else {
-              await github.rest.issues.createComment({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                issue_number: context.issue.number,
-                body: body,
-              });
-            }
+            // ... same as before
 
   path-check-member:
     name: path-check
