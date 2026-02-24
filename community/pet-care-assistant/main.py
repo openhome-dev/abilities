@@ -1718,7 +1718,7 @@ class PetCareAssistantCapability(MatchingCapability):
             else "No entries found."
         )
 
-        prompt = f"User's question: {query}\n\n" f"Activity log entries:\n{log_text}"
+        prompt = f"User's question: {query}\n\nActivity log entries:\n{log_text}"
 
         try:
             response = await asyncio.to_thread(
@@ -1897,8 +1897,8 @@ class PetCareAssistantCapability(MatchingCapability):
                     f"[PetCare] Serper API returned error: {resp.status_code}"
                 )
                 await self.capability_worker.speak(
-                    f"The vet search service returned an error. "
-                    f"Try searching on your phone or calling your regular vet."
+                    "The vet search service returned an error. "
+                    "Try searching on your phone or calling your regular vet."
                 )
                 return
 
@@ -2027,7 +2027,7 @@ class PetCareAssistantCapability(MatchingCapability):
             The best-matching place dict, or None if the LLM cannot decide.
         """
         numbered = "\n".join(
-            f"{i+1}. {p.get('title', 'Unknown')}" for i, p in enumerate(candidates)
+            f"{i + 1}. {p.get('title', 'Unknown')}" for i, p in enumerate(candidates)
         )
         prompt = (
             f'A user was shown this list of vets and said: "{user_pick}"\n\n'
