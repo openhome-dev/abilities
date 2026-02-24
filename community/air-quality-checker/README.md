@@ -22,9 +22,12 @@ Fetches real-time air quality data from the World Air Quality Index (WAQI) API. 
 
 Requires a free WAQI API token:
 
-1. Register at https://aqicn.org/data-platform/token/
-2. Set the environment variable: `export WAQI_API_TOKEN=your_token_here`
+1. Register at https://aqicn.org/data-platform/token/  
+2. Use an **API_TOKEN placeholder** in your code:
 
+```python
+api_token = "your_api_token_here"
+```
 ## Example Usage
 
 > "What's the air quality in Beijing?"
@@ -41,3 +44,4 @@ Requires a free WAQI API token:
 | 151-200 | Unhealthy | Everyone may experience effects |
 | 201-300 | Very Unhealthy | Avoid outdoor activities |
 | 301+ | Hazardous | Stay indoors |
+ 
