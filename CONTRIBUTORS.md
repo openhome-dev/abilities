@@ -32,3 +32,4 @@ Format: - **@username** — ability-name ([ability-name](community/ability-name/
 - **[@codeforstartups](https://github.com/codeforstartups)** — package-tracker ([package-tracker](community/package-tracker/))
 - **[@Kuberwastaken](https://github.com/Kuberwastaken)** — hn-digest ([hn-digest](community/hn-digest/))
 - **[@sterling-prog](https://github.com/sterling-prog)** — recipe-coach ([recipe-coach](community/recipe-coach/))
+- **[@cedarscarlett](https://github.com/cedarscarlett)** — gdrive-voice-manager ([gdrive-voice-manager](community/gdrive-voice-manager/))
