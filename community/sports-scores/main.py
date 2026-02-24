@@ -47,6 +47,9 @@ def _strip_json_fences(text: str) -> str:
 class SportsScoresCapability(MatchingCapability):
     worker: AgentWorker = None
     capability_worker: CapabilityWorker = None
+    last_team_id: str = None
+    last_team_name: str = None
+    last_league_id: str = None
 
     # Do not change following tag of register capability
     # {{register capability}}
