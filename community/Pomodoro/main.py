@@ -11,7 +11,7 @@ from src.main import AgentWorker
 
 
 class PomodoroFocusTimerCapability(MatchingCapability):
-    # {{register capability}}
+    #{{register capability}}
     worker: AgentWorker = None
     capability_worker: CapabilityWorker = None
 
@@ -34,6 +34,7 @@ class PomodoroFocusTimerCapability(MatchingCapability):
         "eighteen": 18, "nineteen": 19, "twenty": 20, "thirty": 30,
         "forty": 40, "fifty": 50
     }
+
 
     def call(self, worker: AgentWorker):
         self.worker = worker
@@ -175,11 +176,16 @@ class PomodoroFocusTimerCapability(MatchingCapability):
                 "How many cycles?"
             )
             if custom_cycle:
-                try:
-                    cycles = int(''.join(filter(str.isdigit, custom_cycle)))
-                    prefs["sessions_per_cycle"] = cycles
-                except Exception:
-                    prefs["sessions_per_cycle"] = 4
+                # Try digits first, then word numbers
+                digits = ''.join(filter(str.isdigit, custom_cycle))
+                if digits:
+                    prefs["sessions_per_cycle"] = int(digits)
+                else:
+                    parsed = self._parse_add_minutes(custom_cycle)
+                    if parsed:
+                        prefs["sessions_per_cycle"] = parsed
+                    else:
+                        prefs["sessions_per_cycle"] = 4
         else:
             prefs["sessions_per_cycle"] = 4
 
@@ -191,54 +197,141 @@ class PomodoroFocusTimerCapability(MatchingCapability):
             "Or tell me just minutes to directly start that session."
         )
 
+        # Log what user said
+        self.worker.editor_logging_handler.info(
+            f"User config response: '{config_response}'"
+        )
+
         if not config_response:
             pass
+        elif "default" in config_response.lower():
+            # User explicitly said "default" - reset to classic Pomodoro values
+            prefs["focus_minutes"] = 25
+            prefs["short_break_minutes"] = 5
+            prefs["long_break_minutes"] = 15
+            self.worker.editor_logging_handler.info("Using default Pomodoro settings: 25/5/15")
         elif "customize" in config_response.lower():
+            # Focus session duration
             await self.worker.session_tasks.sleep(0.1)
             focus_resp = await self.capability_worker.run_io_loop(
                 "How many minutes for focus sessions?"
             )
             if focus_resp:
-                try:
-                    prefs["focus_minutes"] = int(
-                        ''.join(filter(str.isdigit, focus_resp))
+                self.worker.editor_logging_handler.info(
+                    f"Focus session input: '{focus_resp}'"
+                )
+                # Try digits first, then word numbers
+                digits = ''.join(filter(str.isdigit, focus_resp))
+                if digits:
+                    prefs["focus_minutes"] = int(digits)
+                    self.worker.editor_logging_handler.info(
+                        f"Set focus to {prefs['focus_minutes']} min (from digits)"
                     )
-                except Exception:
-                    pass
+                else:
+                    parsed = self._parse_add_minutes(focus_resp)
+                    if parsed:
+                        prefs["focus_minutes"] = parsed
+                        self.worker.editor_logging_handler.info(
+                            f"Set focus to {prefs['focus_minutes']} min (from words)"
+                        )
+                    else:
+                        self.worker.editor_logging_handler.warning(
+                            f"Could not parse focus duration from '{focus_resp}'"
+                        )
 
+            # Short break duration
             await self.worker.session_tasks.sleep(0.1)
             short_resp = await self.capability_worker.run_io_loop(
                 "How many minutes for short breaks?"
             )
             if short_resp:
-                try:
-                    prefs["short_break_minutes"] = int(
-                        ''.join(filter(str.isdigit, short_resp))
+                self.worker.editor_logging_handler.info(
+                    f"Short break input: '{short_resp}'"
+                )
+                # Try digits first, then word numbers
+                digits = ''.join(filter(str.isdigit, short_resp))
+                if digits:
+                    prefs["short_break_minutes"] = int(digits)
+                    self.worker.editor_logging_handler.info(
+                        f"Set short break to {prefs['short_break_minutes']} min (from digits)"
                     )
-                except Exception:
-                    pass
+                else:
+                    parsed = self._parse_add_minutes(short_resp)
+                    if parsed:
+                        prefs["short_break_minutes"] = parsed
+                        self.worker.editor_logging_handler.info(
+                            f"Set short break to {prefs['short_break_minutes']} min (from words)"
+                        )
+                    else:
+                        self.worker.editor_logging_handler.warning(
+                            f"Could not parse short break from '{short_resp}'"
+                        )
 
+            # Long break duration (only if multiple cycles)
             if prefs["sessions_per_cycle"] > 1:
                 await self.worker.session_tasks.sleep(0.1)
                 long_resp = await self.capability_worker.run_io_loop(
                     "How many minutes for long breaks?"
                 )
                 if long_resp:
-                    try:
-                        prefs["long_break_minutes"] = int(
-                            ''.join(filter(str.isdigit, long_resp))
+                    self.worker.editor_logging_handler.info(
+                        f"Long break input: '{long_resp}'"
+                    )
+                    # Try digits first, then word numbers
+                    digits = ''.join(filter(str.isdigit, long_resp))
+                    if digits:
+                        prefs["long_break_minutes"] = int(digits)
+                        self.worker.editor_logging_handler.info(
+                            f"Set long break to {prefs['long_break_minutes']} min (from digits)"
                         )
-                    except Exception:
-                        pass
+                    else:
+                        parsed = self._parse_add_minutes(long_resp)
+                        if parsed:
+                            prefs["long_break_minutes"] = parsed
+                            self.worker.editor_logging_handler.info(
+                                f"Set long break to {prefs['long_break_minutes']} min (from words)"
+                            )
+                        else:
+                            self.worker.editor_logging_handler.warning(
+                                f"Could not parse long break from '{long_resp}'"
+                            )
 
         elif "default" not in config_response.lower():
+            # User said a number directly (e.g., "1 minute", "30", "two minutes")
             try:
-                direct_mins = int(''.join(filter(str.isdigit, config_response)))
-                prefs["focus_minutes"] = direct_mins
-            except Exception:
-                pass
+                # First try numeric digits
+                digits = ''.join(filter(str.isdigit, config_response))
+                direct_mins = None
+                
+                if digits:
+                    direct_mins = int(digits)
+                else:
+                    # Try word numbers (e.g., "two minutes", "one")
+                    direct_mins = self._parse_add_minutes(config_response)
+                
+                if direct_mins and direct_mins > 0:
+                    prefs["focus_minutes"] = direct_mins
+                    self.worker.editor_logging_handler.info(
+                        f"Set custom focus duration: {direct_mins} minutes"
+                    )
+                else:
+                    self.worker.editor_logging_handler.warning(
+                        f"Could not parse duration from '{config_response}', using default"
+                    )
+            except Exception as e:
+                self.worker.editor_logging_handler.error(
+                    f"Error parsing custom duration: {e}"
+                )
 
         await self.save_preferences(prefs)
+        
+        # Log final preferences being used
+        self.worker.editor_logging_handler.info(
+            f"Using preferences - Focus: {prefs['focus_minutes']}min, "
+            f"Short break: {prefs['short_break_minutes']}min, "
+            f"Long break: {prefs['long_break_minutes']}min, "
+            f"Cycles: {prefs['sessions_per_cycle']}"
+        )
 
         session_count = 0
         sessions_per_cycle = prefs["sessions_per_cycle"]
@@ -448,6 +541,11 @@ class PomodoroFocusTimerCapability(MatchingCapability):
         total_sessions: int,
         halfway_checkin: bool
     ) -> bool:
+        # Log the actual duration being used
+        self.worker.editor_logging_handler.info(
+            f"Starting focus session {session_number} with duration: {duration_minutes} minutes"
+        )
+        
         if session_number == 1:
             await self.capability_worker.speak(
                 f"Starting a {duration_minutes} minute focus session. "
@@ -482,10 +580,18 @@ class PomodoroFocusTimerCapability(MatchingCapability):
                 and (not halfway_announced)
                 and (time.time() - start_time) >= (duration_seconds / 2)
             ):
-                mins_left = int(max(0, (end_time - time.time()) // 60))
-                await self.capability_worker.speak(
-                    f"Halfway there. {mins_left} minutes left. Keep going."
-                )
+                remaining_time = end_time - time.time()
+                mins_left = int(remaining_time // 60)
+                secs_left = int(remaining_time % 60)
+                
+                if mins_left > 0:
+                    await self.capability_worker.speak(
+                        f"Halfway there. {mins_left} minutes left. Keep going."
+                    )
+                else:
+                    await self.capability_worker.speak(
+                        f"Halfway there. {secs_left} seconds left. Keep going."
+                    )
                 halfway_announced = True
 
             chunk = min(self.LISTEN_CHUNK_SECONDS, max(0.5, remaining))
