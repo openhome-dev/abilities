@@ -91,7 +91,7 @@ class TripAdvisorRestaurantCapability(MatchingCapability):
         )
 
     # Do not change following tag
-    #{{register capability}}
+    # {{register capability}}
 
     def call(self, worker: AgentWorker):
         self.worker = worker
@@ -146,7 +146,7 @@ class TripAdvisorRestaurantCapability(MatchingCapability):
         start = cleaned.find("{")
         end = cleaned.rfind("}")
         if start != -1 and end != -1 and end > start:
-            return cleaned[start : end + 1]
+            return cleaned[start: end + 1]
         return cleaned
 
     # =========================================================================
@@ -933,7 +933,7 @@ class TripAdvisorRestaurantCapability(MatchingCapability):
                         self.recent_results
                     ):
                         next_batch = self.recent_results[
-                            self.results_shown_count : self.results_shown_count + 3
+                            self.results_shown_count: self.results_shown_count + 3
                         ]
                         await self._speak_restaurant_results(
                             next_batch,

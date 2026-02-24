@@ -25,7 +25,7 @@ class AaaCapability(MatchingCapability):
         )
 
     # Do not change following tag
-    #{{register capability}}
+    # {{register capability}}
 
     def call(self, worker: AgentWorker):
         # LOG 2: call() entered — ability was triggered by hotword
