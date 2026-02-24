@@ -1,32 +1,27 @@
 import json
-import os
+import pathlib
 import re
-from typing import Optional, List
+from typing import List, Optional
 from urllib.parse import urlencode
 
 import httpx
 
 from src.agent.capability import MatchingCapability
-from src.main import AgentWorker
 from src.agent.capability_worker import CapabilityWorker
+from src.main import AgentWorker
 
-# Remotive public API — free, no authentication required
 REMOTIVE_API_URL = "https://remotive.com/api/remote-jobs"
 
 
+#{{register_capability}}
 class UpworkJobSearchCapability(MatchingCapability):
     worker: AgentWorker = None
     capability_worker: CapabilityWorker = None
 
-    # ---------------- REGISTER ----------------
-
     @classmethod
     def register_capability(cls) -> "MatchingCapability":
-        with open(
-            os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.json")
-        ) as file:
-            data = json.load(file)
-
+        config_path = pathlib.Path(__file__).parent / "config.json"
+        data = json.loads(config_path.read_text(encoding="utf-8"))
         return cls(
             unique_name=data["unique_name"],
             matching_hotwords=data["matching_hotwords"],
@@ -37,47 +32,53 @@ class UpworkJobSearchCapability(MatchingCapability):
         self.capability_worker = CapabilityWorker(self.worker)
         self.worker.session_tasks.create(self.run())
 
-    # ---------------- HELPERS ----------------
-
     def _clean_html(self, text: str) -> str:
         """Strip HTML tags and decode common HTML entities."""
-        # Replace block-level tags with a space so adjacent words don't merge
-        text = re.sub(r"<(br|p|div|li|tr|td|th|h[1-6])[^>]*>", " ", text, flags=re.IGNORECASE)
-        # Strip remaining tags
+        text = re.sub(
+            r"<(br|p|div|li|tr|td|th|h[1-6])[^>]*>",
+            " ",
+            text,
+            flags=re.IGNORECASE,
+        )
         text = re.sub(r"<[^>]+>", "", text)
-        # Decode common HTML entities
         text = text.replace("&nbsp;", " ")
         text = text.replace("&amp;", "&")
         text = text.replace("&lt;", "<")
         text = text.replace("&gt;", ">")
         text = text.replace("&quot;", '"')
         text = text.replace("&#39;", "'")
-        # Collapse whitespace
         text = re.sub(r"\s+", " ", text)
         return text.strip()
 
-    # ---------------- SEARCH ----------------
-
-    async def _fetch_jobs_for_query(self, client: httpx.AsyncClient, query: str) -> list:
+    async def _fetch_jobs_for_query(
+        self, client: httpx.AsyncClient, query: str
+    ) -> list:
         """Single HTTP call to Remotive; returns raw job list (may be empty)."""
         url = f"{REMOTIVE_API_URL}?{urlencode({'search': query, 'limit': 5})}"
-        response = await client.get(
-            url,
-            headers={
-                "User-Agent": (
-                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                    "AppleWebKit/537.36 (KHTML, like Gecko) "
-                    "Chrome/120.0.0.0 Safari/537.36"
-                ),
-                "Accept": "application/json",
-            },
-        )
-        if response.status_code != 200:
+        try:
+            response = await client.get(
+                url,
+                headers={
+                    "User-Agent": (
+                        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                        "AppleWebKit/537.36 (KHTML, like Gecko) "
+                        "Chrome/120.0.0.0 Safari/537.36"
+                    ),
+                    "Accept": "application/json",
+                },
+            )
+            if response.status_code != 200:
+                self.worker.editor_logging_handler.error(
+                    f"[UpworkJobSearch] HTTP {response.status_code}: "
+                    f"{response.text[:200]}"
+                )
+                return []
+            return response.json().get("jobs", [])
+        except Exception as e:
             self.worker.editor_logging_handler.error(
-                f"[UpworkJobSearch] HTTP {response.status_code}: {response.text[:200]}"
+                f"[UpworkJobSearch] Request error: {e}"
             )
             return []
-        return response.json().get("jobs", [])
 
     async def search_jobs(self, query: str) -> Optional[List[dict]]:
         """Fetch the top 5 remote jobs matching the query from the Remotive API.
@@ -89,12 +90,17 @@ class UpworkJobSearchCapability(MatchingCapability):
             async with httpx.AsyncClient(timeout=30.0) as client:
                 raw_jobs = await self._fetch_jobs_for_query(client, query)
 
-                # Fallback: retry with only the first keyword when the full phrase
-                # yields nothing (Remotive does phrase-level matching).
                 if not raw_jobs:
-                    first_keyword = query.strip().split()[0] if query.strip() else ""
-                    if first_keyword and first_keyword.lower() != query.strip().lower():
-                        raw_jobs = await self._fetch_jobs_for_query(client, first_keyword)
+                    first_keyword = (
+                        query.strip().split()[0] if query.strip() else ""
+                    )
+                    if (
+                        first_keyword
+                        and first_keyword.lower() != query.strip().lower()
+                    ):
+                        raw_jobs = await self._fetch_jobs_for_query(
+                            client, first_keyword
+                        )
 
             if not raw_jobs:
                 return None
@@ -113,7 +119,9 @@ class UpworkJobSearchCapability(MatchingCapability):
                         "link": item.get("url", ""),
                         "pub_date": item.get("publication_date", ""),
                         "salary": item.get("salary", "Not specified"),
-                        "location": item.get("candidate_required_location", "Remote"),
+                        "location": item.get(
+                            "candidate_required_location", "Remote"
+                        ),
                         "job_type": item.get("job_type", ""),
                     }
                 )
@@ -126,8 +134,6 @@ class UpworkJobSearchCapability(MatchingCapability):
             )
             return None
 
-    # ---------------- FORMAT ----------------
-
     def format_job_for_speech(self, job: dict, index: int) -> str:
         title = job.get("title", "Untitled")
         company = job.get("company", "Unknown company")
@@ -136,14 +142,14 @@ class UpworkJobSearchCapability(MatchingCapability):
         description = job.get("description", "No description available.")
         short_desc = description[:150].rstrip()
 
-        salary_part = f" Salary: {salary}." if salary and salary != "Not specified" else ""
+        salary_part = (
+            f" Salary: {salary}." if salary and salary != "Not specified" else ""
+        )
         return (
             f"Job {index + 1}: {title} at {company}. "
             f"Location: {location}.{salary_part} "
             f"{short_desc}."
         )
-
-    # ---------------- MAIN FLOW ----------------
 
     async def run(self):
         try:

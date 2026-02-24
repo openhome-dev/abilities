@@ -1,9 +1,17 @@
-# Mock SDK - Capability module
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from src.agent.capability_worker import CapabilityWorker
+    from src.main import AgentWorker
+
 
 class MatchingCapability:
     """Mock base class for MatchingCapability"""
-    worker: 'AgentWorker' = None
-    capability_worker: 'CapabilityWorker' = None
+
+    worker: AgentWorker = None
+    capability_worker: CapabilityWorker = None
     unique_name: str = ""
     matching_hotwords: list = []
 
@@ -14,11 +22,11 @@ class MatchingCapability:
         self.capability_worker = None
 
     @classmethod
-    def register_capability(cls) -> "MatchingCapability":
+    def register_capability(cls) -> MatchingCapability:
         """Register this capability - must be implemented by subclass"""
         raise NotImplementedError("Subclasses must implement register_capability")
 
-    def call(self, worker: 'AgentWorker'):
+    def call(self, worker: AgentWorker):
         """Called when the capability is triggered"""
         raise NotImplementedError("Subclasses must implement call")
 
