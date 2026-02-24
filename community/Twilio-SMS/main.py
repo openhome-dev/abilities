@@ -23,7 +23,7 @@ class TwilioSmsCapability(MatchingCapability):
         """Safe loading of preferences without overwriting existing data using OpenHome file helpers."""
         self.prefs = {}
         try:
-            # Use CapabilityWorker file helpers instead of raw open()
+            # Use CapabilityWorker file helpers
             content = self.capability_worker.read_file(self.prefs_file)
             if content:
                 self.prefs = json.loads(content)
@@ -67,7 +67,7 @@ class TwilioSmsCapability(MatchingCapability):
             self.prefs = {}
         try:
             content = json.dumps(self.prefs, indent=2)
-            # Use CapabilityWorker file helpers instead of raw open()
+            # Use CapabilityWorker file helpers
             self.capability_worker.write_file(self.prefs_file, content)
         except Exception as e:
             if self.worker and hasattr(self.worker, 'editor_logging_handler'):
