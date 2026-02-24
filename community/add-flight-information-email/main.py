@@ -46,6 +46,8 @@ class FlightInformationEmailCapability(MatchingCapability):
         "dilli": "DEL", "delhi": "DEL", "new delhi": "DEL",
     }
 
+    # {{register capability}}
+
     @classmethod
     def register_capability(cls) -> "MatchingCapability":
         with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.json")) as file:
