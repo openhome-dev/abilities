@@ -80,6 +80,7 @@ def _days_until(date_str: str) -> int:
 class BirthdayCountdownCapability(MatchingCapability):
     worker: AgentWorker = None
     capability_worker: CapabilityWorker = None
+    events: list = None
 
     # Do not change following tag of register capability
     # {{register capability}}
