@@ -1,0 +1,4 @@
+{
+  "unique_name": "dice_roller",
+  "matching_hotwords": ["roll a die", "roll dice", "roll a d20", "roll d20", "dice roll", "roll the dice", "nat 20"]
+}
