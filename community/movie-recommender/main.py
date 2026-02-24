@@ -1,5 +1,4 @@
 import json
-import os
 import re
 
 import requests
@@ -19,6 +18,7 @@ EXIT_WORDS = {
 }
 
 TMDB_BASE_URL = "https://api.themoviedb.org/3"
+TMDB_API_KEY = ""
 
 GENRE_MAP = {
     28: "Action", 12: "Adventure", 16: "Animation", 35: "Comedy",
@@ -66,9 +66,10 @@ def _strip_json_fences(text: str) -> str:
     return text.strip()
 
 
-class MovieRecommenderCapability(MatchingCapability):
+class SportsscoreCapability(MatchingCapability):
     worker: AgentWorker = None
     capability_worker: CapabilityWorker = None
+    api_key: str = None
 
     # Do not change following tag of register capability
     # {{register capability}}
@@ -76,7 +77,7 @@ class MovieRecommenderCapability(MatchingCapability):
     def call(self, worker: AgentWorker):
         self.worker = worker
         self.capability_worker = CapabilityWorker(self.worker)
-        self.api_key = os.environ.get("TMDB_API_KEY", "")
+        self.api_key = TMDB_API_KEY
         self.worker.session_tasks.create(self.run())
 
     async def run(self):
@@ -164,18 +165,31 @@ class MovieRecommenderCapability(MatchingCapability):
 
     def _classify_intent(self, text: str) -> dict:
         lower = text.lower()
+
         if any(w in lower for w in ("trending", "popular", "what's hot", "top movies")):
             return {"intent": "trending", "query": ""}
+
         if any(w in lower for w in ("similar to", "like ", "movies like")):
             return {"intent": "similar", "query": text}
+
         try:
             raw = self.capability_worker.text_to_text_response(
                 INTENT_PROMPT.format(text=text)
             )
-            return json.loads(_strip_json_fences(raw))
-        except (json.JSONDecodeError, Exception) as e:
+
+            if not raw or not raw.strip():
+                raise ValueError("Empty LLM response")
+
+            cleaned = _strip_json_fences(raw)
+
+            if not cleaned:
+                raise ValueError("Empty cleaned response")
+
+            return json.loads(cleaned)
+
+        except Exception as e:
             self.worker.editor_logging_handler.error(
-                f"[MovieRecommender] Intent error: {e}"
+                f"[MovieRecommender] Intent parsing error: {e}"
             )
             return {"intent": "search", "query": text}
 
