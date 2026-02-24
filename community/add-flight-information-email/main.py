@@ -1,6 +1,5 @@
 from typing import ClassVar, Dict
 import json
-import os
 from datetime import datetime
 import requests
 import re
@@ -10,6 +9,7 @@ from src.main import AgentWorker
 from src.agent.capability_worker import CapabilityWorker
 
 
+# Composio credentials (replace with your own)
 COMPOSIO_API_KEY = "ak_xxx"  # Your api key
 COMPOSIO_USER_ID = "pg-test-xxxxxxxx"  # Your user id
 COMPOSIO_CONNECTED_ACCOUNT_ID = "ca_xxxx"  # Your account i
@@ -46,12 +46,13 @@ class FlightInformationEmailCapability(MatchingCapability):
         "dilli": "DEL", "delhi": "DEL", "new delhi": "DEL",
     }
 
-    # {{register capability}}
+    #{{register capability}}
 
     @classmethod
     def register_capability(cls) -> "MatchingCapability":
-        with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.json")) as file:
-            data = json.load(file)
+        # Use CapabilityWorker to read config.json from Ability folder
+        raw = cls.capability_worker.read_file("config.json", in_ability_directory=True)
+        data = json.loads(raw)
         return cls(unique_name=data["unique_name"], matching_hotwords=data["matching_hotwords"])
 
     PREFS_FILE: ClassVar[str] = "flight_email_prefs.json"
@@ -98,11 +99,9 @@ class FlightInformationEmailCapability(MatchingCapability):
 
             is_email_mode = any(ind in lower_text for ind in send_indicators)
 
-            # Strong override: any short "yes" reply → send
             if "yes" in lower_text and len(lower_text.split()) <= 5:
                 is_email_mode = True
 
-            # Extra safety for "yes" + send context
             if "yes" in lower_text and ("send" in lower_text or "email" in lower_text or "mail" in lower_text):
                 is_email_mode = True
 
@@ -111,7 +110,7 @@ class FlightInformationEmailCapability(MatchingCapability):
             else:
                 await self.handle_search(trigger_text, prefs)
 
-        except Exception:
+        except Exception as e:
             await self.capability_worker.speak("Something went wrong. Try again?")
 
         finally:
