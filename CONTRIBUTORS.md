@@ -34,4 +34,4 @@ Format: - **@username** — ability-name ([ability-name](community/ability-name/
 - **[@sterling-prog](https://github.com/sterling-prog)** — recipe-coach ([recipe-coach](community/recipe-coach/))
 - **[@cedarscarlett](https://github.com/cedarscarlett)** — gdrive-voice-manager ([gdrive-voice-manager](community/gdrive-voice-manager/))
 - **[@BILLKISHORE](https://github.com/BILLKISHORE)** — n8n-commander ([n8n-commander](community/n8n-commander/))
-- **[@Kaushal-205](https://github.com/Kaushal-205)** — movie-recommender ([movie-recommender](community/movie-recommender/))
+- **[@Kaushal-205](https://github.com/Kaushal-205)** — movie-recommender ([movie-recommender](community/movie-recommender/)), air-quality-checker ([air-quality-checker](community/air-quality-checker/))
