@@ -31,3 +31,4 @@ Format: - **@username** — ability-name ([ability-name](community/ability-name/
 - **[@jibzus](https://github.com/jibzus)** — pomodoro-timer ([pomodoro-timer](community/pomodoro-timer/))
 - **[@codeforstartups](https://github.com/codeforstartups)** — package-tracker ([package-tracker](community/package-tracker/))
 - **[@Kuberwastaken](https://github.com/Kuberwastaken)** — hn-digest ([hn-digest](community/hn-digest/))
+- **[@sterling-prog](https://github.com/sterling-prog)** — recipe-coach ([recipe-coach](community/recipe-coach/))
