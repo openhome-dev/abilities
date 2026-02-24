@@ -31,3 +31,7 @@ Format: - **@username** — ability-name ([ability-name](community/ability-name/
 - **[@jibzus](https://github.com/jibzus)** — pomodoro-timer ([pomodoro-timer](community/pomodoro-timer/))
 - **[@codeforstartups](https://github.com/codeforstartups)** — package-tracker ([package-tracker](community/package-tracker/))
 - **[@Kuberwastaken](https://github.com/Kuberwastaken)** — hn-digest ([hn-digest](community/hn-digest/))
+- **[@sterling-prog](https://github.com/sterling-prog)** — recipe-coach ([recipe-coach](community/recipe-coach/))
+- **[@cedarscarlett](https://github.com/cedarscarlett)** — gdrive-voice-manager ([gdrive-voice-manager](community/gdrive-voice-manager/))
+- **[@BILLKISHORE](https://github.com/BILLKISHORE)** — n8n-commander ([n8n-commander](community/n8n-commander/))
+- **[@Kaushal-205](https://github.com/Kaushal-205)** — movie-recommender ([movie-recommender](community/movie-recommender/))
