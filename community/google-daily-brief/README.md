@@ -21,7 +21,13 @@ Voice-activated morning briefing that fetches weather, Google Calendar, and Gmai
 
 1. **Google Cloud Console** — Create a project, enable Google Calendar API and Gmail API, create OAuth 2.0 credentials (Desktop app), and download the JSON.
 
-2. **Get tokens** — Run `get_google_token.py` (in project root) with your credentials to obtain access and refresh tokens via OAuth flow.
+2. **Get tokens** — Use [Google OAuth 2.0 Playground](https://developers.google.com/oauthplayground/):
+   - Click the gear icon (⚙️) and enable "Use your own OAuth credentials"
+   - Enter your Client ID and Client Secret from the downloaded JSON
+   - Select scopes: `https://www.googleapis.com/auth/calendar.readonly` and `https://www.googleapis.com/auth/gmail.readonly`
+   - Click "Authorize APIs" and sign in with your Google account
+   - Click "Exchange authorization code for tokens"
+   - Copy the `access_token` and `refresh_token` — you'll paste these into `main.py`
 
 3. **Update main.py** — Replace `YOUR_CLIENT_ID_HERE`, `YOUR_CLIENT_SECRET_HERE`, `YOUR_ACCESS_TOKEN_HERE`, and `YOUR_REFRESH_TOKEN_HERE` with your values.
 
