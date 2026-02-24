@@ -51,6 +51,7 @@ class AirQualityCheckerCapability(MatchingCapability):
             )
 
             # Place your WAQI_API_KEY here
+            api_token = "place your api key here"
             if not api_token:
                 await self.capability_worker.speak(
                     "I need a WAQI API token to check air quality. "
