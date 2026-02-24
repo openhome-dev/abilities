@@ -1,7 +1,7 @@
 name: Community PR Path Check
 
 on:
-  pull_request:
+  pull_request_target:
     branches: [dev, main]
 
 jobs:
@@ -12,53 +12,43 @@ jobs:
       github.event.pull_request.author_association != 'MEMBER' &&
       github.event.pull_request.author_association != 'OWNER'
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
       - name: Check community PR only touches community folder
-        run: |
-          echo "🔍 Checking files changed in this PR..."
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { data: files } = await github.rest.pulls.listFiles({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: context.issue.number,
+              per_page: 100
+            });
 
-          CHANGED_FILES=$(git diff --name-only origin/${{ github.base_ref }}...HEAD)
+            console.log("🔍 Checking files changed in this PR...\n");
 
-          if [ -z "$CHANGED_FILES" ]; then
-            echo "✅ No files changed."
-            exit 0
-          fi
+            let violation = false;
 
-          echo "Changed files:"
-          echo "$CHANGED_FILES"
-          echo ""
+            for (const file of files) {
+              if (file.filename.startsWith('community/')) {
+                console.log(`✅ ${file.filename}`);
+              } else {
+                console.log(`❌ ${file.filename} (NOT ALLOWED)`);
+                violation = true;
+              }
+            }
 
-          VIOLATION=false
-
-          while IFS= read -r file; do
-            if [[ "$file" == community/* ]]; then
-              echo "✅ $file"
-              continue
-            fi
-
-            echo "❌ $file (NOT ALLOWED)"
-            VIOLATION=true
-          done <<< "$CHANGED_FILES"
-
-          if [ "$VIOLATION" = true ]; then
-            echo ""
-            echo "============================================"
-            echo "🚫 BLOCKED: Community PRs can ONLY modify:"
-            echo "   • community/your-ability-name/"
-            echo ""
-            echo "   You cannot modify any other files."
-            echo "   If you need changes elsewhere, open an"
-            echo "   issue to discuss with maintainers."
-            echo "============================================"
-            exit 1
-          fi
-
-          echo ""
-          echo "✅ All changed files are inside community/ folder!"
+            if (violation) {
+              core.setFailed(
+                "\n============================================\n" +
+                "🚫 BLOCKED: Community PRs can ONLY modify:\n" +
+                "   • community/your-ability-name/\n\n" +
+                "   You cannot modify any other files.\n" +
+                "   If you need changes elsewhere, open an\n" +
+                "   issue to discuss with maintainers.\n" +
+                "============================================"
+              );
+            } else {
+              console.log("\n✅ All changed files are inside community/ folder!");
+            }
 
   path-check-member:
     name: path-check
