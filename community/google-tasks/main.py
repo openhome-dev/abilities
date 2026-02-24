@@ -170,7 +170,7 @@ class GoogleTasksCapability(MatchingCapability):
     _recent_results: list = None
     _recent_results_time: float = 0
 
-    #{{register capability}}  # noqa: E265
+    # {{register capability}}  # noqa: E265
 
     def call(self, worker: AgentWorker):
         self.worker = worker
