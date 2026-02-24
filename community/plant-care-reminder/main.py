@@ -77,6 +77,7 @@ def _strip_json_fences(text: str) -> str:
 class PlantCareReminderCapability(MatchingCapability):
     worker: AgentWorker = None
     capability_worker: CapabilityWorker = None
+    plant_data: dict = None
 
     # Do not change following tag of register capability
     # {{register capability}}
