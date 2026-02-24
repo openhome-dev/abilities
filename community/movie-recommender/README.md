@@ -24,7 +24,7 @@ Requires a free TMDB API key:
 
 1. Create an account at https://www.themoviedb.org/
 2. Go to Settings > API and request an API key
-3. Set the environment variable: `export TMDB_API_KEY=your_api_key_here`
+3. Add API key in line 21.
 
 Note: Use the API Read Access Token (v4 auth), not the v3 API key.
 
