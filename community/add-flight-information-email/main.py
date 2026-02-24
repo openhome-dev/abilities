@@ -46,7 +46,7 @@ class FlightInformationEmailCapability(MatchingCapability):
         "dilli": "DEL", "delhi": "DEL", "new delhi": "DEL",
     }
 
-    #{{register capability}}
+    # {{register capability}}
 
     @classmethod
     def register_capability(cls) -> "MatchingCapability":
@@ -110,7 +110,7 @@ class FlightInformationEmailCapability(MatchingCapability):
             else:
                 await self.handle_search(trigger_text, prefs)
 
-        except Exception as e:
+        except Exception:
             await self.capability_worker.speak("Something went wrong. Try again?")
 
         finally:
