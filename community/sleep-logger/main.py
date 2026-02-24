@@ -72,6 +72,7 @@ def _strip_json_fences(text: str) -> str:
 class SleepLoggerCapability(MatchingCapability):
     worker: AgentWorker = None
     capability_worker: CapabilityWorker = None
+    sleep_log: list = None
 
     # Do not change following tag of register capability
     # {{register capability}}
