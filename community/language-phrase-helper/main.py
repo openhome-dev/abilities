@@ -46,6 +46,7 @@ def _strip_json_fences(text: str) -> str:
 class LanguagePhraseHelperCapability(MatchingCapability):
     worker: AgentWorker = None
     capability_worker: CapabilityWorker = None
+    current_language: str = None
 
     # Do not change following tag of register capability
     # {{register capability}}
