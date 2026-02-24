@@ -13,7 +13,7 @@ from src.main import AgentWorker
 REMOTIVE_API_URL = "https://remotive.com/api/remote-jobs"
 
 
-#{{register_capability}}
+# {{register_capability}}
 class UpworkJobSearchCapability(MatchingCapability):
     worker: AgentWorker = None
     capability_worker: CapabilityWorker = None
