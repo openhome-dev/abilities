@@ -1,5 +1,4 @@
 import json
-import os
 from datetime import datetime
 
 import requests
@@ -11,8 +10,7 @@ from src.main import AgentWorker
 # ASTRONOMY & STARGAZING GUIDE
 # Provides stargazing information using IPGeolocation Astronomy API and
 # NASA APOD. Reports moon phase, sun/moon times, and LLM-enriched planet
-# visibility info. Requires IPGEO_API_KEY env variable (free, 1000 req/day).
-# NASA APOD uses DEMO_KEY by default.
+# visibility info. Set API keys in the placeholders below.
 # =============================================================================
 
 EXIT_WORDS = {
@@ -22,6 +20,10 @@ EXIT_WORDS = {
 GEOCODE_URL = "https://nominatim.openstreetmap.org/search"
 ASTRONOMY_URL = "https://api.ipgeolocation.io/astronomy"
 NASA_APOD_URL = "https://api.nasa.gov/planetary/apod"
+
+# Replace placeholders with real keys before deploying.
+IPGEO_API_KEY = "YOUR_IPGEO_API_KEY_HERE"
+NASA_API_KEY = "YOUR_NASA_API_KEY_HERE"
 
 STARGAZING_PROMPT = (
     "You are an astronomy and stargazing guide. Given the following astronomical "
@@ -59,7 +61,7 @@ class AstronomyGuideCapability(MatchingCapability):
                 "[AstronomyGuide] Ability started"
             )
 
-            ipgeo_key = os.environ.get("IPGEO_API_KEY", "")
+            ipgeo_key = self._resolve_ipgeo_api_key()
 
             await self.capability_worker.speak(
                 "Welcome to the stargazing guide! "
@@ -201,7 +203,7 @@ class AstronomyGuideCapability(MatchingCapability):
 
     def _fetch_apod(self) -> str:
         try:
-            nasa_key = os.environ.get("NASA_API_KEY", "DEMO_KEY")
+            nasa_key = self._resolve_nasa_api_key()
             resp = requests.get(
                 NASA_APOD_URL,
                 params={"api_key": nasa_key},
@@ -223,6 +225,18 @@ class AstronomyGuideCapability(MatchingCapability):
                 f"[AstronomyGuide] NASA APOD error: {e}"
             )
         return ""
+
+    def _resolve_ipgeo_api_key(self) -> str:
+        api_key = IPGEO_API_KEY.strip()
+        if not api_key or api_key == "YOUR_IPGEO_API_KEY_HERE":
+            return ""
+        return api_key
+
+    def _resolve_nasa_api_key(self) -> str:
+        api_key = NASA_API_KEY.strip()
+        if not api_key or api_key == "YOUR_NASA_API_KEY_HERE":
+            return "DEMO_KEY"
+        return api_key
 
     def _build_stargazing_summary(
         self, astro_data: dict, location: str, lat: float, lon: float
