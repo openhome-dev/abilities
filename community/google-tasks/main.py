@@ -31,6 +31,14 @@ from src.main import AgentWorker
 
 PREFS_FILE = "google_tasks_prefs.json"
 
+# -- Google OAuth credentials (replace with your real keys) -------------------
+# Get these from: Google Cloud Console → APIs & Services → Credentials
+# If left empty, the voice setup will ask for them during first use.
+# If pre-filled, the voice setup skips credential collection and goes
+# straight to the browser authorization step.
+GOOGLE_CLIENT_ID = "YOUR_GOOGLE_CLIENT_ID"
+GOOGLE_CLIENT_SECRET = "YOUR_GOOGLE_CLIENT_SECRET"
+
 TASKS_BASE_URL = "https://tasks.googleapis.com"
 OAUTH_TOKEN_URL = "https://oauth2.googleapis.com/token"
 OAUTH_AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
@@ -348,48 +356,63 @@ class GoogleTasksCapability(MatchingCapability):
 
     async def handle_oauth_setup(self):
         """Guide user through Google Tasks OAuth 2.0 setup."""
-        await self.capability_worker.speak(
-            "Welcome to Google Tasks! Let's get you connected. "
-            "You'll need a Google Cloud project with the Tasks API enabled. "
-            "Have you already set that up?"
+        # Use pre-filled constants if available (not placeholders)
+        client_id = GOOGLE_CLIENT_ID.strip()
+        client_secret = GOOGLE_CLIENT_SECRET.strip()
+        has_prefilled = (
+            client_id and client_secret
+            and not client_id.startswith("YOUR_")
+            and not client_secret.startswith("YOUR_")
         )
-        has_project = await self._ask_yes_no()
 
-        if not has_project:
+        if has_prefilled:
             await self.capability_worker.speak(
-                "No problem. Here's what to do. "
-                "First, go to console dot cloud dot google dot com "
-                "and create a new project. "
-                "Then go to APIs and Services, Library, and enable the Tasks API. "
-                "Next, set up the OAuth consent screen: "
-                "choose External, add your email as a test user. "
-                "Finally, go to Credentials, create an OAuth client ID, "
-                "choose Web application, and set the redirect URI to "
-                "h t t p s colon slash slash localhost. "
-                "Copy your Client ID and Client Secret. "
-                "Let me know when you have those ready."
+                "Welcome to Google Tasks! Your credentials are pre-configured. "
+                "I just need you to authorize access in your browser."
             )
-            ready = await self.capability_worker.user_response()
-            if not ready or self._is_exit(ready):
+        else:
+            await self.capability_worker.speak(
+                "Welcome to Google Tasks! Let's get you connected. "
+                "You'll need a Google Cloud project with the Tasks API enabled. "
+                "Have you already set that up?"
+            )
+            has_project = await self._ask_yes_no()
+
+            if not has_project:
+                await self.capability_worker.speak(
+                    "No problem. Here's what to do. "
+                    "First, go to console dot cloud dot google dot com "
+                    "and create a new project. "
+                    "Then go to APIs and Services, Library, and enable the Tasks API. "
+                    "Next, set up the OAuth consent screen: "
+                    "choose External, add your email as a test user. "
+                    "Finally, go to Credentials, create an OAuth client ID, "
+                    "choose Web application, and set the redirect URI to "
+                    "h t t p s colon slash slash localhost. "
+                    "Copy your Client ID and Client Secret. "
+                    "Let me know when you have those ready."
+                )
+                ready = await self.capability_worker.user_response()
+                if not ready or self._is_exit(ready):
+                    return
+
+            # Collect Client ID
+            await self.capability_worker.speak(
+                "What's your Client ID? You can paste it in."
+            )
+            client_id = await self.capability_worker.user_response()
+            if not client_id or self._is_exit(client_id):
                 return
+            client_id = client_id.strip()
 
-        # Collect Client ID
-        await self.capability_worker.speak(
-            "What's your Client ID? You can paste it in."
-        )
-        client_id = await self.capability_worker.user_response()
-        if not client_id or self._is_exit(client_id):
-            return
-        client_id = client_id.strip()
-
-        # Collect Client Secret
-        await self.capability_worker.speak(
-            "Got it. And the Client Secret?"
-        )
-        client_secret = await self.capability_worker.user_response()
-        if not client_secret or self._is_exit(client_secret):
-            return
-        client_secret = client_secret.strip()
+            # Collect Client Secret
+            await self.capability_worker.speak(
+                "Got it. And the Client Secret?"
+            )
+            client_secret = await self.capability_worker.user_response()
+            if not client_secret or self._is_exit(client_secret):
+                return
+            client_secret = client_secret.strip()
 
         self._log("info", f"OAuth setup for client: {client_id[:20]}...")
 
@@ -1334,8 +1357,8 @@ class GoogleTasksCapability(MatchingCapability):
             except (json.JSONDecodeError, Exception):
                 self._log("error", "Corrupt prefs file, using defaults.")
         return {
-            "client_id": "",
-            "client_secret": "",
+            "client_id": GOOGLE_CLIENT_ID if not GOOGLE_CLIENT_ID.startswith("YOUR_") else "",
+            "client_secret": GOOGLE_CLIENT_SECRET if not GOOGLE_CLIENT_SECRET.startswith("YOUR_") else "",
             "refresh_token": "",
             "access_token": "",
             "token_expires_at": 0,

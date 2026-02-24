@@ -1,78 +1,179 @@
 # Google Tasks
 
-Voice-powered Google Tasks management for OpenHome. Add tasks, check what's due, mark things done, get daily summaries, and switch between lists — all by voice.
+Voice-powered Google Tasks management for OpenHome. Add tasks, check what's due, mark things done, get daily summaries, and switch between task lists — all by voice. Uses OAuth 2.0 for secure authentication with your Google account.
 
-## Features
+## What It Does
 
-- **Add Tasks** — "Add a task: call the dentist by Friday"
-- **List Tasks** — "What's due today?" / "What's on my list?"
-- **Complete Tasks** — "Mark call the dentist done" / "Complete task 2"
-- **Daily Summary** — "Task summary" / "How's my day?"
-- **Switch Lists** — "Switch to Work list" / "What lists do I have?"
+| Mode | Example Voice Commands | Description |
+|---|---|---|
+| **Add Task** | "Add a task: call the dentist by Friday" / "Remind me to buy groceries tomorrow" | Creates a task with optional due date and notes |
+| **List Tasks** | "What's due today?" / "What's on my list?" / "Any overdue tasks?" | Lists tasks with date filtering (today, this week, overdue, all) |
+| **Complete Task** | "Mark call the dentist done" / "Complete task 2" / "Mark the first one done" | Completes a task by name, number, or position |
+| **Daily Summary** | "Task summary" / "How's my day?" | Overview of overdue, today, upcoming, and undated tasks |
+| **Switch List** | "Switch to Work list" / "What lists do I have?" | View and switch between Google Tasks lists |
 
-## Setup
+## Quick Start
 
-This ability uses **Google Tasks API v1** with OAuth 2.0 authentication. You'll need to set up a Google Cloud project (one-time).
+### Prerequisites
 
-### Step 1: Create a Google Cloud Project
+You need a Google Cloud project with the Tasks API enabled. This is a one-time setup (~5 minutes).
+
+### Step 1: Google Cloud Setup
 
 1. Go to [Google Cloud Console](https://console.cloud.google.com/)
-2. Create a new project (or use an existing one)
-3. Go to **APIs & Services → Library**
-4. Search for **"Tasks API"** and click **Enable**
+2. **Create a new project** (or use an existing one)
+3. **Enable the Tasks API**:
+   - Go to **APIs & Services → Library**
+   - Search **"Tasks API"** → click **Enable**
+4. **Configure OAuth consent screen**:
+   - Go to **APIs & Services → OAuth consent screen** (or **Google Auth Platform → Audience** in the new UI)
+   - Choose **External** → Create
+   - Set app name (e.g., "OpenHome Tasks")
+   - Add your email as **User support email** and **Developer contact**
+   - On the **Scopes** page, add: `https://www.googleapis.com/auth/tasks`
+   - On the **Test users** page, add **your Gmail address**
+   - Save
+5. **Create OAuth credentials**:
+   - Go to **APIs & Services → Credentials** (or **Google Auth Platform → Clients**)
+   - Click **Create Credentials → OAuth client ID**
+   - Application type: **Web application**
+   - Under **Authorized redirect URIs**, add: `https://localhost`
+   - Click **Create**
+   - **Copy the Client ID and Client Secret**
 
-### Step 2: Configure OAuth Consent Screen
+### Step 2: Configure the Ability
 
-1. Go to **APIs & Services → OAuth consent screen**
-2. Choose **External** (for personal accounts)
-3. Set app name (e.g., "OpenHome Tasks")
-4. Add scope: `https://www.googleapis.com/auth/tasks`
-5. Add your email as a **test user**
+There are two ways to provide your credentials:
 
-### Step 3: Create OAuth Credentials
+**Option A: Pre-fill in code (recommended for testing)**
 
-1. Go to **APIs & Services → Credentials**
-2. Click **Create Credentials → OAuth client ID**
-3. Application type: **Web application**
-4. Add **Authorized redirect URI**: `https://localhost`
-5. Copy the **Client ID** and **Client Secret**
+Open `main.py` and replace the placeholder values at the top:
 
-### Step 4: Connect via Voice
+```python
+GOOGLE_CLIENT_ID = "your-client-id.apps.googleusercontent.com"
+GOOGLE_CLIENT_SECRET = "your-client-secret"
+```
 
-When you first trigger the ability, it will walk you through:
-1. Entering your Client ID and Client Secret
-2. Opening a browser link to authorize access
-3. Pasting the authorization code
+This skips the voice credential collection — you'll only need to do the browser authorization step.
 
-After setup, the ability remembers your credentials.
+**Option B: Voice-guided setup**
 
-## Usage Examples
+Leave the placeholders as-is. On first use, the ability will ask you for your Client ID and Client Secret by voice.
 
-| Say This | What Happens |
-|---|---|
-| "Add a task: call the dentist by Friday" | Creates a task with a due date |
-| "Remind me to buy groceries tomorrow" | Creates a task due tomorrow |
-| "What's due today?" | Lists tasks due today |
-| "What's on my list?" | Lists all incomplete tasks |
-| "Mark call the dentist done" | Completes the matching task |
-| "Complete task 2" | Completes the 2nd task from last listing |
-| "Task summary" | Overview of overdue, today, upcoming tasks |
-| "Switch to Work list" | Changes active task list |
-| "What lists do I have?" | Shows all available lists |
+### Step 3: Upload to OpenHome
 
-## Voice Tips
+1. Go to the **Customize Ability** page
+2. Upload all 4 files: `main.py`, `config.json`, `__init__.py`, `README.md`
+3. Fill in:
+   - **Unique Name**: `google_tasks`
+   - **Description**: Voice-powered Google Tasks management
+   - **Hotwords**: task, tasks, to do, todo, add a task, new task, remind me, my tasks, what's due, task list, mark done, complete task, check off, task summary, daily tasks, overdue, switch list, google tasks, what do I need to do, finish task
+4. Click **Start Live Test**
 
-- After listing tasks, you can reference them by number: "Mark the first one done"
-- Say "done" or "stop" to exit the ability
-- Due dates are **date only** — Google Tasks doesn't support specific times
-- If a task name is ambiguous, you'll be asked to clarify
+### Step 4: First-Run Authorization
+
+1. Say **"my tasks"** to trigger the ability
+2. The ability will ask you to open a browser and authorize access
+3. Open this URL (replace `YOUR_CLIENT_ID` with your actual Client ID):
+   ```
+   https://accounts.google.com/o/oauth2/v2/auth?client_id=YOUR_CLIENT_ID&redirect_uri=https://localhost&response_type=code&scope=https://www.googleapis.com/auth/tasks&access_type=offline&prompt=consent
+   ```
+4. Sign in with your Google account → click **Allow**
+5. You'll be redirected to a page that won't load (that's normal)
+6. Copy the **code** from the URL bar (everything after `code=` and before `&scope`)
+7. Paste it when the ability asks for it
+8. Done — the ability saves your tokens and auto-refreshes them going forward
+
+## Testing Guide
+
+### Full Test Checklist
+
+**OAuth & Connection:**
+
+| # | Say | Expected |
+|---|---|---|
+| 1 | "my tasks" | Triggers OAuth setup on first run, or goes straight to tasks if already connected |
+| 2 | (after connecting) "my tasks" again | Should NOT re-do OAuth — goes straight to tasks |
+
+**Add Tasks:**
+
+| # | Say | Expected |
+|---|---|---|
+| 3 | "add a task call the dentist by Friday" | Creates task with due date |
+| 4 | "remind me to buy groceries tomorrow" | Creates task due tomorrow |
+| 5 | "new task submit report" | Creates task with no due date |
+| 6 | "add a task" (no details) | Asks "What's the task?" → then you provide details |
+
+**List Tasks:**
+
+| # | Say | Expected |
+|---|---|---|
+| 7 | "what's due today?" | Lists tasks due today |
+| 8 | "what's due this week?" | Lists tasks due this week |
+| 9 | "what's on my list?" | Lists all incomplete tasks |
+| 10 | "any overdue tasks?" | Lists overdue tasks |
+
+**Complete Tasks:**
+
+| # | Say | Expected |
+|---|---|---|
+| 11 | "mark the first one done" | Completes 1st task from last listing |
+| 12 | "complete task 2" | Completes 2nd task from last listing |
+| 13 | "mark call the dentist done" | Fuzzy matches task by name |
+| 14 | "complete something random xyz" | "I couldn't find a task matching that..." |
+
+**Daily Summary:**
+
+| # | Say | Expected |
+|---|---|---|
+| 15 | "task summary" | Summary with overdue/today/upcoming/undated counts |
+| 16 | "how's my day?" | Same summary in natural language |
+
+**Switch Lists:**
+
+| # | Say | Expected |
+|---|---|---|
+| 17 | "what lists do I have?" | Shows all task lists |
+| 18 | "switch to Work" | Switches active list (if you have one) |
+| 19 | "switch to My Tasks" | Switches back to default list |
+
+**Follow-up & Exit:**
+
+| # | Say | Expected |
+|---|---|---|
+| 20 | (after any action, wait for "Anything else?") | Ability stays active for follow-up |
+| 21 | "add a task water the plants" | Works in follow-up without re-triggering |
+| 22 | "done" or "stop" | Exits ability cleanly |
+
+## How It Works
+
+### Architecture
+
+```
+Voice trigger → run() → load prefs → check OAuth
+  → If no refresh_token → handle_oauth_setup() (voice-guided)
+  → If connected → _ensure_valid_token() (auto-refresh)
+  → Classify intent via LLM → Route to handler
+  → Execute handler → Speak result
+  → Follow-up loop ("Anything else?")
+  → User says "done" → resume_normal_flow()
+```
+
+### Key Technical Details
+
+- **Token refresh**: Automatic before every API call. If token has <60s left, it refreshes. On 401, it retries once.
+- **Fuzzy matching**: 3 layers — substring match → `difflib.SequenceMatcher` → LLM fallback. Handles "dentist" matching "call the dentist".
+- **Date parsing**: LLM converts natural language ("by Friday", "next Tuesday") to RFC 3339 dates with timezone awareness.
+- **Task caching**: After listing tasks, results are cached so "mark the first one done" works without re-fetching.
+- **Timezone**: Auto-detected from IP on first run, stored in prefs.
+- **Persistence**: All prefs stored via `capability_worker.write_file()` — no raw `open()` calls.
 
 ## Important Notes
 
-- **Testing mode**: If your Google Cloud app is in "Testing" status, tokens expire after 7 days and you'll need to re-authorize. To avoid this, publish your app (requires Google review for external apps).
-- **No text search**: Google Tasks API has no search feature. The ability fetches your tasks and matches by name using fuzzy matching.
-- **Date only**: Google Tasks only stores dates, not times. "By 3pm Friday" will be stored as "Friday" with no time.
-- **Timezone**: Your timezone is auto-detected from your IP on first run.
+- **Testing mode**: If your Google Cloud app is in "Testing" status, refresh tokens expire after 7 days. You'll need to re-authorize. To avoid this, publish your app (requires Google review).
+- **Date only**: Google Tasks only stores dates, not times. "By 3pm Friday" → saved as "Friday".
+- **No server-side search**: Google Tasks API has no search endpoint. The ability fetches tasks and matches locally using fuzzy matching.
+- **Rate limits**: Google Tasks API allows 50,000 requests/day per project.
 
 ## API Reference
 
