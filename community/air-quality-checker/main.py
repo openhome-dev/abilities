@@ -1,5 +1,4 @@
 import json
-import os
 
 import requests
 from src.agent.capability import MatchingCapability
@@ -51,7 +50,8 @@ class AirQualityCheckerCapability(MatchingCapability):
                 "[AirQuality] Ability started"
             )
 
-            api_token = os.environ.get("WAQI_API_TOKEN", "")
+            #Place your WAQI_API_KEY here
+            api_key = "your_api_key_here"
             if not api_token:
                 await self.capability_worker.speak(
                     "I need a WAQI API token to check air quality. "
