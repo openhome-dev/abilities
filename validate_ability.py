@@ -130,7 +130,7 @@ def validate_ability(path: str) -> ValidationResult:
         # ----------------------------------------------------------
         # Check for register capability tag
         # ----------------------------------------------------------
-        has_register_tag = bool(re.search(r"#\{\{register capability\}\}", code))
+        has_register_tag = bool(re.search(r"#\s?\{\{register_capability\}\}", code))
 
         if not has_register_tag:
             result.error(
