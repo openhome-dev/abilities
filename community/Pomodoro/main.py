@@ -11,7 +11,7 @@ from src.main import AgentWorker
 
 
 class PomodoroFocusTimerCapability(MatchingCapability):
-    #{{register capability}}
+    # {{register capability}}
     worker: AgentWorker = None
     capability_worker: CapabilityWorker = None
 
@@ -34,7 +34,6 @@ class PomodoroFocusTimerCapability(MatchingCapability):
         "eighteen": 18, "nineteen": 19, "twenty": 20, "thirty": 30,
         "forty": 40, "fifty": 50
     }
-
 
     def call(self, worker: AgentWorker):
         self.worker = worker
@@ -302,13 +301,13 @@ class PomodoroFocusTimerCapability(MatchingCapability):
                 # First try numeric digits
                 digits = ''.join(filter(str.isdigit, config_response))
                 direct_mins = None
-                
+
                 if digits:
                     direct_mins = int(digits)
                 else:
                     # Try word numbers (e.g., "two minutes", "one")
                     direct_mins = self._parse_add_minutes(config_response)
-                
+
                 if direct_mins and direct_mins > 0:
                     prefs["focus_minutes"] = direct_mins
                     self.worker.editor_logging_handler.info(
@@ -324,7 +323,7 @@ class PomodoroFocusTimerCapability(MatchingCapability):
                 )
 
         await self.save_preferences(prefs)
-        
+
         # Log final preferences being used
         self.worker.editor_logging_handler.info(
             f"Using preferences - Focus: {prefs['focus_minutes']}min, "
@@ -545,7 +544,7 @@ class PomodoroFocusTimerCapability(MatchingCapability):
         self.worker.editor_logging_handler.info(
             f"Starting focus session {session_number} with duration: {duration_minutes} minutes"
         )
-        
+
         if session_number == 1:
             await self.capability_worker.speak(
                 f"Starting a {duration_minutes} minute focus session. "
@@ -583,7 +582,7 @@ class PomodoroFocusTimerCapability(MatchingCapability):
                 remaining_time = end_time - time.time()
                 mins_left = int(remaining_time // 60)
                 secs_left = int(remaining_time % 60)
-                
+
                 if mins_left > 0:
                     await self.capability_worker.speak(
                         f"Halfway there. {mins_left} minutes left. Keep going."
