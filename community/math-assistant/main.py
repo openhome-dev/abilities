@@ -1,5 +1,4 @@
 import json
-import re
 import math
 import random
 from src.agent.capability import MatchingCapability
@@ -9,8 +8,8 @@ from src.agent.capability_worker import CapabilityWorker
 
 class MathAssistantCapability(MatchingCapability):
     """
-    A voice-enabled math assistant that can perform calculations,
-    solve equations, convert units, and explain mathematical concepts.
+    A voice-enabled math assistant that uses LLM to parse natural language
+    math requests and perform calculations.
     """
 
     worker: AgentWorker = None
@@ -22,13 +21,18 @@ class MathAssistantCapability(MatchingCapability):
         """Main entry point for the math assistant capability."""
 
         await self.capability_worker.speak(
-            "Hello! I'm your math assistant. I can help with calculations, "
-            "solve equations, convert units, or explain math concepts. "
-            "What would you like to do?"
+            "Hello! I'm your math assistant. Ask me to calculate something, "
+            "solve an equation, convert units, or roll dice. What would you like to do?"
         )
 
         while True:
             user_input = await self.capability_worker.user_response()
+
+            if not user_input:
+                await self.capability_worker.speak(
+                    "I didn't catch that. Could you please repeat?"
+                )
+                continue
 
             # Check for exit commands
             if self._is_exit_command(user_input):
@@ -36,424 +40,268 @@ class MathAssistantCapability(MatchingCapability):
                 self.capability_worker.resume_normal_flow()
                 return
 
-            # Process the math request
-            response = await self._process_math_request(user_input)
+            # Use LLM to parse the math request
+            parsed = self._parse_math_request(user_input)
+
+            # Handle based on the parsed intent
+            response = await self._handle_parsed_request(parsed, user_input)
 
             # Ask if they need more help
             follow_up = await self.capability_worker.run_io_loop(
-                response + " Would you like help with anything else? "
-                "Say 'no' to exit."
+                response + " Would you like help with anything else? Say 'no thanks' to exit."
             )
 
             if self._is_exit_command(follow_up):
                 await self.capability_worker.speak("Goodbye! Happy calculating!")
                 self.capability_worker.resume_normal_flow()
                 return
-            # Otherwise continue the loop with the follow-up as the next input
 
-    async def _process_math_request(self, user_input: str) -> str:
-        """Process different types of math requests."""
+    def _parse_math_request(self, user_input: str) -> dict:
+        """Use LLM to parse the user's math request into structured data."""
 
-        user_lower = user_input.lower()
+        system_prompt = """You are a math parser. Extract the mathematical intent from user speech.
+        
+Respond ONLY with a JSON object in this exact format:
+{
+    "intent": "calculation|conversion|equation|percentage|sqrt|power|random|unknown",
+    "numbers": [list of numbers found],
+    "operation": "add|subtract|multiply|divide|convert|solve|percent|sqrt|power|roll|flip",
+    "from_unit": "unit converting from (for conversions)",
+    "to_unit": "unit converting to (for conversions)",
+    "expression": "the mathematical expression to evaluate",
+    "explanation": "brief explanation of what the user wants"
+}
 
-        # Unit conversion
-        if any(
-            word in user_lower
-            for word in [
-                "convert",
-                "to",
-                "in",
-                "feet",
-                "meters",
-                "miles",
-                "kilometers",
-                "pounds",
-                "kilograms",
-            ]
-        ):
-            return await self._handle_conversion(user_input)
+Examples:
+- "what is 5 plus 3" → {"intent": "calculation", "numbers": [5, 3], "operation": "add", "expression": "5 + 3"}
+- "convert 10 miles to kilometers" → {"intent": "conversion", "numbers": [10], "from_unit": "miles", "to_unit": "kilometers"}
+- "solve 2x plus 5 equals 15" → {"intent": "equation", "numbers": [2, 5, 15], "operation": "solve", "expression": "2x + 5 = 15"}
+- "roll a dice" → {"intent": "random", "operation": "roll", "explanation": "roll a 6-sided die"}
+- "square root of 16" → {"intent": "sqrt", "numbers": [16], "operation": "sqrt"}
+"""
 
-        # Equation solving
-        if any(
-            word in user_lower
-            for word in ["solve", "equation", "find x", "what is x"]
-        ):
-            return await self._handle_equation(user_input)
+        prompt = f"Parse this math request: '{user_input}'"
 
-        # Percentage calculations
-        if any(word in user_lower for word in ["percent", "%", "percentage"]):
-            return await self._handle_percentage(user_input)
-
-        # Square root
-        if any(word in user_lower for word in ["square root", "sqrt", "root of"]):
-            return await self._handle_square_root(user_input)
-
-        # Powers/exponents
-        if any(
-            word in user_lower for word in ["power", "squared", "cubed", "to the power"]
-        ):
-            return await self._handle_power(user_input)
-
-        # Random number
-        if any(word in user_lower for word in ["random", "dice", "coin", "flip"]):
-            return await self._handle_random(user_input)
-
-        # Basic calculation
-        return await self._handle_calculation(user_input)
-
-    async def _handle_calculation(self, expression: str) -> str:
-        """Handle basic arithmetic calculations safely."""
         try:
-            result = self._parse_and_calculate(expression)
+            response = self.capability_worker.text_to_text_response(
+                prompt, system_prompt=system_prompt
+            )
+
+            # Extract JSON from response
+            import re
+            json_match = re.search(r'\{.*\}', response, re.DOTALL)
+            if json_match:
+                return json.loads(json_match.group())
+            else:
+                return {"intent": "unknown", "explanation": "Could not parse request"}
+
+        except Exception:
+            return {"intent": "unknown", "explanation": "Parse error"}
+
+    async def _handle_parsed_request(self, parsed: dict, original_input: str) -> str:
+        """Handle the parsed math request based on intent."""
+
+        intent = parsed.get("intent", "unknown")
+        numbers = parsed.get("numbers", [])
+
+        try:
+            if intent == "calculation":
+                return self._do_calculation(parsed, original_input)
+
+            elif intent == "conversion":
+                return self._do_conversion(parsed)
+
+            elif intent == "equation":
+                return self._do_equation(parsed)
+
+            elif intent == "percentage":
+                return self._do_percentage(parsed, original_input)
+
+            elif intent == "sqrt":
+                if numbers:
+                    result = math.sqrt(numbers[0])
+                    return f"The square root of {numbers[0]} is {result:.4f}."
+                return "What number would you like the square root of?"
+
+            elif intent == "power":
+                return self._do_power(parsed)
+
+            elif intent == "random":
+                operation = parsed.get("operation", "")
+                if operation == "roll":
+                    result = random.randint(1, 6)
+                    return f"You rolled a {result}."
+                elif operation == "flip":
+                    result = random.choice(["heads", "tails"])
+                    return f"It's {result}!"
+                elif len(numbers) >= 2:
+                    result = random.randint(int(numbers[0]), int(numbers[1]))
+                    return f"Your random number between {numbers[0]} and {numbers[1]} is {result}."
+                else:
+                    result = random.randint(1, 100)
+                    return f"Your random number is {result}."
+
+            else:
+                # Fallback: ask LLM to help interpret
+                return self._fallback_response(original_input)
+
+        except Exception as e:
+            return f"I had trouble with that calculation. Could you try rephrasing?"
+
+    def _do_calculation(self, parsed: dict, original_input: str) -> str:
+        """Perform basic arithmetic calculation."""
+        numbers = parsed.get("numbers", [])
+        operation = parsed.get("operation", "")
+        expression = parsed.get("expression", "")
+
+        if len(numbers) >= 2:
+            a, b = numbers[0], numbers[1]
+
+            if operation == "add":
+                result = a + b
+                return f"{a} plus {b} equals {result}."
+            elif operation == "subtract":
+                result = a - b
+                return f"{a} minus {b} equals {result}."
+            elif operation == "multiply":
+                result = a * b
+                return f"{a} times {b} equals {result}."
+            elif operation == "divide":
+                if b == 0:
+                    return "I can't divide by zero."
+                result = a / b
+                return f"{a} divided by {b} equals {result:.4f}."
+
+        # Fallback to LLM for complex expressions
+        system_prompt = "You are a calculator. Respond with ONLY the numerical answer, nothing else."
+        prompt = f"Calculate: {expression or original_input}. Give only the number."
+
+        try:
+            result = self.capability_worker.text_to_text_response(prompt, system_prompt=system_prompt)
+            # Clean up the result
+            result = result.strip().replace(",", "")
             return f"The answer is {result}."
         except Exception:
-            return (
-                "I couldn't calculate that. Please try saying it differently, "
-                "like 'what is 5 plus 3' or 'calculate 10 times 4'."
-            )
+            return "I couldn't calculate that. Try saying something like 'what is 5 plus 3'."
 
-    def _parse_and_calculate(self, expression: str):
-        """Parse and calculate mathematical expressions safely."""
-        # Clean up the expression
-        cleaned = self._clean_expression(expression)
-
-        # Extract numbers and operators
-        # Handle multi-digit numbers and decimals
-        tokens = re.findall(r"\d+\.?\d*|[+\-*/()]", cleaned.replace(" ", ""))
-
-        if not tokens:
-            raise ValueError("No valid tokens found")
-
-        # Convert number tokens to floats
-        parsed_tokens = []
-        for token in tokens:
-            if token in "+-*/()":
-                parsed_tokens.append(token)
-            else:
-                parsed_tokens.append(float(token))
-
-        # Evaluate using safe shunting yard algorithm
-        return self._evaluate_tokens(parsed_tokens)
-
-    def _evaluate_tokens(self, tokens):
-        """Evaluate tokens using operator precedence (shunting yard)."""
-        # Define operator precedence
-        precedence = {"+": 1, "-": 1, "*": 2, "/": 2}
-
-        output = []
-        operators = []
-
-        i = 0
-        while i < len(tokens):
-            token = tokens[i]
-
-            if isinstance(token, (int, float)):
-                output.append(token)
-            elif token == "(":
-                operators.append(token)
-            elif token == ")":
-                while operators and operators[-1] != "(":
-                    output.append(operators.pop())
-                if operators and operators[-1] == "(":
-                    operators.pop()  # Remove the '('
-            elif token in precedence:
-                while (
-                    operators
-                    and operators[-1] != "("
-                    and operators[-1] in precedence
-                    and precedence[operators[-1]] >= precedence[token]
-                ):
-                    output.append(operators.pop())
-                operators.append(token)
-            i += 1
-
-        # Pop remaining operators
-        while operators:
-            output.append(operators.pop())
-
-        # Evaluate postfix expression
-        stack = []
-        for token in output:
-            if isinstance(token, (int, float)):
-                stack.append(token)
-            elif token in "+-*/":
-                if len(stack) < 2:
-                    raise ValueError("Invalid expression")
-                b = stack.pop()
-                a = stack.pop()
-                if token == "+":
-                    stack.append(a + b)
-                elif token == "-":
-                    stack.append(a - b)
-                elif token == "*":
-                    stack.append(a * b)
-                elif token == "/":
-                    if b == 0:
-                        raise ValueError("Division by zero")
-                    stack.append(a / b)
-
-        if len(stack) != 1:
-            raise ValueError("Invalid expression")
-
-        result = stack[0]
-
-        # Format result nicely
-        if isinstance(result, float):
-            if result.is_integer():
-                return int(result)
-            return round(result, 4)
-        return result
-
-    async def _handle_conversion(self, user_input: str) -> str:
-        """Handle unit conversions."""
-        try:
-            # Extract number and units
-            result = self._convert_units(user_input)
-            return result
-        except Exception:
-            return (
-                "I can convert between feet and meters, miles and kilometers, "
-                "pounds and kilograms, Celsius and Fahrenheit, and more. "
-                "What would you like to convert?"
-            )
-
-    async def _handle_equation(self, user_input: str) -> str:
-        """Handle simple equation solving."""
-        try:
-            # Look for patterns like "2x + 3 = 7"
-            result = self._solve_simple_equation(user_input)
-            return result
-        except Exception:
-            return (
-                "I can solve simple equations like '2x plus 3 equals 7' or "
-                "'x minus 5 equals 10'. What equation would you like me to solve?"
-            )
-
-    async def _handle_percentage(self, user_input: str) -> str:
-        """Handle percentage calculations."""
-        try:
-            result = self._calculate_percentage(user_input)
-            return result
-        except Exception:
-            return (
-                "I can calculate percentages like 'what is 20 percent of 100' "
-                "or '50 is what percent of 200'. What would you like to know?"
-            )
-
-    async def _handle_square_root(self, user_input: str) -> str:
-        """Handle square root calculations."""
-        try:
-            # Extract number
-            numbers = re.findall(r"\d+", user_input)
-            if numbers:
-                num = float(numbers[0])
-                result = math.sqrt(num)
-                return f"The square root of {num} is {result:.4f}."
-            else:
-                return "What number would you like the square root of?"
-        except Exception:
-            return "I can find square roots. Just ask for the square root of any number."
-
-    async def _handle_power(self, user_input: str) -> str:
-        """Handle power/exponent calculations."""
-        try:
-            result = self._calculate_power(user_input)
-            return result
-        except Exception:
-            return (
-                "I can calculate powers. Try saying '2 to the power of 5' "
-                "or 'what is 3 squared'."
-            )
-
-    async def _handle_random(self, user_input: str) -> str:
-        """Handle random number generation."""
-        user_lower = user_input.lower()
-
-        if "dice" in user_lower or "die" in user_lower:
-            result = random.randint(1, 6)
-            return f"You rolled a {result}."
-
-        if "coin" in user_lower or "flip" in user_lower:
-            result = random.choice(["heads", "tails"])
-            return f"It's {result}!"
-
-        if "between" in user_lower:
-            numbers = re.findall(r"\d+", user_input)
-            if len(numbers) >= 2:
-                low, high = int(numbers[0]), int(numbers[1])
-                result = random.randint(low, high)
-                return f"Your random number between {low} and {high} is {result}."
-
-        # Default random number 1-100
-        result = random.randint(1, 100)
-        return f"Your random number is {result}."
-
-    def _clean_expression(self, expression: str) -> str:
-        """Clean up the expression for calculation."""
-        # Replace words with symbols
-        replacements = {
-            "plus": "+",
-            "minus": "-",
-            "times": "*",
-            "multiplied by": "*",
-            "divided by": "/",
-            "over": "/",
-            "modulo": "%",
-            "mod": "%",
-        }
-
-        result = expression.lower()
-        for word, symbol in replacements.items():
-            result = result.replace(word, symbol)
-
-        # Remove any characters that aren't numbers, operators, or parentheses
-        result = re.sub(r"[^0-9+\-*/().\s]", "", result)
-
-        return result
-
-    def _convert_units(self, user_input: str) -> str:
-        """Handle unit conversions."""
-        user_lower = user_input.lower()
-        numbers = re.findall(r"\d+\.?\d*", user_input)
+    def _do_conversion(self, parsed: dict) -> str:
+        """Perform unit conversion."""
+        numbers = parsed.get("numbers", [])
+        from_unit = parsed.get("from_unit", "").lower()
+        to_unit = parsed.get("to_unit", "").lower()
 
         if not numbers:
             return "What value would you like to convert?"
 
-        value = float(numbers[0])
+        value = numbers[0]
 
         # Length conversions
-        if "mile" in user_lower and "kilometer" in user_lower:
+        if "mile" in from_unit and "kilometer" in to_unit:
             result = value * 1.60934
             return f"{value} miles is {result:.2f} kilometers."
-        if "kilometer" in user_lower and "mile" in user_lower:
+        if "kilometer" in from_unit and "mile" in to_unit:
             result = value / 1.60934
             return f"{value} kilometers is {result:.2f} miles."
-        if "foot" in user_lower or "feet" in user_lower:
+        if ("foot" in from_unit or "feet" in from_unit) and "meter" in to_unit:
             result = value * 0.3048
             return f"{value} feet is {result:.2f} meters."
-        if "meter" in user_lower and "foot" in user_lower:
+        if "meter" in from_unit and ("foot" in to_unit or "feet" in to_unit):
             result = value / 0.3048
             return f"{value} meters is {result:.2f} feet."
-        if "inch" in user_lower:
+        if "inch" in from_unit and "centimeter" in to_unit:
             result = value * 2.54
             return f"{value} inches is {result:.2f} centimeters."
 
         # Weight conversions
-        if "pound" in user_lower and "kilogram" in user_lower:
+        if "pound" in from_unit and "kilogram" in to_unit:
             result = value * 0.453592
             return f"{value} pounds is {result:.2f} kilograms."
-        if "kilogram" in user_lower and "pound" in user_lower:
+        if "kilogram" in from_unit and "pound" in to_unit:
             result = value / 0.453592
             return f"{value} kilograms is {result:.2f} pounds."
 
         # Temperature conversions
-        if "fahrenheit" in user_lower and "celsius" in user_lower:
+        if "fahrenheit" in from_unit and "celsius" in to_unit:
             result = (value - 32) * 5 / 9
-            return f"{value}°F is {result:.1f}°C."
-        if "celsius" in user_lower and "fahrenheit" in user_lower:
+            return f"{value} degrees Fahrenheit is {result:.1f} degrees Celsius."
+        if "celsius" in from_unit and "fahrenheit" in to_unit:
             result = (value * 9 / 5) + 32
-            return f"{value}°C is {result:.1f}°F."
+            return f"{value} degrees Celsius is {result:.1f} degrees Fahrenheit."
 
-        return (
-            "I can convert between miles and kilometers, feet and meters, "
-            "pounds and kilograms, and Fahrenheit and Celsius. "
-            "What would you like to convert?"
-        )
+        return f"I can convert between miles and kilometers, feet and meters, pounds and kilograms, and Fahrenheit and Celsius."
 
-    def _solve_simple_equation(self, equation: str) -> str:
-        """Solve simple linear equations like '2x + 3 = 7'."""
-        try:
-            # Remove spaces and convert to lowercase
-            eq = equation.lower().replace(" ", "").replace("equals", "=")
+    def _do_equation(self, parsed: dict) -> str:
+        """Solve simple linear equations."""
+        numbers = parsed.get("numbers", [])
+        expression = parsed.get("expression", "")
 
-            # Pattern: ax + b = c or ax - b = c
-            match = re.search(r"(\d*)x([+-])(\d+)=(\d+)", eq)
-            if match:
-                a_str, op, b_str, c_str = match.groups()
-                a = int(a_str) if a_str else 1
-                b = int(b_str)
-                c = int(c_str)
+        # Pattern: ax + b = c
+        if len(numbers) >= 3:
+            a, b, c = numbers[0], numbers[1], numbers[2]
+            x = (c - b) / a
+            if x == int(x):
+                return f"x equals {int(x)}."
+            return f"x equals {x:.4f}."
 
-                if op == "+":
-                    x = (c - b) / a
-                else:
-                    x = (c + b) / a
+        # Pattern: x + b = c
+        elif len(numbers) >= 2:
+            b, c = numbers[0], numbers[1]
+            x = c - b
+            return f"x equals {int(x)}."
 
-                if x == int(x):
-                    return f"x equals {int(x)}."
-                return f"x equals {x:.4f}."
+        return "I can solve simple equations like '2x plus 3 equals 7'. Could you rephrase your equation?"
 
-            # Pattern: x + b = c or x - b = c
-            match = re.search(r"x([+-])(\d+)=(\d+)", eq)
-            if match:
-                op, b, c = match.groups()
-                b, c = int(b), int(c)
-                if op == "+":
-                    x = c - b
-                else:
-                    x = c + b
-                return f"x equals {x}."
-
-            return (
-                "I can solve simple equations like '2x plus 3 equals 7' or "
-                "'x minus 5 equals 10'. Could you rephrase your equation?"
-            )
-        except Exception:
-            return (
-                "I can solve simple linear equations. Try saying something like "
-                "'solve 2x plus 3 equals 7'."
-            )
-
-    def _calculate_percentage(self, user_input: str) -> str:
+    def _do_percentage(self, parsed: dict, original_input: str) -> str:
         """Calculate percentages."""
-        numbers = re.findall(r"\d+", user_input)
-        user_lower = user_input.lower()
+        numbers = parsed.get("numbers", [])
 
         if len(numbers) >= 2:
-            a, b = int(numbers[0]), int(numbers[1])
+            a, b = numbers[0], numbers[1]
 
             # "What is X% of Y?"
-            if "of" in user_lower:
+            if "of" in original_input.lower():
                 result = (a * b) / 100
                 return f"{a}% of {b} is {result}."
 
             # "X is what percent of Y?"
-            if "is" in user_lower and "what" in user_lower:
-                result = (a / b) * 100
-                return f"{a} is {result:.2f}% of {b}."
+            result = (a / b) * 100
+            return f"{a} is {result:.2f}% of {b}."
 
-        return (
-            "I can calculate percentages. Try saying 'what is 20 percent of 100' "
-            "or '50 is what percent of 200'."
-        )
+        return "I can calculate percentages. Try saying 'what is 20 percent of 100'."
 
-    def _calculate_power(self, user_input: str) -> str:
+    def _do_power(self, parsed: dict) -> str:
         """Calculate powers."""
-        numbers = re.findall(r"\d+", user_input)
-        user_lower = user_input.lower()
-
-        if "squared" in user_lower and numbers:
-            num = int(numbers[0])
-            result = num**2
-            return f"{num} squared is {result}."
-
-        if "cubed" in user_lower and numbers:
-            num = int(numbers[0])
-            result = num**3
-            return f"{num} cubed is {result}."
+        numbers = parsed.get("numbers", [])
 
         if len(numbers) >= 2:
-            base, exp = int(numbers[0]), int(numbers[1])
-            result = base**exp
+            base, exp = numbers[0], numbers[1]
+            result = base ** exp
             return f"{base} to the power of {exp} is {result}."
+        elif len(numbers) == 1:
+            result = numbers[0] ** 2
+            return f"{numbers[0]} squared is {result}."
 
-        return (
-            "I can calculate powers. Try saying 'what is 2 to the power of 5' "
-            "or 'what is 3 squared'."
-        )
+        return "What number would you like to calculate a power for?"
+
+    def _fallback_response(self, user_input: str) -> str:
+        """Fallback: use LLM to generate a helpful response."""
+        system_prompt = """You are a helpful math assistant. The user has asked something 
+        you couldn't parse as a specific math operation. Help them understand what you can do 
+        (calculations, conversions, equations, percentages, square roots, powers, dice rolls). 
+        Keep your response friendly and under 2 sentences."""
+
+        try:
+            response = self.capability_worker.text_to_text_response(
+                f"User said: {user_input}", system_prompt=system_prompt
+            )
+            return response
+        except Exception:
+            return "I can help with calculations, conversions, equations, percentages, and more. What would you like to calculate?"
 
     def _is_exit_command(self, text: str) -> bool:
         """Check if user wants to exit."""
+        if not text:
+            return False
         exit_words = [
             "no",
             "exit",
@@ -464,11 +312,12 @@ class MathAssistantCapability(MatchingCapability):
             "bye",
             "thanks",
             "thank you",
+            "no thanks",
+            "that's all",
+            "thats all",
         ]
-        return (
-            text.lower().strip() in exit_words
-            or text.lower().strip().rstrip(".") in exit_words
-        )
+        text_lower = text.lower().strip().rstrip(".!?")
+        return text_lower in exit_words or any(word in text_lower for word in exit_words[:5])
 
     def call(self, worker: AgentWorker):
         """Initialize and start the capability."""
