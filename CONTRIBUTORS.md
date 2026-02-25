@@ -33,5 +33,5 @@ Format: - **@username** — ability-name ([ability-name](community/ability-name/
 - **[@Kuberwastaken](https://github.com/Kuberwastaken)** — hn-digest ([hn-digest](community/hn-digest/))
 - **[@sterling-prog](https://github.com/sterling-prog)** — recipe-coach ([recipe-coach](community/recipe-coach/))
 - **[@cedarscarlett](https://github.com/cedarscarlett)** — gdrive-voice-manager ([gdrive-voice-manager](community/gdrive-voice-manager/))
-- **[@BILLKISHORE](https://github.com/BILLKISHORE)** — n8n-commander ([n8n-commander](community/n8n-commander/))
+- **[@BILLKISHORE](https://github.com/BILLKISHORE)** — n8n-commander ([n8n-commander](community/n8n-commander/)), mtg-game-master ([mtg-game-master](community/mtg-game-master/))
 - **[@Kaushal-205](https://github.com/Kaushal-205)** — movie-recommender ([movie-recommender](community/movie-recommender/)), air-quality-checker ([air-quality-checker](community/air-quality-checker/)), meditation-breathing-guide ([meditation-breathing-guide](community/meditation-breathing-guide/)), earthquake-monitor ([earthquake-monitor](community/earthquake-monitor/))
