@@ -457,29 +457,6 @@ if len(lines) > MAX_LINES:
     await self.capability_worker.write_file("log.txt", recent, False)
 ```
 
-## Limitations
-
-### File Storage Limits
-- **No hard limit documented** — use reasonable file sizes
-- Large files (>1MB) may slow down read/write operations
-- Consider splitting large datasets across multiple files
-
-### No Directory Support
-- Files are stored flat (no subdirectories)
-- Use naming conventions: `myability_category_file.txt`
-
-### No Binary File Support
-- Only text files supported
-- For images/binary: use base64 encoding (not recommended for large files)
-
-### No Concurrent Write Protection
-- Multiple simultaneous writes may cause data loss
-- Implement locking if needed (advanced)
-
-### No Backup/Recovery
-- Deleted files are gone permanently
-- Consider periodic exports for critical data
-
 ## Quick Start Checklist
 
 ### Understanding the Template
@@ -497,14 +474,6 @@ if len(lines) > MAX_LINES:
 - [ ] Test with various inputs
 - [ ] Add confirmation for destructive operations
 
-## Support & Contribution
-
-If you build something useful with this template:
-- 🎉 Share it with the OpenHome community
-- 💡 Contribute improvements to the template
-- 🤝 Help others troubleshoot file storage issues
-- 📝 Document your use case for future builders
-
 ## Final Reminder
 
 ⚠️ **This template demonstrates file operations, not a complete ability.**
@@ -518,5 +487,3 @@ Use it to learn how to:
 Then build something useful with these tools! 🚀
 
 ---
-
-**Key Takeaway:** File storage is the foundation for building abilities that "remember" information across sessions. Master these 4 operations and you can build anything from simple note-takers to complex data-tracking systems!
