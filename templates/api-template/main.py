@@ -30,7 +30,7 @@ class ApiTemplateCapability(MatchingCapability):
 
     def call(self, worker: AgentWorker):
         self.worker = worker
-        self.capability_worker = CapabilityWorker(self.worker)
+        self.capability_worker = CapabilityWorker(self)
         self.worker.session_tasks.create(self.run())
 
     async def fetch_data(self, query: str) -> str | None:
