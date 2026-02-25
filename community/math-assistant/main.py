@@ -15,7 +15,7 @@ class MathAssistantCapability(MatchingCapability):
     worker: AgentWorker = None
     capability_worker: CapabilityWorker = None
 
-    #{{register capability}}
+    # {{register capability}}
 
     async def run(self):
         """Main entry point for the math assistant capability."""
@@ -145,7 +145,7 @@ Examples:
                 # Fallback: ask LLM to help interpret
                 return self._fallback_response(original_input)
 
-        except Exception as e:
+        except Exception:
             return f"I had trouble with that calculation. Could you try rephrasing?"
 
     def _do_calculation(self, parsed: dict, original_input: str) -> str:
@@ -233,7 +233,7 @@ Examples:
     def _do_equation(self, parsed: dict) -> str:
         """Solve simple linear equations."""
         numbers = parsed.get("numbers", [])
-        expression = parsed.get("expression", "")
+        parsed.get("expression", "")
 
         # Pattern: ax + b = c
         if len(numbers) >= 3:
