@@ -19,9 +19,11 @@ Voice-activated morning briefing that fetches weather, Google Calendar, and Gmai
 
 ## Setup
 
-1. **Google Cloud Console** — Create a project, enable Google Calendar API and Gmail API, create OAuth 2.0 credentials (Desktop app), and download the JSON.
+1. **Google Cloud Console** — Create a project, enable Google Calendar API and Gmail API.
 
-2. **Get tokens** — Use [Google OAuth 2.0 Playground](https://developers.google.com/oauthplayground/):
+2. **Create OAuth 2.0 credentials**: Go to **APIs & Services** -> **Credentials** -> Click **create credentials** -> select **Web application** -> give it a name -> and  under **Authorized redirect URIs** add this URL: `https://developers.google.com/oauthplayground`. Click save and download the JSON.
+   
+3. **Get tokens** — Use [Google OAuth 2.0 Playground](https://developers.google.com/oauthplayground/):
    - Click the gear icon (⚙️) and enable "Use your own OAuth credentials"
    - Enter your Client ID and Client Secret from the downloaded JSON
    - Select scopes: `https://www.googleapis.com/auth/calendar.readonly` and `https://www.googleapis.com/auth/gmail.readonly`
@@ -29,9 +31,9 @@ Voice-activated morning briefing that fetches weather, Google Calendar, and Gmai
    - Click "Exchange authorization code for tokens"
    - Copy the `access_token` and `refresh_token` — you'll paste these into `main.py`
 
-3. **Update main.py** — Replace `YOUR_CLIENT_ID_HERE`, `YOUR_CLIENT_SECRET_HERE`, `YOUR_ACCESS_TOKEN_HERE`, and `YOUR_REFRESH_TOKEN_HERE` with your values.
+4. **Update main.py** — Replace `YOUR_CLIENT_ID_HERE`, `YOUR_CLIENT_SECRET_HERE`, `YOUR_ACCESS_TOKEN_HERE`, and `YOUR_REFRESH_TOKEN_HERE` with your values.
 
-4. **Upload** — Zip this folder, upload to [app.openhome.com](https://app.openhome.com) → Abilities → Add Custom Ability, set trigger words in the dashboard.
+5. **Upload** — Zip this folder, upload to [app.openhome.com](https://app.openhome.com) → Abilities → Add Custom Ability, set trigger words in the dashboard.
 
 ## How It Works
 
