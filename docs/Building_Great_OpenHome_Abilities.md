@@ -57,7 +57,7 @@ This is the thing that trips people up. You can't set a timer that fires in 15 m
 # This is your Ability's entire lifespan:
 def call(self, worker):
     self.worker = worker
-    self.capability_worker = CapabilityWorker(self.worker)
+    self.capability_worker = CapabilityWorker(self)
     self.my_data = {}  # ← exists now
     self.worker.session_tasks.create(self.run())  # ← starts your logic
 
