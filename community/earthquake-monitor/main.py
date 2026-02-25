@@ -62,7 +62,18 @@ class EarthquakeMonitorCapability(MatchingCapability):
                 await self.capability_worker.speak("Goodbye!")
                 return
 
-            location = user_input.strip()
+            location = user_input.lower()
+
+            # Remove trigger words
+            location = location.replace("earthquake", "")
+            location = location.replace("earthquakes", "")
+
+            # Clean punctuation
+            location = location.replace(".", " ").strip()
+
+            # Normalize spaces
+            location = " ".join(location.split())
+
             await self.capability_worker.speak(
                 f"Checking for earthquakes near {location}."
             )
