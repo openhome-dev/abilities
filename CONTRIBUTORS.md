@@ -18,7 +18,7 @@ Format: - **@username** — ability-name ([ability-name](community/ability-name/
 - **[@hassan1731996](https://github.com/hassan1731996)** — daily-briefing ([daily-briefing](community/daily-briefing/)), voice-journal ([voice-journal](community/voice-journal/))
 - **[@BhargavTelu](https://github.com/BhargavTelu)** — grocery-list-manager ([grocery-list-manager](community/grocery-list-manager/))
 - **[@ArturKozhushnyi](https://github.com/ArturKozhushnyi)** — coin-flipper ([coin-flipper](community/coin-flipper/)), Bedtime-Wind-Down ([Bedtime-Wind-Down](community/Bedtime-Wind-Down/))
-- **[@ammyyou112](https://github.com/ammyyou112)** — dad-joke-teller ([dad-joke-teller](community/dad-joke-teller/)), youtube-search-play ([youtube-search-play](community/youtube-search-play/))
+- **[@ammyyou112](https://github.com/ammyyou112)** — dad-joke-teller ([dad-joke-teller](community/dad-joke-teller/)), youtube-search-play ([youtube-search-play](community/youtube-search-play/)), google-daily-brief ([google-daily-brief](community/google-daily-brief/))
 - **[@megz2020](https://github.com/megz2020)** — marketplus ([marketplus](community/marketplus/)), real-time-forex-metal-data ([real-time-forex-metal-data](community/real-time-forex-metal-data/)), pet-care-assistant ([pet-care-assistant](community/pet-care-assistant/))
 - **[@yonaseth12](https://github.com/yonaseth12)** — live-flight-status ([live-flight-status](community/live-flight-status/)), noise-machine ([noise-machine](community/noise-machine/))
 - **[@alimujtaba478](https://github.com/alimujtaba478)** — x-news-feed ([x-news-feed](community/x-news-feed/))
