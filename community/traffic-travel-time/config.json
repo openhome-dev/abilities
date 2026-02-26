@@ -1,0 +1,25 @@
+{
+    "unique_name": "traffic_travel_time",
+    "matching_hotwords": [
+        "traffic",
+        "check traffic",
+        "how long to get to",
+        "how far is",
+        "how long from",
+        "from here to",
+        "distance from",
+        "drive time",
+        "travel time",
+        "how's my commute",
+        "commute check",
+        "when should I leave",
+        "what time should I leave",
+        "save location",
+        "how much is left",
+        "how much longer",
+        "where am I",
+        "how long to drive",
+        "route to",
+        "distance to"
+    ]
+}
