@@ -1239,13 +1239,7 @@ class TrafficTravelTimeCapability(MatchingCapability):
     # ------------------------------------------------------------------
 
     async def load_prefs(self) -> dict:
-        if await self.capability_worker.check_if_file_exists(PREFS_FILE, False):
-            try:
-                raw = await self.capability_worker.read_file(PREFS_FILE, False)
-                return json.loads(raw)
-            except (json.JSONDecodeError, Exception):
-                self._log("error", "Corrupt prefs file, using defaults.")
-        return {
+        prefs = {
             "api_key": GOOGLE_MAPS_API_KEY or "YOUR_GOOGLE_MAPS_API_KEY",
             "preferred_api": "routes",
             "units": "imperial",
@@ -1253,6 +1247,20 @@ class TrafficTravelTimeCapability(MatchingCapability):
             "saved_locations": {},
             "times_used": 0,
         }
+        if await self.capability_worker.check_if_file_exists(PREFS_FILE, False):
+            try:
+                raw = await self.capability_worker.read_file(PREFS_FILE, False)
+                stored = json.loads(raw)
+                prefs.update(stored)
+            except (json.JSONDecodeError, Exception):
+                self._log("error", "Corrupt prefs file, using defaults.")
+        # Pre-filled constant always overrides stored key
+        if (
+            GOOGLE_MAPS_API_KEY
+            and GOOGLE_MAPS_API_KEY != "YOUR_GOOGLE_MAPS_API_KEY"
+        ):
+            prefs["api_key"] = GOOGLE_MAPS_API_KEY
+        return prefs
 
     async def save_prefs(self):
         if await self.capability_worker.check_if_file_exists(PREFS_FILE, False):
