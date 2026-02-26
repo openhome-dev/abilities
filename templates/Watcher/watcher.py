@@ -4,7 +4,7 @@ from src.main import AgentWorker
 from src.agent.capability_worker import CapabilityWorker
 from time import time
 
-class WatcherCapability(MatchingCapability):
+class WatchertestCapabilityWatcher(MatchingCapability):
     worker: AgentWorker = None
     capability_worker: CapabilityWorker = None
     watcher_mode: bool = False
@@ -32,6 +32,6 @@ class WatcherCapability(MatchingCapability):
         # Initialize the worker and capability worker
         self.worker = worker
         self.watcher_mode = watcher_mode
-        self.capability_worker = CapabilityWorker(self)
+        self.capability_worker = CapabilityWorker(self.worker)
 
         self.worker.session_tasks.create(self.first_function())
