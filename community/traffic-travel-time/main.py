@@ -30,7 +30,12 @@ from src.main import AgentWorker
 
 PREFS_FILE = "traffic_prefs.json"
 
-GOOGLE_MAPS_API_KEY = ""
+# -- Google Maps API key (replace with your real key) -------------------------
+# Get this from: Google Cloud Console → APIs & Services → Credentials
+# If left empty, the voice setup will ask for it during first use.
+# If pre-filled, the voice setup skips key collection and goes straight
+# to onboarding (home/work address setup).
+GOOGLE_MAPS_API_KEY = "YOUR_GOOGLE_MAPS_API_KEY"
 
 ROUTES_API_URL = "https://routes.googleapis.com/directions/v2:computeRoutes"
 DISTANCE_MATRIX_URL = "https://maps.googleapis.com/maps/api/distancematrix/json"
