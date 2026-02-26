@@ -12,7 +12,7 @@ Inside any Ability, you have access to two objects:
 
 | Object | What it is | Access via |
 |--------|-----------|------------|
-| `self.capability_worker` | **The SDK** — all I/O, speech, audio, LLM, files, and flow control | `CapabilityWorker(self.worker)` |
+| `self.capability_worker` | **The SDK** — all I/O, speech, audio, LLM, files, and flow control | `CapabilityWorker(self)` |
 | `self.worker` | **The Agent** — logging, session management, memory, user connection info | Passed into `call()` |
 
 ---
