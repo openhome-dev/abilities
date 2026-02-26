@@ -27,7 +27,7 @@ class TodoistVoiceTasksCapability(MatchingCapability):
     capability_worker: CapabilityWorker = None
 
     # Do not change following tag of register capability
-    #{{register capability}}
+    # {{register capability}}
 
     def call(self, worker: AgentWorker):
         self.worker = worker
@@ -228,8 +228,8 @@ class TodoistVoiceTasksCapability(MatchingCapability):
         ]:
             m = re.search(pattern, lower, re.IGNORECASE)
             if m:
-                due = text[m.start() : m.end()].strip()
-                content = (text[: m.start()] + text[m.end() :]).strip()
+                due = text[m.start(): m.end()].strip()
+                content = (text[: m.start()] + text[m.end():]).strip()
                 content = re.sub(r"\s+", " ", content).strip()
                 if content:
                     return content, due
