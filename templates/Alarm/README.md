@@ -527,4 +527,3 @@ Use watchers for real-time monitoring during active sessions, not for long-term 
 
 ---
 
-**Pro tip:** For production alarm systems, consider integrating with device-native alarm APIs rather than relying on session-scoped watchers.
