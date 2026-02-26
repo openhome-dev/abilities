@@ -36,8 +36,7 @@ You need a Google Cloud project with the Tasks API enabled. This is a one-time s
 5. **Create OAuth credentials**:
    - Go to **APIs & Services → Credentials** (or **Google Auth Platform → Clients**)
    - Click **Create Credentials → OAuth client ID**
-   - Application type: **Web application**
-   - Under **Authorized redirect URIs**, add: `https://localhost`
+   - Application type: **Desktop app**
    - Click **Create**
    - **Copy the Client ID and Client Secret**
 
@@ -70,19 +69,17 @@ Leave the placeholders as-is. On first use, the ability will ask you for your Cl
    - **Hotwords**: task, tasks, to do, todo, add a task, new task, remind me, my tasks, what's due, task list, mark done, complete task, check off, task summary, daily tasks, overdue, switch list, google tasks, what do I need to do, finish task
 4. Click **Start Live Test**
 
-### Step 4: First-Run Authorization
+### Step 4: First-Run Authorization (Device Flow)
 
 1. Say **"my tasks"** to trigger the ability
-2. The ability will ask you to open a browser and authorize access
-3. Open this URL (replace `YOUR_CLIENT_ID` with your actual Client ID):
-   ```
-   https://accounts.google.com/o/oauth2/v2/auth?client_id=YOUR_CLIENT_ID&redirect_uri=https://localhost&response_type=code&scope=https://www.googleapis.com/auth/tasks&access_type=offline&prompt=consent
-   ```
-4. Sign in with your Google account → click **Allow**
-5. You'll be redirected to a page that won't load (that's normal)
-6. Copy the **code** from the URL bar (everything after `code=` and before `&scope`)
-7. Paste it when the ability asks for it
-8. Done — the ability saves your tokens and auto-refreshes them going forward
+2. The ability will give you a short code (e.g., `ABCD-EFGH`) and a URL
+3. Open **google.com/device** in any browser
+4. Enter the code the ability gave you
+5. Sign in with your Google account → click **Allow**
+6. Go back to the ability and say **"done"**
+7. That's it — the ability saves your tokens and auto-refreshes them going forward
+
+No broken localhost URLs, no code copying. Just enter a short code and approve.
 
 ## Testing Guide
 
@@ -151,7 +148,7 @@ Leave the placeholders as-is. On first use, the ability will ask you for your Cl
 
 ```
 Voice trigger → run() → load prefs → check OAuth
-  → If no refresh_token → handle_oauth_setup() (voice-guided)
+  → If no refresh_token → handle_oauth_setup() (device flow)
   → If connected → _ensure_valid_token() (auto-refresh)
   → Classify intent via LLM → Route to handler
   → Execute handler → Speak result
