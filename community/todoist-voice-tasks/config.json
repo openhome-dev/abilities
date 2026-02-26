@@ -1,0 +1,22 @@
+{
+  "unique_name": "todoist_voice_tasks",
+  "matching_hotwords": [
+    "open todoist",
+    "todoist",
+    "my tasks",
+    "my task list",
+    "task list",
+    "open my list",
+    "add to my list",
+    "what are my tasks",
+    "what's on my list",
+    "add task",
+    "what are my overdue tasks",
+    "mark my top task complete",
+    "delete from my list",
+    "remove from my list",
+    "complete the task",
+    "complete a task",
+    "mark task complete"
+  ]
+}
