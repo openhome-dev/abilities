@@ -1,5 +1,6 @@
 import json
 import re
+from typing import ClassVar
 
 from src.agent.capability import MatchingCapability
 from src.agent.capability_worker import CapabilityWorker
@@ -21,7 +22,7 @@ class WhatsappMessengerCapability(MatchingCapability):
     capability_worker: CapabilityWorker = None
 
     # Do not change following tag of register capability
-    # {{register capability}}
+    #{{register capability}}
 
     @staticmethod
     def _strip_json_fences(raw: str) -> str:
@@ -33,7 +34,7 @@ class WhatsappMessengerCapability(MatchingCapability):
             raw = "\n".join(inner).strip()
         return raw
 
-    CONTACTS_FILE = "~/.openclaw/wa-contacts.json"
+    CONTACTS_FILE: ClassVar[str] = "~/.openclaw/wa-contacts.json"
 
     async def _lookup_contact(self, name: str) -> str:
         """Look up an E.164 number by name from ~/.openclaw/wa-contacts.json."""
