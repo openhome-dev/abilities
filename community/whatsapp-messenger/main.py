@@ -21,7 +21,7 @@ class WhatsappMessengerCapability(MatchingCapability):
     capability_worker: CapabilityWorker = None
 
     # Do not change following tag of register capability
-    # {{register capability}}
+    #{{register capability}}
 
     @staticmethod
     def _strip_json_fences(raw: str) -> str:
@@ -33,61 +33,22 @@ class WhatsappMessengerCapability(MatchingCapability):
             raw = "\n".join(inner).strip()
         return raw
 
+    CONTACTS_FILE = "~/.openclaw/wa-contacts.json"
+
     async def _lookup_contact(self, name: str) -> str:
-        """Look up an E.164 number by name from ~/.openclaw/wa-contacts.json.
-
-        exec_local_command returns LLM-summarized text, so we use multiple
-        strategies: JSON parse, regex, and finally LLM extraction.
-        Returns the number string, or empty string if not found.
-        """
+        """Look up an E.164 number by name from ~/.openclaw/wa-contacts.json."""
         try:
-            response = await self.capability_worker.exec_local_command(
-                "cat ~/.openclaw/wa-contacts.json 2>/dev/null || echo '{}'"
-            )
-            data = response.get("data", "{}") if isinstance(response, dict) else str(response)
-            self.worker.editor_logging_handler.info(f"Contacts file: {data[:300]}")
-
-            contacts = {}
-            # Try 1: direct JSON parse
-            try:
-                contacts = json.loads(data.strip())
-            except Exception:
-                pass
-
-            # Try 2: extract embedded JSON object from LLM summary
-            if not contacts:
-                json_match = re.search(r'\{[^{}]+\}', data)
-                if json_match:
-                    try:
-                        contacts = json.loads(json_match.group())
-                    except Exception:
-                        pass
-
-            # Try 3: regex for 'name: +number' patterns in LLM summary
-            if not contacts:
-                pairs = re.findall(r'["\']?(\w+)["\']?\s*[:=]\s*["\']?(\+\d+)', data)
-                contacts = {k.lower(): v for k, v in pairs}
-
+            exists = await self.capability_worker.check_if_file_exists(self.CONTACTS_FILE, False)
+            if not exists:
+                return ""
+            raw = await self.capability_worker.read_file(self.CONTACTS_FILE, False)
+            contacts = json.loads(raw)
             self.worker.editor_logging_handler.info(f"Parsed contacts: {contacts}")
-
             name_lower = name.lower()
             for contact_name, number in contacts.items():
                 cn_lower = contact_name.lower()
                 if cn_lower == name_lower or name_lower in cn_lower or cn_lower in name_lower:
                     return number
-
-            # Try 4: use LLM to extract the number for this name from the raw response
-            if data and name:
-                llm_prompt = (
-                    f"From this contacts data: '{data}'\n"
-                    f"What is the phone number for '{name}'? "
-                    "Return ONLY the E.164 phone number (e.g. +923464318173) or the word NONE if not found."
-                )
-                llm_result = self.capability_worker.text_to_text_response(llm_prompt).strip()
-                phone_match = re.search(r'\+\d{7,}', llm_result)
-                if phone_match:
-                    return phone_match.group()
-
         except Exception as e:
             self.worker.editor_logging_handler.info(f"Contact lookup failed: {e}")
         return ""
@@ -99,15 +60,18 @@ class WhatsappMessengerCapability(MatchingCapability):
             safe_number = re.sub(r"[^+\d]", "", number)[:20]
             if not safe_name or not safe_number:
                 return
-            script = (
-                "import json;"
-                "from pathlib import Path;"
-                "p=Path.home()/'.openclaw/wa-contacts.json';"
-                f"d=json.load(open(p)) if p.exists() else {{}};"
-                f"d['{safe_name}']='{safe_number}';"
-                "json.dump(d,open(p,'w'),indent=2)"
+            contacts = {}
+            exists = await self.capability_worker.check_if_file_exists(self.CONTACTS_FILE, False)
+            if exists:
+                raw = await self.capability_worker.read_file(self.CONTACTS_FILE, False)
+                try:
+                    contacts = json.loads(raw)
+                except Exception:
+                    pass
+            contacts[safe_name] = safe_number
+            await self.capability_worker.write_file(
+                self.CONTACTS_FILE, json.dumps(contacts, indent=2), False
             )
-            await self.capability_worker.exec_local_command(f'python3 -c "{script}"')
             self.worker.editor_logging_handler.info(f"Auto-learned: {safe_name} → {safe_number}")
         except Exception as e:
             self.worker.editor_logging_handler.info(f"Auto-learn failed: {e}")
