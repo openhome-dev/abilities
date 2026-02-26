@@ -95,7 +95,7 @@ class PhilipsHueControlCapability(MatchingCapability):
     last_grouped_light_call: float = 0.0
 
     # Do not change following tag of register capability
-    #{{register capability}}
+    # {{register capability}}
 
     def call(self, worker: AgentWorker):
         self.worker = worker
@@ -236,7 +236,7 @@ class PhilipsHueControlCapability(MatchingCapability):
 
         # Try every window of 4 segments in case user says extra words before/after.
         for i in range(len(segments) - 3):
-            window = segments[i : i + 4]
+            window = segments[i: i + 4]
             parsed_parts: List[int] = []
             for segment_tokens in window:
                 value = self._parse_spoken_number_tokens(segment_tokens)
