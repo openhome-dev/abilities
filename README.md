@@ -67,7 +67,7 @@ class MyFirstCapability(MatchingCapability):
 
     def call(self, worker: AgentWorker):
         self.worker = worker
-        self.capability_worker = CapabilityWorker(self.worker)
+        self.capability_worker = CapabilityWorker(self)
         self.worker.session_tasks.create(self.run())
 
     async def run(self):
@@ -102,11 +102,14 @@ Maintained by the OpenHome team. Tested, stable, and supported.
 
 | Ability | Description | Example Triggers | API Required | Docs |
 |---------|-------------|------------------|--------------|------|
+| [Audius Music DJ](official/audius-music-dj/) | Stream & DJ music from Audius | "play something on audius", "dj mode" | Audius | [README](official/audius-music-dj/README.md) |
 | [Basic Advisor](official/basic-advisor/) | Daily life advice | "give me advice", "help me" | None | [README](official/basic-advisor/README.md) |
+| [Date and Time](official/date-and-time/) | Current date & time info | "what time is it", "what's today's date" | None | [README](official/date-and-time/README.md) |
+| [Music Player](official/music-player/) | Play music from URL or file | "play music", "play a song" | None | [README](official/music-player/README.md) |
+| [Perplexity Web Search](official/perplexity-web-search/) | AI-powered web search | "search the web", "look this up" | Perplexity | [README](official/perplexity-web-search/README.md) |
 | [Quiz Game](official/quiz-game/) | AI-generated trivia | "start a quiz", "quiz me" | None | [README](official/quiz-game/README.md) |
 | [Sound Generator](official/sound-generator/) | AI sound effects | "make a sound", "create a sound" | ElevenLabs | [README](official/sound-generator/README.md) |
 | [Weather](official/weather/) | Current weather by location | "what's the weather" | None | [README](official/weather/README.md) |
-| [Music Player](official/music-player/) | Play music from URL or file | "play music", "play a song" | None | [README](official/music-player/README.md) |
 
 > **Trigger words** are configured in the OpenHome dashboard when you install an Ability, not in the code.
 
@@ -130,9 +133,14 @@ Don't start from scratch — grab a template:
 
 | Template | Best For | Pattern |
 |----------|----------|---------|
-| [basic-template](templates/basic-template/) | First-timers | Speak → Listen → Respond → Exit |
-| [api-template](templates/api-template/) | API integrations | Speak → Call API → Speak result → Exit |
-| [loop-template](templates/loop-template/) | Interactive apps | Loop with listen → process → respond → exit command |
+| basic-template | First-timers | Speak → Listen → Respond → Exit |
+| api-template | API integrations | Speak → Call API → Speak result → Exit |
+| loop-template | Interactive apps | Loop with listen → process → respond → exit command |
+| openclaw-template | OpenClaw integrations | OpenClaw-based ability scaffold |
+| OpenHome-local | Local development | Run & test abilities locally |
+| ReadWriteFile | File operations | Read from / write to files on device |
+| SendEmail | Email notifications | Compose & send emails programmatically |
+| Alarm | Timers & alarms | Watcher mode: continuous monitoring loop |
 
 ---
 
