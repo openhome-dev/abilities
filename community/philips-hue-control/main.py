@@ -95,7 +95,7 @@ class PhilipsHueControlCapability(MatchingCapability):
     last_grouped_light_call: float = 0.0
 
     # Do not change following tag of register capability
-    #{{register capability}}
+    # {{register capability}}
 
     def call(self, worker: AgentWorker):
         self.worker = worker
