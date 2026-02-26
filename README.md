@@ -133,14 +133,14 @@ Don't start from scratch — grab a template:
 
 | Template | Best For | Pattern |
 |----------|----------|---------|
-| basic-template | First-timers | Speak → Listen → Respond → Exit |
-| api-template | API integrations | Speak → Call API → Speak result → Exit |
-| loop-template | Interactive apps | Loop with listen → process → respond → exit command |
-| openclaw-template | OpenClaw integrations | OpenClaw-based ability scaffold |
-| OpenHome-local | Local development | Run & test abilities locally |
-| ReadWriteFile | File operations | Read from / write to files on device |
-| SendEmail | Email notifications | Compose & send emails programmatically |
-| Alarm | Timers & alarms | Watcher mode: continuous monitoring loop |
+| [Basic](templates/basic-template) | First-timers | Speak → Listen → Respond → Exit |
+| [API](templates/api-template) | API integrations | Speak → Call API → Speak result → Exit |
+| [Loop](templates/loop-template) | Interactive apps | Loop with listen → process → respond → exit command |
+| [Openclaw](templates/openclaw-template) | OpenClaw integrations | OpenClaw-based ability scaffold |
+| [OpenHome Local](templates/OpenHome-local) | Local development | Run & test abilities locally |
+| [ReadWriteFile](templates/ReadWriteFile) | File operations | Read from / write to files on device |
+| [SendEmail](templates/SendEmail) | Email notifications | Compose & send emails programmatically |
+| [Alarm](templates/Alarm) | Timers & alarms | Watcher mode: continuous monitoring loop |
 
 ---
 
