@@ -21,7 +21,7 @@ class WhatsappMessengerCapability(MatchingCapability):
     capability_worker: CapabilityWorker = None
 
     # Do not change following tag of register capability
-    # {{register capability}}
+    #{{register capability}}
 
     @staticmethod
     def _strip_json_fences(raw: str) -> str:
@@ -67,6 +67,18 @@ class WhatsappMessengerCapability(MatchingCapability):
                 cn_lower = contact_name.lower()
                 if cn_lower == name_lower or name_lower in cn_lower or cn_lower in name_lower:
                     return number
+
+            # Try 4: LLM extraction from the raw summarized response
+            if data and name:
+                llm_prompt = (
+                    f"From this contacts data: '{data}'\n"
+                    f"What is the phone number for '{name}'? "
+                    "Return ONLY the E.164 phone number (e.g. +923013018173) or the word NONE if not found."
+                )
+                llm_result = self.capability_worker.text_to_text_response(llm_prompt).strip()
+                phone_match = re.search(r'\+\d{7,}', llm_result)
+                if phone_match:
+                    return phone_match.group()
 
         except Exception as e:
             self.worker.editor_logging_handler.info(f"Contact lookup failed: {e}")
