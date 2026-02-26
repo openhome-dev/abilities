@@ -1,6 +1,5 @@
 import asyncio
 import json
-import os
 import requests
 from src.agent.capability import MatchingCapability
 from src.main import AgentWorker
@@ -66,17 +65,8 @@ class HomeAssistantControllerCapability(MatchingCapability):
     worker: AgentWorker = None
     capability_worker: CapabilityWorker = None
 
-    @classmethod
-    def register_capability(cls) -> "MatchingCapability":
-        """Registers the capability and loads hotwords from config.json."""
-        with open(
-            os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.json")
-        ) as file:
-            data = json.load(file)
-        return cls(
-            unique_name=data["unique_name"],
-            matching_hotwords=data["matching_hotwords"],
-        )
+    # Do not change following tag of register capability
+    #{{register capability}}
 
     def call(self, worker: AgentWorker):
         self.worker = worker

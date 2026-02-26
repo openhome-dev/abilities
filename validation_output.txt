@@ -1,0 +1,3 @@
+
+📋 Validating: community/home-assistant-controller
+  ✅ All checks passed!
