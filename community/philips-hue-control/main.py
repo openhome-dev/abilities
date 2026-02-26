@@ -95,7 +95,7 @@ class PhilipsHueControlCapability(MatchingCapability):
     last_grouped_light_call: float = 0.0
 
     # Do not change following tag of register capability
-    # {{register capability}}
+    #{{register capability}}
 
     def call(self, worker: AgentWorker):
         self.worker = worker
@@ -110,146 +110,6 @@ class PhilipsHueControlCapability(MatchingCapability):
 
     async def _safe_exit(self, text: str):
         await self.capability_worker.speak(text)
-
-    def _split_alpha_num(self, token: str) -> List[str]:
-        return re.findall(r"\d+|[a-z]+", token.lower())
-
-    def _parse_spoken_number_tokens(self, tokens: List[str]) -> Optional[int]:
-        units = {
-            "zero": 0,
-            "one": 1,
-            "two": 2,
-            "three": 3,
-            "four": 4,
-            "five": 5,
-            "six": 6,
-            "seven": 7,
-            "eight": 8,
-            "nine": 9,
-            "ten": 10,
-            "eleven": 11,
-            "twelve": 12,
-            "thirteen": 13,
-            "fourteen": 14,
-            "fifteen": 15,
-            "sixteen": 16,
-            "seventeen": 17,
-            "eighteen": 18,
-            "nineteen": 19,
-        }
-        tens = {
-            "twenty": 20,
-            "thirty": 30,
-            "forty": 40,
-            "fifty": 50,
-            "sixty": 60,
-            "seventy": 70,
-            "eighty": 80,
-            "ninety": 90,
-        }
-
-        normalized: List[str] = []
-        for token in tokens:
-            normalized.extend(self._split_alpha_num(token))
-
-        if not normalized:
-            return None
-
-        # Pure digits token.
-        if len(normalized) == 1 and normalized[0].isdigit():
-            value = int(normalized[0])
-            return value if 0 <= value <= 255 else None
-
-        # Filter to numeric-ish words and digit tokens.
-        numeric_tokens: List[str] = []
-        for token in normalized:
-            if token.isdigit() or token in units or token in tens or token == "hundred":
-                numeric_tokens.append(token)
-
-        if not numeric_tokens:
-            return None
-
-        # Case: "one six eight" -> 168, "one nine two" -> 192
-        if all(token in units and 0 <= units[token] <= 9 for token in numeric_tokens):
-            value = int("".join(str(units[token]) for token in numeric_tokens))
-            return value if 0 <= value <= 255 else None
-
-        # Case: "one ninety two" -> 192
-        if (
-            len(numeric_tokens) in (2, 3)
-            and numeric_tokens[0] in units
-            and 1 <= units[numeric_tokens[0]] <= 9
-            and numeric_tokens[1] in tens
-        ):
-            tail = tens[numeric_tokens[1]]
-            if len(numeric_tokens) == 3:
-                if numeric_tokens[2] in units and 0 <= units[numeric_tokens[2]] <= 9:
-                    tail += units[numeric_tokens[2]]
-                else:
-                    return None
-            value = int(f"{units[numeric_tokens[0]]}{tail:02d}")
-            return value if 0 <= value <= 255 else None
-
-        # Generic small-number parser (supports "one hundred ninety two").
-        total = 0
-        current = 0
-        for token in numeric_tokens:
-            if token.isdigit():
-                current += int(token)
-            elif token in units:
-                current += units[token]
-            elif token in tens:
-                current += tens[token]
-            elif token == "hundred":
-                if current == 0:
-                    current = 1
-                current *= 100
-            else:
-                return None
-
-        total += current
-        if 0 <= total <= 255:
-            return total
-        return None
-
-    def _extract_ipv4_from_spoken_text(self, text: str) -> Optional[str]:
-        lower = text.lower()
-        tokens = re.findall(r"[a-z0-9]+", lower)
-        if not tokens:
-            return None
-
-        dot_words = {"dot", "point", "period", "tot"}
-        segments: List[List[str]] = []
-        current: List[str] = []
-        for token in tokens:
-            if token in dot_words:
-                if current:
-                    segments.append(current)
-                    current = []
-            else:
-                current.append(token)
-        if current:
-            segments.append(current)
-
-        if len(segments) < 4:
-            return None
-
-        # Try every window of 4 segments in case user says extra words before/after.
-        for i in range(len(segments) - 3):
-            window = segments[i: i + 4]
-            parsed_parts: List[int] = []
-            for segment_tokens in window:
-                value = self._parse_spoken_number_tokens(segment_tokens)
-                if value is None:
-                    parsed_parts = []
-                    break
-                parsed_parts.append(value)
-            if len(parsed_parts) == 4:
-                candidate = ".".join(str(part) for part in parsed_parts)
-                if self._is_valid_ipv4(candidate):
-                    return candidate
-
-        return None
 
     def _extract_ipv4(self, text: str) -> Optional[str]:
         if not text:
@@ -276,11 +136,6 @@ class PhilipsHueControlCapability(MatchingCapability):
             candidate = noisy.group(1)
             if self._is_valid_ipv4(candidate):
                 return candidate
-
-        # Spoken form fallback (e.g. "one ninety two dot one six eight dot one dot forty five").
-        spoken_candidate = self._extract_ipv4_from_spoken_text(text)
-        if spoken_candidate:
-            return spoken_candidate
 
         return None
 
@@ -770,18 +625,23 @@ class PhilipsHueControlCapability(MatchingCapability):
                 await self.capability_worker.speak("I couldn't fetch that room status.")
                 return
             room_lights = [
-                l
-                for l in lights.get("data", [])
-                if l.get("owner", {}).get("rid") in child_device_ids
+                light_item
+                for light_item in lights.get("data", [])
+                if light_item.get("owner", {}).get("rid") in child_device_ids
             ]
             if not room_lights:
                 await self.capability_worker.speak(
                     f"I don't see lights in {resolved_data['name']}."
                 )
                 return
-            on_count = sum(1 for l in room_lights if l.get("on", {}).get("on"))
+            on_count = sum(
+                1 for light_item in room_lights if light_item.get("on", {}).get("on")
+            )
             avg_bright = int(
-                sum(l.get("dimming", {}).get("brightness", 0) for l in room_lights)
+                sum(
+                    light_item.get("dimming", {}).get("brightness", 0)
+                    for light_item in room_lights
+                )
                 / len(room_lights)
             )
             await self.capability_worker.speak(
