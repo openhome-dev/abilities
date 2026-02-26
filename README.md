@@ -141,6 +141,7 @@ Don't start from scratch — grab a template:
 | [ReadWriteFile](templates/ReadWriteFile) | File operations | Read from / write to files on device |
 | [SendEmail](templates/SendEmail) | Email notifications | Compose & send emails programmatically |
 | [Alarm](templates/Alarm) | Timers & alarms | Watcher mode: continuous monitoring loop |
+| [Watcher](templates/Watcher) | Background monitoring | Auto-start → Monitor → Act → Sleep → Repeat (endless) |
 
 ---
 
