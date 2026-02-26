@@ -1,3 +1,4 @@
+https://www.loom.com/share/dc6f140be89b417f9a0e91c4b4b20ecf
 # HubSpot CRM Ability - Voice-Powered CRM Assistant
 
 Transform your HubSpot into a voice-first CRM. Search contacts, check deals, log notes, create tasks, and update your pipeline—all by voice, no laptop required.
