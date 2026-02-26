@@ -1,6 +1,5 @@
 import json
 import re
-from typing import ClassVar
 
 from src.agent.capability import MatchingCapability
 from src.agent.capability_worker import CapabilityWorker
@@ -22,7 +21,7 @@ class WhatsappMessengerCapability(MatchingCapability):
     capability_worker: CapabilityWorker = None
 
     # Do not change following tag of register capability
-    # {{register capability}}
+    #{{register capability}}
 
     @staticmethod
     def _strip_json_fences(raw: str) -> str:
@@ -34,22 +33,41 @@ class WhatsappMessengerCapability(MatchingCapability):
             raw = "\n".join(inner).strip()
         return raw
 
-    CONTACTS_FILE: ClassVar[str] = "~/.openclaw/wa-contacts.json"
-
     async def _lookup_contact(self, name: str) -> str:
         """Look up an E.164 number by name from ~/.openclaw/wa-contacts.json."""
         try:
-            exists = await self.capability_worker.check_if_file_exists(self.CONTACTS_FILE, False)
-            if not exists:
-                return ""
-            raw = await self.capability_worker.read_file(self.CONTACTS_FILE, False)
-            contacts = json.loads(raw)
+            response = await self.capability_worker.exec_local_command(
+                "cat ~/.openclaw/wa-contacts.json 2>/dev/null || echo '{}'"
+            )
+            data = response.get("data", "{}") if isinstance(response, dict) else str(response)
+            self.worker.editor_logging_handler.info(f"Contacts file: {data[:300]}")
+
+            contacts = {}
+            try:
+                contacts = json.loads(data.strip())
+            except Exception:
+                pass
+
+            if not contacts:
+                json_match = re.search(r'\{[^{}]+\}', data)
+                if json_match:
+                    try:
+                        contacts = json.loads(json_match.group())
+                    except Exception:
+                        pass
+
+            if not contacts:
+                pairs = re.findall(r'["\']?(\w+)["\']?\s*[:=]\s*["\']?(\+\d+)', data)
+                contacts = {k.lower(): v for k, v in pairs}
+
             self.worker.editor_logging_handler.info(f"Parsed contacts: {contacts}")
+
             name_lower = name.lower()
             for contact_name, number in contacts.items():
                 cn_lower = contact_name.lower()
                 if cn_lower == name_lower or name_lower in cn_lower or cn_lower in name_lower:
                     return number
+
         except Exception as e:
             self.worker.editor_logging_handler.info(f"Contact lookup failed: {e}")
         return ""
@@ -61,18 +79,14 @@ class WhatsappMessengerCapability(MatchingCapability):
             safe_number = re.sub(r"[^+\d]", "", number)[:20]
             if not safe_name or not safe_number:
                 return
-            contacts = {}
-            exists = await self.capability_worker.check_if_file_exists(self.CONTACTS_FILE, False)
-            if exists:
-                raw = await self.capability_worker.read_file(self.CONTACTS_FILE, False)
-                try:
-                    contacts = json.loads(raw)
-                except Exception:
-                    pass
-            contacts[safe_name] = safe_number
-            await self.capability_worker.write_file(
-                self.CONTACTS_FILE, json.dumps(contacts, indent=2), False
+            script = (
+                "from pathlib import Path; import json; "
+                "p = Path.home() / '.openclaw/wa-contacts.json'; "
+                "d = json.loads(p.read_text()) if p.exists() else {}; "
+                f"d['{safe_name}'] = '{safe_number}'; "
+                "p.write_text(json.dumps(d, indent=2))"
             )
+            await self.capability_worker.exec_local_command(f"python3 -c \"{script}\"")
             self.worker.editor_logging_handler.info(f"Auto-learned: {safe_name} → {safe_number}")
         except Exception as e:
             self.worker.editor_logging_handler.info(f"Auto-learn failed: {e}")
