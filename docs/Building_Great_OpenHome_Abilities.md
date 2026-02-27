@@ -88,7 +88,7 @@ Within a session, you have full control:
 - **Maintain state in memory** — dictionaries, lists, counters, anything on `self`. It all works fine as long as the session is alive.
 - **Build conversation history** — keep a list of `{"role": "user", "content": "..."}` dicts and pass it to `text_to_text_response()` on every turn. The LLM will have full context of the conversation so far.
 - **Rebuild context every turn** — your system prompt can be dynamic. Rebuild it with fresh data on every LLM call so the response is always contextual.
-- **Read the Main Flow's conversation history** — `self.worker.agent_memory.full_message_history` gives you what happened before your Ability was triggered.
+- **Read the Main Flow's conversation history** — `self.capability_worker.get_full_message_history()` gives you what happened before your Ability was triggered.
 - **Persist data across sessions** — using the file storage API (see the Persistence & Memory section below).
 
 The mental model is: your Ability is a focused, self-contained session. It boots up, does its job with full capabilities, then exits cleanly. If you need something to survive between sessions, write it to a file.
@@ -173,7 +173,7 @@ This is the architectural context that most developers miss. Your Ability doesn'
 4. Your Ability takes over: speaks, listens, does its thing.
 5. Your Ability calls `resume_normal_flow()` and the user is back in the Main Flow.
 
-This means two important things. First, you can read the conversation history that happened before your Ability was triggered — the Main Flow's history is available through `self.worker.agent_memory.full_message_history`. Second, you must always hand control back with `resume_normal_flow()` or the Agent goes silent.
+This means two important things. First, you can read the conversation history that happened before your Ability was triggered — the Main Flow's history is available through `self.capability_worker.get_full_message_history()`. Second, you must always hand control back with `resume_normal_flow()` or the Agent goes silent.
 
 ### Reading Trigger Context
 
@@ -373,6 +373,8 @@ Always strip markdown fences from LLM output before parsing JSON. LLMs love wrap
 The more context you give the LLM, the more natural its responses sound. In the calendar Ability, the system prompt includes the user's name, location, local time, and the day of the week — so the LLM can say things like "Busy afternoon ahead" instead of generic responses:
 
 ```python
+timezone = self.capability_worker.get_timezone()
+# Use with datetime to get local time for context injection
 system_prompt = f"""You are a concise voice assistant for calendar management.
 USER: {user_name} | LOCATION: {city} | TIME: {current_time}
 Rules: Keep responses to 2-4 sentences max. Be conversational."""

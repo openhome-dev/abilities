@@ -27,7 +27,7 @@ No setup required. No external APIs or keys needed.
 - `speak()` — Text-to-speech output
 - `user_response()` — Listen for user input
 - `text_to_text_response()` — LLM text generation with system prompt
-- `resume_normal_flow()` — Return to Personality
+- `resume_normal_flow()` — Return to Agent
 
 ## Example Conversation
 > **User:** "convert"
