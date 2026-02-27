@@ -34,10 +34,21 @@ PREFS_FILE = "google_tasks_prefs.json"
 # -- Google OAuth credentials (replace with your real keys) -------------------
 # Get these from: Google Cloud Console → APIs & Services → Credentials
 # If left empty, the voice setup will ask for them during first use.
-# If pre-filled, the voice setup skips credential collection and goes
-# straight to the browser authorization step.
+# If pre-filled, the voice setup skips credential collection.
+#
+# RECOMMENDED: Use the Google OAuth 2.0 Playground to get a refresh token:
+#   1. Go to https://developers.google.com/oauthplayground/
+#   2. Click the gear icon → check "Use your own OAuth credentials"
+#   3. Enter your Client ID and Client Secret
+#   4. In Step 1, add scope: https://www.googleapis.com/auth/tasks
+#   5. Click "Authorize APIs" → sign in → Allow
+#   6. Click "Exchange authorization code for tokens"
+#   7. Copy the refresh_token and paste it below
+#
+# If all three are pre-filled, the ability skips OAuth entirely.
 GOOGLE_CLIENT_ID = "YOUR_GOOGLE_CLIENT_ID"
 GOOGLE_CLIENT_SECRET = "YOUR_GOOGLE_CLIENT_SECRET"
+GOOGLE_REFRESH_TOKEN = "YOUR_GOOGLE_REFRESH_TOKEN"
 
 TASKS_BASE_URL = "https://tasks.googleapis.com"
 OAUTH_TOKEN_URL = "https://oauth2.googleapis.com/token"
@@ -354,7 +365,7 @@ class GoogleTasksCapability(MatchingCapability):
     # ------------------------------------------------------------------
 
     async def handle_oauth_setup(self):
-        """Guide user through Google Tasks OAuth 2.0 setup using device flow."""
+        """Guide user through Google Tasks OAuth 2.0 setup."""
         # Use pre-filled constants if available (not placeholders)
         client_id = GOOGLE_CLIENT_ID.strip()
         client_secret = GOOGLE_CLIENT_SECRET.strip()
@@ -414,20 +425,68 @@ class GoogleTasksCapability(MatchingCapability):
 
         self._log("info", f"OAuth setup for client: {client_id[:20]}...")
 
-        # Request device code from Google
+        # Try device flow first
         device_data = self._request_device_code(client_id)
-        if not device_data:
-            await self.capability_worker.speak(
-                "I couldn't start the authorization process. "
-                "Check that your Client ID is correct and try again."
+        if device_data:
+            success = await self._complete_device_flow(
+                client_id, client_secret, device_data
             )
+            if success:
+                await self._validate_connection()
+                return
+
+        # Device flow failed — fall back to OAuth Playground
+        self._log("info", "Device flow unavailable, using OAuth Playground flow")
+        await self.capability_worker.speak(
+            "I'll walk you through getting a token. "
+            "Open your browser and go to "
+            "developers dot google dot com slash oauthplayground. "
+            "Click the gear icon in the top right and check "
+            "Use your own OAuth credentials. "
+            "Enter your Client ID and Client Secret. "
+            "In Step 1, type this scope: "
+            "h t t p s colon slash slash www dot googleapis dot com "
+            "slash auth slash tasks. "
+            "Click Authorize APIs, sign in, and click Allow. "
+            "Then in Step 2, click Exchange authorization code for tokens. "
+            "Copy the refresh token and paste it here."
+        )
+
+        token_input = await self.capability_worker.user_response()
+        if not token_input or self._is_exit(token_input):
             return
 
+        refresh_token = token_input.strip()
+        self.prefs["client_id"] = client_id
+        self.prefs["client_secret"] = client_secret
+        self.prefs["refresh_token"] = refresh_token
+        await self.save_prefs()
+
+        # Validate by refreshing
+        try:
+            await self._ensure_valid_token(force=True)
+            self._log("info", "OAuth Playground token exchange successful")
+            await self._validate_connection()
+        except Exception as e:
+            self._log("error", f"Token refresh failed: {e}")
+            await self.capability_worker.speak(
+                "That token didn't work. Make sure you copied the "
+                "refresh token, not the access token. "
+                "Double-check and try again later."
+            )
+            self.prefs["refresh_token"] = ""
+            await self.save_prefs()
+
+    async def _complete_device_flow(
+        self, client_id: str, client_secret: str, device_data: dict
+    ) -> bool:
+        """Complete device authorization flow after getting device code."""
         user_code = device_data.get("user_code", "")
-        verification_url = device_data.get("verification_url", "https://www.google.com/device")
+        verification_url = device_data.get(
+            "verification_url", "https://www.google.com/device"
+        )
         device_code = device_data.get("device_code", "")
 
-        # Speak the code clearly for voice users
         spaced_code = " ... ".join(user_code)
         await self.capability_worker.speak(
             f"Open your browser and go to {verification_url}. "
@@ -437,14 +496,11 @@ class GoogleTasksCapability(MatchingCapability):
             "Then come back and say done."
         )
 
-        # Wait for user to complete authorization
-        success = False
         for attempt in range(5):
             resp = await self.capability_worker.user_response()
             if not resp or self._is_exit(resp):
-                return
+                return False
 
-            # Try to exchange device code for tokens
             token_data = self._exchange_device_code(
                 client_id, client_secret, device_code
             )
@@ -458,32 +514,22 @@ class GoogleTasksCapability(MatchingCapability):
                 )
                 await self.save_prefs()
                 self._log("info", "Device flow authorization successful")
-                success = True
-                break
-            else:
-                if attempt < 4:
-                    await self.capability_worker.speak(
-                        "I don't see the approval yet. "
-                        "Make sure you've completed all the steps in your browser. "
-                        "Say done when ready."
-                    )
-                else:
-                    await self.capability_worker.speak(
-                        "I still can't connect. "
-                        "Double-check your credentials and try again later."
-                    )
-                    return
+                return True
+            if attempt < 4:
+                await self.capability_worker.speak(
+                    "I don't see the approval yet. "
+                    "Make sure you've completed all the steps in your browser. "
+                    "Say done when ready."
+                )
+        return False
 
-        if not success:
-            return
-
-        # Validate by fetching lists
+    async def _validate_connection(self):
+        """Validate OAuth by fetching task lists and setting defaults."""
         try:
             lists = await self._fetch_task_lists()
             list_names = [tl.get("title", "Untitled") for tl in lists]
             names_spoken = ", ".join(list_names[:5])
 
-            # Set default active list
             if lists:
                 default_list = lists[0]
                 self.prefs["active_list_id"] = default_list.get("id", "@default")
@@ -496,7 +542,6 @@ class GoogleTasksCapability(MatchingCapability):
 
             await self.save_prefs()
 
-            # Count tasks on default list
             tasks = await self._fetch_all_tasks(
                 self.prefs.get("active_list_id", "@default"),
                 {"showCompleted": "false"},
@@ -520,7 +565,7 @@ class GoogleTasksCapability(MatchingCapability):
             )
 
     async def _handle_reauth(self):
-        """Re-authorize when refresh token has expired, using device flow."""
+        """Re-authorize when refresh token has expired."""
         client_id = self.prefs.get("client_id", "")
         client_secret = self.prefs.get("client_secret", "")
         if not client_id or not client_secret:
@@ -531,52 +576,39 @@ class GoogleTasksCapability(MatchingCapability):
             await self.handle_oauth_setup()
             return
 
+        # Try device flow first
         device_data = self._request_device_code(client_id)
-        if not device_data:
-            await self.capability_worker.speak(
-                "I couldn't start re-authorization. "
-                "Let's set up from scratch."
+        if device_data:
+            success = await self._complete_device_flow(
+                client_id, client_secret, device_data
             )
-            await self.handle_oauth_setup()
-            return
-
-        user_code = device_data.get("user_code", "")
-        verification_url = device_data.get(
-            "verification_url", "https://www.google.com/device"
-        )
-        device_code = device_data.get("device_code", "")
-
-        spaced_code = " ... ".join(user_code)
-        await self.capability_worker.speak(
-            f"Go to {verification_url} and enter code {user_code}. "
-            f"That's {spaced_code}. "
-            "Approve access, then say done."
-        )
-
-        for attempt in range(3):
-            resp = await self.capability_worker.user_response()
-            if not resp or self._is_exit(resp):
-                return
-            token_data = self._exchange_device_code(
-                client_id, client_secret, device_code
-            )
-            if token_data and token_data.get("access_token"):
-                self.prefs["access_token"] = token_data.get("access_token", "")
-                self.prefs["refresh_token"] = token_data.get("refresh_token", "")
-                self.prefs["token_expires_at"] = (
-                    time.time() + token_data.get("expires_in", 3600)
-                )
-                await self.save_prefs()
+            if success:
                 await self.capability_worker.speak("Reconnected!")
                 return
-            if attempt < 2:
-                await self.capability_worker.speak(
-                    "Not yet. Make sure you approved in the browser. "
-                    "Say done when ready."
-                )
+
+        # Fall back to OAuth Playground
         await self.capability_worker.speak(
-            "I couldn't reconnect. Try again later."
+            "I need you to get a new refresh token. "
+            "Go to developers dot google dot com slash oauthplayground, "
+            "use your own credentials in the gear icon, "
+            "authorize the Tasks scope, exchange for tokens, "
+            "and paste the refresh token here."
         )
+        token_input = await self.capability_worker.user_response()
+        if not token_input or self._is_exit(token_input):
+            return
+
+        self.prefs["refresh_token"] = token_input.strip()
+        await self.save_prefs()
+        try:
+            await self._ensure_valid_token(force=True)
+            await self.capability_worker.speak("Reconnected!")
+        except Exception:
+            await self.capability_worker.speak(
+                "That token didn't work. Try again later."
+            )
+            self.prefs["refresh_token"] = ""
+            await self.save_prefs()
 
     def _request_device_code(self, client_id: str) -> Optional[dict]:
         """Request a device code from Google for the device authorization flow."""
@@ -1414,7 +1446,7 @@ class GoogleTasksCapability(MatchingCapability):
         return {
             "client_id": GOOGLE_CLIENT_ID if not GOOGLE_CLIENT_ID.startswith("YOUR_") else "",
             "client_secret": GOOGLE_CLIENT_SECRET if not GOOGLE_CLIENT_SECRET.startswith("YOUR_") else "",
-            "refresh_token": "",
+            "refresh_token": GOOGLE_REFRESH_TOKEN if not GOOGLE_REFRESH_TOKEN.startswith("YOUR_") else "",
             "access_token": "",
             "token_expires_at": 0,
             "active_list_id": "@default",

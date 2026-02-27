@@ -18,48 +18,72 @@ Voice-powered Google Tasks management for OpenHome. Add tasks, check what's due,
 
 You need a Google Cloud project with the Tasks API enabled. This is a one-time setup (~5 minutes).
 
-### Step 1: Google Cloud Setup
+### Step 1: Create a Google Cloud Project
 
 1. Go to [Google Cloud Console](https://console.cloud.google.com/)
-2. **Create a new project** (or use an existing one)
-3. **Enable the Tasks API**:
-   - Go to **APIs & Services → Library**
-   - Search **"Tasks API"** → click **Enable**
-4. **Configure OAuth consent screen**:
-   - Go to **APIs & Services → OAuth consent screen** (or **Google Auth Platform → Audience** in the new UI)
-   - Choose **External** → Create
-   - Set app name (e.g., "OpenHome Tasks")
-   - Add your email as **User support email** and **Developer contact**
-   - On the **Scopes** page, add: `https://www.googleapis.com/auth/tasks`
-   - On the **Test users** page, add **your Gmail address**
-   - Save
-5. **Create OAuth credentials**:
-   - Go to **APIs & Services → Credentials** (or **Google Auth Platform → Clients**)
-   - Click **Create Credentials → OAuth client ID**
-   - Application type: **Desktop app**
-   - Click **Create**
-   - **Copy the Client ID and Client Secret**
+2. Click the **project dropdown** (top-left) → **New Project**
+3. Name it (e.g., `OpenHome Tasks`) → click **Create**
+4. Select the new project from the dropdown
 
-### Step 2: Configure the Ability
+### Step 2: Enable the Tasks API
 
-There are two ways to provide your credentials:
+5. In the left sidebar, go to **APIs & Services → Library**
+6. Search for **"Tasks API"** (by Google — NOT "Cloud Tasks API")
+7. Click it → click **Enable**
 
-**Option A: Pre-fill in code (recommended for testing)**
+### Step 3: Configure OAuth Consent Screen
 
-Open `main.py` and replace the placeholder values at the top:
+8. Go to **APIs & Services → OAuth consent screen** (or **Google Auth Platform → Audience** in the new UI)
+9. Select **External** → click **Create**
+10. Fill in:
+    - **App name**: `OpenHome Tasks`
+    - **User support email**: `yourname@gmail.com`
+    - **Developer contact email**: `yourname@gmail.com`
+11. Click **Save and Continue**
+12. On the **Scopes** page → click **Add or Remove Scopes** → paste `https://www.googleapis.com/auth/tasks` → click **Update** → **Save and Continue**
+13. On the **Test users** page → click **Add Users** → add your Gmail address → click **Add** → **Save and Continue**
+
+### Step 4: Create OAuth Client ID (Web Application)
+
+14. Go to **APIs & Services → Credentials** (or **Google Auth Platform → Clients**)
+15. Click **+ CREATE CREDENTIALS → OAuth client ID**
+16. Application type: **Web application**
+17. Name: `OpenHome Tasks Web`
+18. Under **Authorized redirect URIs** → click **+ ADD URI** → paste: `https://developers.google.com/oauthplayground`
+19. Click **Create**
+20. **Copy the Client ID** (looks like `123456789-xxxxxx.apps.googleusercontent.com`)
+21. **Copy the Client Secret** (looks like `GOCSPX-xxxxxx`)
+
+### Step 5: Get Refresh Token from OAuth Playground
+
+22. Go to [Google OAuth 2.0 Playground](https://developers.google.com/oauthplayground/)
+23. Click the **gear icon ⚙️** (top right) → check **"Use your own OAuth credentials"**
+24. Paste your **Client ID** and **Client Secret** from steps 20-21
+25. Close the settings panel
+26. In the left panel, in the **"Input your own scopes"** box, type: `https://www.googleapis.com/auth/tasks`
+27. Click **"Authorize APIs"**
+28. Sign in with your Google account → click **Continue** → click **Continue** again
+29. Back at the Playground, click **"Exchange authorization code for tokens"**
+30. In the response on the right, **copy the `refresh_token` value** (starts with `1//`)
+
+### Step 6: Configure the Ability
+
+Open `main.py` and replace the placeholder values at the top with all three values:
 
 ```python
-GOOGLE_CLIENT_ID = "your-client-id.apps.googleusercontent.com"
-GOOGLE_CLIENT_SECRET = "your-client-secret"
+GOOGLE_CLIENT_ID = "123456789-xxxxxx.apps.googleusercontent.com"
+GOOGLE_CLIENT_SECRET = "GOCSPX-xxxxxx"
+GOOGLE_REFRESH_TOKEN = "1//xxxxxx"
 ```
 
-This skips the voice credential collection — you'll only need to do the browser authorization step.
+With all three pre-filled, the ability **skips OAuth entirely** and connects immediately.
 
-**Option B: Voice-guided setup**
+**Alternative options:**
 
-Leave the placeholders as-is. On first use, the ability will ask you for your Client ID and Client Secret by voice.
+- **Pre-fill credentials only**: Fill just `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET`. On first use, the ability will guide you through getting a refresh token via OAuth Playground by voice.
+- **Voice-guided setup**: Leave all placeholders as-is. On first use, the ability will ask for everything by voice.
 
-### Step 3: Upload to OpenHome
+### Step 7: Upload to OpenHome
 
 1. Go to the **Customize Ability** page
 2. Upload all 4 files: `main.py`, `config.json`, `__init__.py`, `README.md`
@@ -69,17 +93,16 @@ Leave the placeholders as-is. On first use, the ability will ask you for your Cl
    - **Hotwords**: task, tasks, to do, todo, add a task, new task, remind me, my tasks, what's due, task list, mark done, complete task, check off, task summary, daily tasks, overdue, switch list, google tasks, what do I need to do, finish task
 4. Click **Start Live Test**
 
-### Step 4: First-Run Authorization (Device Flow)
+### Step 8: First-Run Authorization
+
+If you pre-filled all three constants (Option A), the ability connects automatically — no authorization step needed.
+
+Otherwise, on first use:
 
 1. Say **"my tasks"** to trigger the ability
-2. The ability will give you a short code (e.g., `ABCD-EFGH`) and a URL
-3. Open **google.com/device** in any browser
-4. Enter the code the ability gave you
-5. Sign in with your Google account → click **Allow**
-6. Go back to the ability and say **"done"**
-7. That's it — the ability saves your tokens and auto-refreshes them going forward
-
-No broken localhost URLs, no code copying. Just enter a short code and approve.
+2. The ability will try the **device flow** first (enter a short code at google.com/device)
+3. If that fails, it falls back to **OAuth Playground**: it will ask you to get a refresh token from [developers.google.com/oauthplayground](https://developers.google.com/oauthplayground/) and paste it in
+4. The ability saves your tokens and auto-refreshes them going forward
 
 ## Testing Guide
 
@@ -148,7 +171,7 @@ No broken localhost URLs, no code copying. Just enter a short code and approve.
 
 ```
 Voice trigger → run() → load prefs → check OAuth
-  → If no refresh_token → handle_oauth_setup() (device flow)
+  → If no refresh_token → handle_oauth_setup() (device flow → OAuth Playground fallback)
   → If connected → _ensure_valid_token() (auto-refresh)
   → Classify intent via LLM → Route to handler
   → Execute handler → Speak result
