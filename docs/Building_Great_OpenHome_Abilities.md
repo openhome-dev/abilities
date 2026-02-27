@@ -6,7 +6,7 @@
 
 ## What Makes a Good Ability
 
-Every OpenHome Personality is powered by an LLM out of the box. That means your Personality can already handle a lot natively — no Ability needed:
+Every OpenHome Agent is powered by an LLM out of the box. That means your Agent can already handle a lot natively — no Ability needed:
 
 - Unit conversions, math, and calculations
 - Translations, writing help, and grammar checks
@@ -14,7 +14,7 @@ Every OpenHome Personality is powered by an LLM out of the box. That means your 
 
 > **If the LLM can already answer it in conversation, it's not adding value as an Ability.**
 
-It's also worth knowing that every Personality has a **Description Prompt** in its settings — this is the system-level LLM instruction that defines how your Personality behaves, its tone, its role, and its boundaries. If what you want is a behavioral change — like "always respond in Spanish" or "act as a fitness coach" or "never discuss politics" — that belongs in the Personality's prompt configuration, not in a standalone Ability. Abilities are for when the LLM needs to *do* something it can't do with just a prompt: call an API, play audio, persist data, control a device.
+It's also worth knowing that every Agent has a **Description Prompt** in its settings — this is the system-level LLM instruction that defines how your Agent behaves, its tone, its role, and its boundaries. If what you want is a behavioral change — like "always respond in Spanish" or "act as a fitness coach" or "never discuss politics" — that belongs in the Agent's prompt configuration, not in a standalone Ability. Abilities are for when the LLM needs to *do* something it can't do with just a prompt: call an API, play audio, persist data, control a device.
 
 A good Ability brings in something the LLM can't do on its own:
 
@@ -35,7 +35,7 @@ A good Ability brings in something the LLM can't do on its own:
 | Interactive quiz with scoring + persistence | Answering trivia from general knowledge |
 | Daily journal that saves entries across sessions | Summarizing text the user just said |
 
-> *The best Abilities make the Personality feel like it can actually do things in the real world — not just talk about them.*
+> *The best Abilities make the Agent feel like it can actually do things in the real world — not just talk about them.*
 
 ---
 
@@ -77,7 +77,7 @@ Because of the on-demand architecture, these aren't possible right now:
 - **Proactive notifications** — no "hey, your meeting starts in 10 minutes" interrupts
 - **Scheduled tasks** — no timers, no cron-style execution
 - **Cross-ability communication** — one Ability can't directly talk to another while they're running
-- **Chaining Abilities** — your Ability can't call another Ability directly. You must call `resume_normal_flow()` first to hand control back to the Personality, and then the user's next utterance can trigger a different Ability. You can stack complex logic inside a single Ability, but you can't orchestrate across multiple Abilities in one session.
+- **Chaining Abilities** — your Ability can't call another Ability directly. You must call `resume_normal_flow()` first to hand control back to the Agent, and then the user's next utterance can trigger a different Ability. You can stack complex logic inside a single Ability, but you can't orchestrate across multiple Abilities in one session.
 
 This might change as the platform evolves, but for now, design your Abilities around the trigger → respond → exit pattern. The user initiates, your Ability responds, then it's done.
 
@@ -97,7 +97,7 @@ The mental model is: your Ability is a focused, self-contained session. It boots
 
 There are two layers of conversation history to understand:
 
-**The Personality's conversation history** is what the user sees in their chat. It includes everything spoken aloud — both by the Personality and by your Ability (via `speak()`). This history is **scoped per-Personality per-user** — each Personality maintains a separate history with each user, so a calendar Ability triggered from one Personality won't see the history from a different Personality. If the user deletes a Personality's history from the dashboard, `agent_memory.full_message_history` is also cleared — your Ability will see an empty history on the next activation.
+**The Agent's conversation history** is what the user sees in their chat. It includes everything spoken aloud — both by the Agent and by your Ability (via `speak()`). This history is **scoped per-agent per-user** — each Agent maintains a separate history with each user, so a calendar Ability triggered from one Agent won't see the history from a different Agent. If the user deletes an Agent's history from the dashboard, `agent_memory.full_message_history` is also cleared — your Ability will see an empty history on the next activation.
 
 **Your Ability's internal history** is a list you maintain yourself and pass to `text_to_text_response()`. This gives the LLM context across multiple turns within your Ability. It only exists in memory while your Ability is running — it's gone when you call `resume_normal_flow()`.
 
@@ -111,7 +111,7 @@ response = self.capability_worker.text_to_text_response(
 self.history.append({"role": "assistant", "content": response})
 ```
 
-One important detail: there's currently no way to inject data directly into the Personality's system prompt after your Ability finishes. When `resume_normal_flow()` fires, the Ability is done. But anything your Ability said via `speak()` does become part of the Personality's conversation history, so the Personality's LLM can reference it in later turns. For anything more structured, use file storage to persist data that your Ability can read on its next activation.
+One important detail: there's currently no way to inject data directly into the Agent's system prompt after your Ability finishes. When `resume_normal_flow()` fires, the Ability is done. But anything your Ability said via `speak()` does become part of the Agent's conversation history, so the Agent's LLM can reference it in later turns. For anything more structured, use file storage to persist data that your Ability can read on its next activation.
 
 There's also no way to silently inject text into the conversation history — the only way to add to it is through `speak()`, which means the agent has to actually say it out loud. You can't write hidden context or metadata into the history behind the scenes. Conversation history is managed by a separate module tied to the normal conversation flow, so your Ability can contribute to it by speaking, but can't manipulate it directly.
 
@@ -119,7 +119,7 @@ There's also no way to silently inject text into the conversation history — th
 
 ## Choosing Good Trigger Words
 
-Trigger words are how users activate your Ability. When someone says a phrase that matches one of your trigger words, the platform routes them from the normal Personality conversation into your Ability. Getting these right matters — too narrow and users can't find your Ability, too broad and it fires when it shouldn't.
+Trigger words are how users activate your Ability. When someone says a phrase that matches one of your trigger words, the platform routes them from the normal Agent conversation into your Ability. Getting these right matters — too narrow and users can't find your Ability, too broad and it fires when it shouldn't.
 
 ### Think About How People Actually Talk
 
@@ -163,21 +163,21 @@ Trigger words can be edited anytime in the **Installed Abilities** section of th
 
 ## How Abilities Work With the Main Flow
 
-This is the architectural context that most developers miss. Your Ability doesn't run in isolation — it's called from the Personality's Main Flow when a user says a trigger word. Understanding this handoff is critical.
+This is the architectural context that most developers miss. Your Ability doesn't run in isolation — it's called from the Agent's Main Flow when a user says a trigger word. Understanding this handoff is critical.
 
 ### The Lifecycle
 
-1. User is in the Main Flow having a normal conversation with their Personality.
+1. User is in the Main Flow having a normal conversation with their Agent.
 2. User says something that matches a trigger word (e.g., "what's on my calendar").
 3. Main Flow activates your Ability and calls your `call()` method.
 4. Your Ability takes over: speaks, listens, does its thing.
 5. Your Ability calls `resume_normal_flow()` and the user is back in the Main Flow.
 
-This means two important things. First, you can read the conversation history that happened before your Ability was triggered — the Main Flow's history is available through `self.worker.agent_memory.full_message_history`. Second, you must always hand control back with `resume_normal_flow()` or the Personality goes silent.
+This means two important things. First, you can read the conversation history that happened before your Ability was triggered — the Main Flow's history is available through `self.worker.agent_memory.full_message_history`. Second, you must always hand control back with `resume_normal_flow()` or the Agent goes silent.
 
 ### Reading Trigger Context
 
-Here's a pattern that makes a big difference. When your Ability activates, the user was already mid-conversation with the Personality. That conversation history is still there — you can read it to understand exactly what the user was asking about when they triggered your Ability.
+Here's a pattern that makes a big difference. When your Ability activates, the user was already mid-conversation with the Agent. That conversation history is still there — you can read it to understand exactly what the user was asking about when they triggered your Ability.
 
 Let's say you're building a calendar Ability. Without reading the trigger context, every activation would feel the same — maybe you always give a full schedule readout. But with the trigger context, you can respond to what the user actually said:
 
@@ -204,7 +204,7 @@ This is the pattern we use in our internal calendar Ability (called Smart Hub �
 
 | Mode | What the User Said | What Happens |
 |---|---|---|
-| **Quick** | "What's on my calendar?" or "Create a meeting at 3" | Answer the specific question → "Anything else?" → 4-5 sec silence → exit back to Personality |
+| **Quick** | "What's on my calendar?" or "Create a meeting at 3" | Answer the specific question → "Anything else?" → 4-5 sec silence → exit back to Agent |
 | **Full** | "Catch me up" or "run through my day" | Full spoken briefing → open Q&A loop (ask follow-ups, modify events) → 2-3 idle cycles → sign off |
 
 The difference is huge from the user's perspective. Without this pattern, every calendar trigger gives you a full 45-second briefing — even if you just wanted to know whether your 3pm was still on. Quick mode answers the question and gets out of the way. Full mode settles in for a longer session where the user can ask follow-ups, reschedule meetings, and add invites.
@@ -540,7 +540,7 @@ How your Ability exits matters as much as how it enters. The exit should feel na
 
 ### Quick Mode Exit
 
-Answer the question, offer a brief follow-up window, then leave without fanfare. The calendar Ability's quick mode says "Let me know if you have any other questions about your calendar," waits 4–5 seconds for a response, and if the user says nothing (or says "thanks"), it exits silently back to the Personality. No sign-off message needed — the user barely noticed the handoff.
+Answer the question, offer a brief follow-up window, then leave without fanfare. The calendar Ability's quick mode says "Let me know if you have any other questions about your calendar," waits 4–5 seconds for a response, and if the user says nothing (or says "thanks"), it exits silently back to the Agent. No sign-off message needed — the user barely noticed the handoff.
 
 ### Full Session Exit
 
@@ -595,7 +595,7 @@ Before submitting an Ability, run through this list:
 
 The anatomy of a great Ability:
 
-1. It does something the LLM can't do on its own — calls an API, plays audio, controls a device, or persists data. If it can be handled with a Personality prompt, it doesn't need to be an Ability.
+1. It does something the LLM can't do on its own — calls an API, plays audio, controls a device, or persists data. If it can be handled with an Agent prompt, it doesn't need to be an Ability.
 2. It understands the runtime model — on-demand, stateless, no background processing. Design around trigger → respond → exit.
 3. Its trigger words match how people actually talk — natural phrases, plural forms, phrase-level triggers for ambiguous words, tested against false positives.
 4. It reads the trigger context to understand what the user actually wanted, not just that a trigger word was said.
@@ -606,6 +606,6 @@ The anatomy of a great Ability:
 9. It exits cleanly — quick mode exits silently, full mode signs off, `resume_normal_flow()` fires on every path.
 10. It's clean and portable — no hardcoded keys, no blocked imports, proper error handling with spoken errors.
 
-> *Build Abilities that make the Personality feel like it can reach out and touch the real world. That's the whole point.*
+> *Build Abilities that make the Agent feel like it can reach out and touch the real world. That's the whole point.*
 
 Questions? Drop them in **#dev-help** on Discord.

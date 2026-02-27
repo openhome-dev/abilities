@@ -43,14 +43,14 @@ Inside any Ability, you have access to two objects:
 ## 1. Speaking / TTS
 
 ### `speak(text)`
-Converts text to speech using the Personality's default voice. Streams audio to the user.
+Converts text to speech using the Agent's default voice. Streams audio to the user.
 
 ```python
 await self.capability_worker.speak("Hello! How can I help?")
 ```
 
 - **Async:** Yes (`await`)
-- **Voice:** Uses whatever voice is configured on the Personality
+- **Voice:** Uses whatever voice is configured on the Agent
 - **Tip:** Keep it to 1-2 sentences. This is voice, not text.
 
 ---
@@ -63,7 +63,7 @@ await self.capability_worker.text_to_speech("Welcome aboard.", "pNInz6obpgDQGcFm
 ```
 
 - **Async:** Yes (`await`)
-- **Voice:** Overrides the Personality's default
+- **Voice:** Overrides the Agent's default
 - **See:** [Voice ID catalog](#voice-id-quick-reference) at the bottom of this doc
 
 ---
@@ -107,7 +107,7 @@ answer = await self.capability_worker.run_io_loop("What's your favorite color?")
 
 - **Async:** Yes (`await`)
 - **Returns:** `str` — user's reply
-- **Note:** Uses the Personality's default voice (not a custom voice ID)
+- **Note:** Uses the Agent's default voice (not a custom voice ID)
 
 ---
 
@@ -499,7 +499,7 @@ await self.capability_worker.send_devkit_action("led_on")
 
 ### `resume_normal_flow()`
 
-**⚠️ CRITICAL: You MUST call this when your Ability is done.** It hands control back to the Personality. Without it, the Personality goes silent and the user has to restart the conversation.
+**⚠️ CRITICAL: You MUST call this when your Ability is done.** It hands control back to the Agent. Without it, the Agent goes silent and the user has to restart the conversation.
 
 ```python
 self.capability_worker.resume_normal_flow()
@@ -654,19 +654,19 @@ async def main_loop(self):
 
 ### Passing Context Back After `resume_normal_flow()`
 
-Currently, there is **no direct way** to inject data into the Personality's system prompt after an Ability finishes. When `resume_normal_flow()` fires, the Ability is done and control returns to the Personality.
+Currently, there is **no direct way** to inject data into the Agent's system prompt after an Ability finishes. When `resume_normal_flow()` fires, the Ability is done and control returns to the Agent.
 
 **What you CAN do:**
 
-1. **Save to conversation history** — Anything spoken during the Ability (via `speak()`) becomes part of the conversation history, which the Personality's LLM can see in subsequent turns.
+1. **Save to conversation history** — Anything spoken during the Ability (via `speak()`) becomes part of the conversation history, which the Agent's LLM can see in subsequent turns.
 
-2. **Use file storage** — Write data to persistent files (see [File Storage](#8-file-storage-persistent--temporary)) that other Abilities can read later. The Personality itself won't read these files directly, but your Abilities can share data through them.
+2. **Use file storage** — Write data to persistent files (see [File Storage](#8-file-storage-persistent--temporary)) that other Abilities can read later. The Agent itself won't read these files directly, but your Abilities can share data through them.
 
 3. **Memory feature** — OpenHome has a new memory feature that can persist user context. (Details TBD as this feature evolves.)
 
 **What you CANNOT do (yet):**
-- Directly update or modify the Personality's system prompt from within an Ability
-- Pass structured data (like user location or preferences) to the Personality's LLM context after `resume_normal_flow()`
+- Directly update or modify the Agent's system prompt from within an Ability
+- Pass structured data (like user location or preferences) to the Agent's LLM context after `resume_normal_flow()`
 
 ---
 
@@ -774,8 +774,8 @@ Being explicit about limitations saves developers hours of guessing:
 
 | You might want to... | Status |
 |----------------------|--------|
-| Update the Personality's system prompt from an Ability | ❌ Not possible |
-| Pass structured data back to the Personality after `resume_normal_flow()` | ❌ Not possible — use conversation history or file storage as workarounds |
+| Update the Agent's system prompt from an Ability | ❌ Not possible |
+| Pass structured data back to the Agent after `resume_normal_flow()` | ❌ Not possible — use conversation history or file storage as workarounds |
 | Access other Abilities from within an Ability | ❌ Not supported |
 | Run background tasks after `resume_normal_flow()` | ❌ Tasks are cancelled on session end |
 | Access a database directly (Redis, SQL, etc.) | ❌ Blocked — use File Storage API instead |

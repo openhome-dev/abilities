@@ -8,7 +8,7 @@ The `CapabilityWorker` is the core SDK class for all I/O inside an Ability. Acce
 
 ### `speak(text)`
 
-Converts text to speech using the Personality's default voice.
+Converts text to speech using the Agent's default voice.
 
 ```python
 await self.capability_worker.speak("Hello! How can I help?")
@@ -160,13 +160,13 @@ await self.capability_worker.send_devkit_action("led-on")
 
 ### `resume_normal_flow()`
 
-**You MUST call this when your Ability is done.** Returns control to the Personality.
+**You MUST call this when your Ability is done.** Returns control to the Agent.
 
 ```python
 self.capability_worker.resume_normal_flow()
 ```
 
-If you forget this, the Personality will be stuck and unresponsive.
+If you forget this, the Agent will be stuck and unresponsive.
 
 ---
 

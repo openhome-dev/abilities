@@ -146,7 +146,7 @@ async def run(self):
 
 ## Pattern 7: Custom Voice
 
-Use a specific ElevenLabs voice instead of the Personality's default.
+Use a specific ElevenLabs voice instead of the Agent's default.
 
 ```python
 VOICE_ID = "pNInz6obpgDQGcFmaJgB"  # Deep American male
@@ -203,7 +203,7 @@ await self.worker.session_tasks.sleep(5)
 # ❌ Don't forget resume_normal_flow
 async def run(self):
     await self.capability_worker.speak("Done!")
-    # Personality is now stuck!
+    # Agent is now stuck!
 # ✅ Always call it
 async def run(self):
     await self.capability_worker.speak("Done!")
