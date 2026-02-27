@@ -14,9 +14,12 @@ from src.main import AgentWorker
 # Configuration
 # =============================================================================
 
-# Set to True to use fake data (no real device or API credentials needed).
-# Set to False to use the real Google SDM API.
-MOCK_MODE = True
+# RUN_MODE controls how the ability connects to the Nest API.
+MODE_FULL_MOCK = "FULL_MOCK"   # No real API calls; simulated device data. No credentials needed.
+MODE_AUTH_TEST = "AUTH_TEST"   # Real OAuth but mock device data. Verify credentials without hardware.
+MODE_LIVE = "LIVE"             # Fully real: OAuth + real device API. Requires a physical Nest.
+
+RUN_MODE = MODE_FULL_MOCK
 
 PREFS_FILE = "nest_thermostat_prefs.json"
 
@@ -149,34 +152,27 @@ class NestThermostatCapability(MatchingCapability):
 
     async def run(self):
         try:
-            if MOCK_MODE:
+            if RUN_MODE == MODE_FULL_MOCK:
                 self.prefs = self._mock_prefs()
-                self._log("MOCK_MODE enabled — using simulated device data.")
+                self._log("FULL_MOCK mode — using simulated device data.")
+
             else:
-                self.prefs = await self.load_prefs()
+                # AUTH_TEST and LIVE both do real OAuth
+                self._log(f"{RUN_MODE} mode — authenticating with Google.")
+                auth_ok = await self._ensure_authenticated()
+                if not auth_ok:
+                    return
 
-                if not self.prefs.get("refresh_token"):
-                    has_creds = await self._ask_yes_no(
-                        "To control your Nest thermostat I need to connect to Google. "
-                        "Do you already have your Client ID, Client Secret, and "
-                        "Device Access Project ID ready?"
+                if RUN_MODE == MODE_AUTH_TEST:
+                    # Auth verified — inject mock device config since there's no real device
+                    await self.capability_worker.speak(
+                        "Authentication successful! Using mock device data for testing."
                     )
-                    success = await self.run_oauth_setup_flow(skip_walkthrough=has_creds)
-                    if not success:
-                        await self.capability_worker.speak(
-                            "Setup didn't complete. Say 'thermostat' again when you're ready."
-                        )
-                        return
-                    self.prefs = await self.load_prefs()
-
-                elif self._token_expired():
-                    refreshed = await self.refresh_access_token()
-                    if not refreshed:
-                        await self.capability_worker.speak(
-                            "Your Nest connection expired. Let's reconnect."
-                        )
-                        await self._invalidate_tokens()
-                        return
+                    self.prefs["device_id"] = MOCK_DEVICE_STATE["device_id"]
+                    self.prefs["device_custom_name"] = MOCK_DEVICE_STATE["custom_name"]
+                    self.prefs["temperature_scale"] = MOCK_DEVICE_STATE["temperature_scale"]
+                    self.prefs["available_modes"] = MOCK_DEVICE_STATE["available_modes"]
+                    self.prefs["has_fan"] = MOCK_DEVICE_STATE["has_fan"]
 
             trigger_context = self._get_trigger_context()
             await self._conversation_loop(trigger_context)
@@ -188,6 +184,35 @@ class NestThermostatCapability(MatchingCapability):
             )
         finally:
             self.capability_worker.resume_normal_flow()
+
+    async def _ensure_authenticated(self) -> bool:
+        """Load prefs and ensure we have a valid OAuth token. Returns False on failure."""
+        self.prefs = await self.load_prefs()
+
+        if not self.prefs.get("refresh_token"):
+            has_creds = await self._ask_yes_no(
+                "To control your Nest thermostat I need to connect to Google. "
+                "Do you already have your Client ID, Client Secret, and "
+                "Device Access Project ID ready?"
+            )
+            success = await self.run_oauth_setup_flow(skip_walkthrough=has_creds)
+            if not success:
+                await self.capability_worker.speak(
+                    "Setup didn't complete. Say 'thermostat' again when you're ready."
+                )
+                return False
+            self.prefs = await self.load_prefs()
+
+        elif self._token_expired():
+            refreshed = await self.refresh_access_token()
+            if not refreshed:
+                await self.capability_worker.speak(
+                    "Your Nest connection expired. Let's reconnect."
+                )
+                await self._invalidate_tokens()
+                return False
+
+        return True
 
     # -------------------------------------------------------------------------
     # Persistence
@@ -530,10 +555,10 @@ class NestThermostatCapability(MatchingCapability):
     ) -> Optional[Dict[str, Any]]:
         """
         Make a request to the SDM API.
-        In MOCK_MODE, returns simulated data instead of calling the real API.
-        Handles token refresh and one 401 retry automatically.
+        In FULL_MOCK and AUTH_TEST modes, returns simulated device data.
+        In LIVE mode, calls the real API with token refresh and 401 retry.
         """
-        if MOCK_MODE:
+        if RUN_MODE in (MODE_FULL_MOCK, MODE_AUTH_TEST):
             return self._mock_response(method, path, json_body)
 
         if self._token_expired():
@@ -645,16 +670,28 @@ class NestThermostatCapability(MatchingCapability):
                 "availableModes": s["available_modes"],
             },
             "sdm.devices.traits.ThermostatEco": {
+                "availableModes": ["MANUAL_ECO", "OFF"],
                 "mode": s["eco_mode"],
                 "heatCelsius": s["heat_setpoint_c"],
                 "coolCelsius": s["cool_setpoint_c"],
             },
             "sdm.devices.traits.ThermostatHvac": {"status": s["hvac_status"]},
-            "sdm.devices.traits.ThermostatTemperatureSetpoint": {
-                "heatCelsius": s["heat_setpoint_c"],
-                "coolCelsius": s["cool_setpoint_c"],
-            },
         }
+
+        # Real API only returns setpoints for the current mode, and none during eco
+        if s["eco_mode"] != "MANUAL_ECO":
+            setpoint: Dict[str, Any] = {}
+            if s["mode"] == "HEAT":
+                setpoint["heatCelsius"] = s["heat_setpoint_c"]
+            elif s["mode"] == "COOL":
+                setpoint["coolCelsius"] = s["cool_setpoint_c"]
+            elif s["mode"] == "HEATCOOL":
+                setpoint["heatCelsius"] = s["heat_setpoint_c"]
+                setpoint["coolCelsius"] = s["cool_setpoint_c"]
+            # OFF mode: no setpoints
+            if setpoint:
+                traits["sdm.devices.traits.ThermostatTemperatureSetpoint"] = setpoint
+
         if s["has_fan"]:
             traits["sdm.devices.traits.Fan"] = {
                 "timerMode": s["fan_timer_mode"],
@@ -663,33 +700,81 @@ class NestThermostatCapability(MatchingCapability):
         return traits
 
     def _mock_execute(self, body: Dict[str, Any]) -> Dict[str, Any]:
-        """Apply a command to MOCK_DEVICE_STATE and return empty success."""
+        """Apply a command to MOCK_DEVICE_STATE, enforcing real API preconditions."""
         command = body.get("command", "")
         params = body.get("params", {})
+        s = MOCK_DEVICE_STATE
+
+        # --- Precondition: setpoint commands rejected in MANUAL_ECO ---
+        is_setpoint_cmd = "ThermostatTemperatureSetpoint" in command
+        if is_setpoint_cmd and s["eco_mode"] == "MANUAL_ECO":
+            return {
+                "_error": "BAD_REQUEST",
+                "_detail": "FAILED_PRECONDITION: Command not allowed when thermostat in MANUAL_ECO mode.",
+            }
 
         if command == "sdm.devices.commands.ThermostatMode.SetMode":
-            MOCK_DEVICE_STATE["mode"] = params.get("mode", MOCK_DEVICE_STATE["mode"])
+            MOCK_DEVICE_STATE["mode"] = params.get("mode", s["mode"])
             if MOCK_DEVICE_STATE["mode"] == "OFF":
                 MOCK_DEVICE_STATE["hvac_status"] = "OFF"
             elif MOCK_DEVICE_STATE["mode"] == "HEAT":
                 MOCK_DEVICE_STATE["hvac_status"] = "HEATING"
             elif MOCK_DEVICE_STATE["mode"] == "COOL":
                 MOCK_DEVICE_STATE["hvac_status"] = "COOLING"
+            elif MOCK_DEVICE_STATE["mode"] == "HEATCOOL":
+                # Simplified: pick based on ambient vs midpoint of setpoints
+                mid = (s["heat_setpoint_c"] + s["cool_setpoint_c"]) / 2
+                MOCK_DEVICE_STATE["hvac_status"] = (
+                    "HEATING" if s["ambient_temp_c"] < mid else "COOLING"
+                )
 
         elif command == "sdm.devices.commands.ThermostatEco.SetMode":
-            MOCK_DEVICE_STATE["eco_mode"] = params.get("mode", MOCK_DEVICE_STATE["eco_mode"])
+            # Some models reject eco changes when thermostat mode is OFF
+            if s["mode"] == "OFF":
+                return {
+                    "_error": "BAD_REQUEST",
+                    "_detail": "FAILED_PRECONDITION: Command not allowed in current thermostat mode.",
+                }
+            MOCK_DEVICE_STATE["eco_mode"] = params.get("mode", s["eco_mode"])
 
         elif command == "sdm.devices.commands.ThermostatTemperatureSetpoint.SetHeat":
-            MOCK_DEVICE_STATE["heat_setpoint_c"] = params.get("heatCelsius", MOCK_DEVICE_STATE["heat_setpoint_c"])
+            if s["mode"] != "HEAT":
+                return {
+                    "_error": "BAD_REQUEST",
+                    "_detail": "FAILED_PRECONDITION: Command not allowed in current thermostat mode.",
+                }
+            MOCK_DEVICE_STATE["heat_setpoint_c"] = params.get("heatCelsius", s["heat_setpoint_c"])
 
         elif command == "sdm.devices.commands.ThermostatTemperatureSetpoint.SetCool":
-            MOCK_DEVICE_STATE["cool_setpoint_c"] = params.get("coolCelsius", MOCK_DEVICE_STATE["cool_setpoint_c"])
+            if s["mode"] != "COOL":
+                return {
+                    "_error": "BAD_REQUEST",
+                    "_detail": "FAILED_PRECONDITION: Command not allowed in current thermostat mode.",
+                }
+            MOCK_DEVICE_STATE["cool_setpoint_c"] = params.get("coolCelsius", s["cool_setpoint_c"])
 
         elif command == "sdm.devices.commands.ThermostatTemperatureSetpoint.SetRange":
-            MOCK_DEVICE_STATE["heat_setpoint_c"] = params.get("heatCelsius", MOCK_DEVICE_STATE["heat_setpoint_c"])
-            MOCK_DEVICE_STATE["cool_setpoint_c"] = params.get("coolCelsius", MOCK_DEVICE_STATE["cool_setpoint_c"])
+            if s["mode"] != "HEATCOOL":
+                return {
+                    "_error": "BAD_REQUEST",
+                    "_detail": "FAILED_PRECONDITION: Command not allowed in current thermostat mode.",
+                }
+            heat_val = params.get("heatCelsius", s["heat_setpoint_c"])
+            cool_val = params.get("coolCelsius", s["cool_setpoint_c"])
+            if heat_val >= cool_val:
+                return {
+                    "_error": "BAD_REQUEST",
+                    "_detail": "INVALID_ARGUMENT: Cool value must be greater than heat value.",
+                }
+            MOCK_DEVICE_STATE["heat_setpoint_c"] = heat_val
+            MOCK_DEVICE_STATE["cool_setpoint_c"] = cool_val
 
         elif command == "sdm.devices.commands.Fan.SetTimer":
+            if not s["has_fan"]:
+                return {
+                    "_error": "BAD_REQUEST",
+                    "_detail": "FAILED_PRECONDITION: Thermostat fan unavailable.",
+                }
             MOCK_DEVICE_STATE["fan_timer_mode"] = params.get("timerMode", "OFF")
             MOCK_DEVICE_STATE["fan_timer_timeout"] = params.get("duration", "")
 
@@ -915,15 +1000,23 @@ class NestThermostatCapability(MatchingCapability):
             heat_c = state.get("heat_setpoint_c") or f_to_c(68)
             cool_c = state.get("cool_setpoint_c") or f_to_c(76)
             if target_c <= heat_c or (target_c < (heat_c + cool_c) / 2):
-                success, err = await self.execute_command(
-                    "ThermostatTemperatureSetpoint.SetRange",
-                    {"heatCelsius": target_c, "coolCelsius": cool_c},
-                )
+                new_heat, new_cool = target_c, cool_c
             else:
-                success, err = await self.execute_command(
-                    "ThermostatTemperatureSetpoint.SetRange",
-                    {"heatCelsius": heat_c, "coolCelsius": target_c},
+                new_heat, new_cool = heat_c, target_c
+
+            if new_heat >= new_cool:
+                heat_display = round_for_voice(c_to_f(new_heat) if scale == "FAHRENHEIT" else new_heat)
+                cool_display = round_for_voice(c_to_f(new_cool) if scale == "FAHRENHEIT" else new_cool)
+                await self.capability_worker.speak(
+                    f"The heating target of {heat_display} needs to be lower than the "
+                    f"cooling target of {cool_display}. Try a different temperature."
                 )
+                return
+
+            success, err = await self.execute_command(
+                "ThermostatTemperatureSetpoint.SetRange",
+                {"heatCelsius": new_heat, "coolCelsius": new_cool},
+            )
         else:
             await self.capability_worker.speak("I can't set the temperature in the current thermostat mode.")
             return
@@ -961,7 +1054,7 @@ class NestThermostatCapability(MatchingCapability):
                 await self.capability_worker.speak("I can't read the current setpoint to adjust it.")
                 return None
             adjustment_c = f_to_c(2 + 32) if scale == "FAHRENHEIT" else 1.0
-            return round(current_c - (f_to_c(2 + 32) if scale == "FAHRENHEIT" else 1.0), 2)
+            return round(current_c - adjustment_c, 2)
 
         # Extract a number from text (regex first, LLM fallback)
         number_match = re.search(r"\b(\d+(?:\.\d+)?)\b", text)
