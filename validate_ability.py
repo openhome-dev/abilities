@@ -130,12 +130,13 @@ def validate_ability(path: str) -> ValidationResult:
         # ----------------------------------------------------------
         # Check for register capability tag
         # ----------------------------------------------------------
-        has_register_tag = bool(re.search(r"#\{\{register capability\}\}", code))
+        has_register_tag = bool(re.search(r"#\s?\{\{register[_ ]capability\}\}", code))
 
         if not has_register_tag:
             result.error(
-                "Missing register capability tag — add the following line to your class:\n"
-                "    #{{register capability}}\n"
+                "Missing register capability tag — add one of the following to your class:\n"
+                "    #{{register_capability}}\n"
+                "    # {{register_capability}}\n"
                 "See: https://docs.openhome.com/how_to_build_an_ability"
             )
 

@@ -44,7 +44,7 @@ This ability uses the AirLabs API.
 - `wait_for_complete_transcription()` / `user_response()` — capture user speech
 - File storage (`check_if_file_exists`, `read_file`, `write_file`, `delete_file`)
   - remembers last flight and last airport across sessions
-- `resume_normal_flow()` — returns control to the main Personality
+- `resume_normal_flow()` — returns control to the main Agent
 
 ## Example Conversation
 
