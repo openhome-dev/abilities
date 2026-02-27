@@ -33,11 +33,11 @@
 
 ## What Are Abilities?
 
-Abilities are **modular voice AI plugins** that extend what OpenHome Personalities can do. They're triggered by spoken phrases and can do anything — call APIs, play audio, run quizzes, control devices, have multi-turn conversations.
+Abilities are **modular voice AI plugins** that extend what OpenHome Agents can do. They're triggered by spoken phrases and can do anything — call APIs, play audio, run quizzes, control devices, have multi-turn conversations.
 
 Each Ability is just **one file**: `main.py` — your Python logic.
 
-Write your code, zip it, upload it to OpenHome, set your trigger words in the dashboard, and your Personality can do something new.
+Write your code, zip it, upload it to OpenHome, set your trigger words in the dashboard, and your Agent can do something new.
 
 ---
 

@@ -53,7 +53,7 @@ Entry count is synced with the actual file on each boot to prevent drift.
 
 ## Quick Start
 
-1. Install to your OpenHome Personality
+1. Install to your OpenHome Agent
 2. Say "open my journal"
 3. Complete the onboarding (first time only)
 4. Say "add an entry" to start journaling
