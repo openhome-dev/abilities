@@ -1,5 +1,4 @@
 import json
-import os
 import re
 import asyncio
 import base64
@@ -135,16 +134,7 @@ class PackageTrackerCapability(MatchingCapability):
     _ups_token: str = None
     _ups_token_expires: float = 0.0
 
-    @classmethod
-    def register_capability(cls) -> "MatchingCapability":
-        with open(
-            os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.json")
-        ) as file:
-            data = json.load(file)
-        return cls(
-            unique_name=data["unique_name"],
-            matching_hotwords=data["matching_hotwords"],
-        )
+    # {{register_capability}}
 
     def call(self, worker: AgentWorker):
         self.worker = worker
