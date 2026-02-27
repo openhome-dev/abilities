@@ -1,8 +1,7 @@
 import json
-import os
 import re
 import requests
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 from src.agent.capability import MatchingCapability
 from src.main import AgentWorker
@@ -236,16 +235,7 @@ class GcalIntegrationCapability(MatchingCapability):
     contacts: dict = None
     last_event: dict = None
 
-    @classmethod
-    def register_capability(cls) -> "MatchingCapability":
-        with open(
-            os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.json")
-        ) as file:
-            data = json.load(file)
-        return cls(
-            unique_name=data["unique_name"],
-            matching_hotwords=data["matching_hotwords"],
-        )
+    # {{register_capability}}
 
     def call(self, worker: AgentWorker):
         self.worker = worker
@@ -678,19 +668,48 @@ class GcalIntegrationCapability(MatchingCapability):
 
         if has_yes:
             confirmed = True
-            # Look for a follow-up request after the yes part
-            # Common patterns: "Sounds good. But can you...", "Yes, also invite..."
-            split_patterns = [
-                r"(?:sounds good|yes|yeah|yep|yup|sure|ok|okay)[.,!]?\s*(?:but|also|and|can you|could you|please)\s*(.*)",
+            # Extract everything after the yes-word as a potential follow-up.
+            # Strategy: strip the yes-phrase from the front, check if the remainder
+            # contains an actionable calendar intent.
+            yes_phrases = [
+                "sounds good", "go ahead", "do it",
+                "yes", "yeah", "yep", "yup", "sure", "ok", "okay",
+                "correct", "right", "absolutely", "definitely", "please",
+                "good",
             ]
-            for pat in split_patterns:
-                match = re.search(pat, response, re.IGNORECASE)
-                if match:
-                    followup = match.group(1).strip()
-                    if followup:
-                        break
-                    else:
-                        followup = None
+            remainder = response
+            # Remove the first matching yes-phrase from the response
+            for phrase in yes_phrases:
+                pattern = re.compile(r"\b" + re.escape(phrase) + r"\b[.,!]?\s*", re.IGNORECASE)
+                match = pattern.search(remainder)
+                if match and match.start() < 10:  # must be near the start
+                    remainder = remainder[:match.start()] + remainder[match.end():]
+                    remainder = remainder.strip()
+                    break
+
+            # Strip leading connectors (may be chained: "can you make sure to")
+            prev = None
+            while remainder != prev:
+                prev = remainder
+                remainder = re.sub(
+                    r"^(?:but|also|and|can you|could you|please|make sure to|make sure|then)\s+",
+                    "", remainder, flags=re.IGNORECASE,
+                ).strip()
+
+            if remainder:
+                # Check if what's left looks like a calendar action
+                remainder_intent = self.classify_intent(remainder)
+                if remainder_intent not in ("EXIT", "SCHEDULE"):
+                    # Clear intent detected (invite, rename, reschedule, etc.)
+                    followup = remainder
+                elif remainder_intent == "SCHEDULE" and any(
+                    k in remainder.lower() for k in [
+                        "invite", "add", "rename", "move", "cancel", "delete",
+                        "reschedule", "remove", "uninvite", "who's",
+                    ]
+                ):
+                    # Intent keywords present but classifier defaulted to SCHEDULE
+                    followup = remainder
 
         elif has_no:
             confirmed = False
@@ -724,29 +743,95 @@ class GcalIntegrationCapability(MatchingCapability):
 
     async def dispatch_followup(self, followup_text: str):
         """
-        Route a follow-up request extracted from a confirmation response
-        to the appropriate handler.
+        Route follow-up requests from confirmations through the multi-intent
+        parser so compound follow-ups work too.
         """
-        intent = self.classify_intent(followup_text)
+        actions = self.parse_multi_intent(followup_text)
         self.worker.editor_logging_handler.info(
-            f"[GCal] Dispatching followup: '{followup_text}' -> {intent}"
+            f"[GCal] Dispatching followup ({len(actions)}): {actions}"
         )
+        for action_text in actions:
+            intent = self.classify_intent(action_text)
+            if intent == "EXIT":
+                break
+            await self.execute_action(action_text)
 
-        if intent == "INVITE":
-            await self.handle_add_attendee(followup_text)
-        elif intent == "REMOVE_ATTENDEE":
-            await self.handle_remove_attendee(followup_text)
-        elif intent == "RESCHEDULE":
-            await self.handle_reschedule_event(followup_text)
-        elif intent == "DELETE":
-            await self.handle_delete_event(followup_text)
-        elif intent == "LIST":
-            await self.handle_list_events(followup_text)
+    def parse_multi_intent(self, user_input: str) -> list:
+        """
+        Split a compound user message into individual action strings.
+        e.g. "Reschedule the standup to 3, invite Melody, and cancel the sync"
+        -> ["Reschedule the standup to 3", "invite Melody", "cancel the sync"]
+
+        For simple single-intent messages, returns a single-item list.
+        """
+        # Quick check: if the message clearly has only one intent, skip LLM
+        conjunctions = [" and ", " and,", " also ", " also,", " plus ", " then ",
+                        ", and ", ". and ", ". also ", ". then ", ". plus "]
+        has_conjunction = any(c in user_input.lower() for c in conjunctions)
+
+        # Check if multiple intent keywords appear
+        intent_keywords = [
+            "schedule", "book", "create", "reschedule", "move",
+            "cancel", "delete", "invite", "uninvite",
+            "remove", "rename", "call it", "what's on", "what do i have",
+            "who's on", "who's attending",
+        ]
+        keyword_hits = sum(1 for k in intent_keywords if k in user_input.lower())
+
+        if not has_conjunction or keyword_hits <= 1:
+            return [user_input]
+
+        # Use LLM to split compound requests
+        prompt = (
+            f'The user made a compound calendar request: "{user_input}"\n\n'
+            "Split this into separate, standalone action requests. Each should be a complete "
+            "phrase that could be understood on its own.\n\n"
+            "Rules:\n"
+            '- If the user says "that meeting" or "it" in later parts, keep those references as-is '
+            "(context will be resolved separately).\n"
+            "- Each action should be one of: schedule, reschedule, delete/cancel, invite, "
+            "remove/uninvite, rename, list events, or query attendees.\n"
+            "- Return a JSON array of strings.\n"
+            '- If there\'s really only one action, return a single-item array.\n\n'
+            "Return ONLY valid JSON, no other text."
+        )
+        raw = self.capability_worker.text_to_text_response(
+            prompt,
+            system_prompt="You split compound calendar requests into individual actions. Return only a JSON array.",
+        )
+        clean = raw.replace("```json", "").replace("```", "").strip()
+        self.worker.editor_logging_handler.info(f"[GCal] Multi-intent parse: {clean}")
+
+        try:
+            actions = json.loads(clean)
+            if isinstance(actions, list) and len(actions) > 0:
+                return [a.strip() for a in actions if isinstance(a, str) and a.strip()]
+        except Exception:
+            pass
+
+        return [user_input]
+
+    async def execute_action(self, action_text: str):
+        """Route a single action string to the appropriate handler."""
+        intent = self.classify_intent(action_text)
+        self.worker.editor_logging_handler.info(f"[GCal] Action: '{action_text}' -> {intent}")
+
+        if intent == "LIST":
+            await self.handle_list_events(action_text)
         elif intent == "QUERY_ATTENDEES":
-            await self.handle_query_attendees(followup_text)
+            await self.handle_query_attendees(action_text)
+        elif intent == "RENAME":
+            await self.handle_rename_event(action_text)
+        elif intent == "RESCHEDULE":
+            await self.handle_reschedule_event(action_text)
+        elif intent == "INVITE":
+            await self.handle_add_attendee(action_text)
+        elif intent == "DELETE":
+            await self.handle_delete_event(action_text)
+        elif intent == "REMOVE_ATTENDEE":
+            await self.handle_remove_attendee(action_text)
         elif intent == "SCHEDULE":
-            await self.handle_schedule_event(followup_text)
-        # EXIT is ignored — they already confirmed the primary action
+            await self.handle_schedule_event(action_text)
 
     def classify_intent(self, user_input: str) -> str:
         lower = user_input.lower()
@@ -754,11 +839,16 @@ class GcalIntegrationCapability(MatchingCapability):
         if any(w in lower for w in EXIT_WORDS):
             return "EXIT"
 
-        # "cancel" alone or "cancel that" = EXIT, but "cancel the meeting" = DELETE
+        # "cancel" handling: bare "cancel" / "cancel that" = EXIT,
+        # but "cancel [event name/description]" = DELETE
         if "cancel" in lower:
-            cancel_targets = ["cancel the", "cancel my", "cancel this"]
-            if not any(t in lower for t in cancel_targets):
+            # Strip "cancel" and see what's left
+            after_cancel = re.sub(r"^.*?\bcancel\b\s*", "", lower, count=1).strip()
+            # Bare cancel, or only vague words left → EXIT
+            exit_remainders = ["", "that", "it", "this", "never mind", "nope"]
+            if after_cancel in exit_remainders:
                 return "EXIT"
+            # Otherwise fall through — DELETE check below will catch it
 
         # ── QUERY_ATTENDEES: who's on / attending a specific event ──
         if any(s in lower for s in [
@@ -770,6 +860,14 @@ class GcalIntegrationCapability(MatchingCapability):
             "attendees for", "attendees of", "guest list",
         ]):
             return "QUERY_ATTENDEES"
+
+        # ── RENAME: change the title/name of an existing event ──
+        if any(s in lower for s in [
+            "rename", "change the name", "change the title",
+            "call it", "name it", "retitle",
+            "change it to", "update the name", "update the title",
+        ]):
+            return "RENAME"
 
         # ── LIST: user wants to see what's on their calendar ──
         list_signals = [
@@ -795,11 +893,13 @@ class GcalIntegrationCapability(MatchingCapability):
             return "REMOVE_ATTENDEE"
 
         # ── DELETE: remove an entire event ──
+        # "cancel [something]" that wasn't caught as EXIT above → DELETE
+        if re.search(r"\bcancel\b.+", lower):
+            return "DELETE"
         delete_signals = [
-            "delete the", "delete my", "delete this",
+            "delete the", "delete my", "delete this", "delete",
             "remove the event", "remove the meeting", "remove my meeting",
-            "cancel the meeting", "cancel the event", "cancel my meeting",
-            "cancel my event", "cancel this meeting", "get rid of",
+            "get rid of",
         ]
         if any(s in lower for s in delete_signals):
             return "DELETE"
@@ -910,9 +1010,10 @@ class GcalIntegrationCapability(MatchingCapability):
             "that meeting", "this meeting", "that event", "this event",
             "the same", "that one", "the one we just", "thatmeeting",
             "the meeting", "the event",
+            "that", "this", "it",
         ]
         hint_lower = event_hint.lower().strip()
-        if self.last_event and any(v in hint_lower for v in vague_refs):
+        if self.last_event and (hint_lower in ["that", "this", "it"] or any(v in hint_lower for v in vague_refs)):
             self.worker.editor_logging_handler.info(
                 f"[GCal] Matched vague ref '{event_hint}' to last_event: {self.last_event.get('summary')}"
             )
@@ -1076,7 +1177,7 @@ class GcalIntegrationCapability(MatchingCapability):
         Answer 'what's happening at X time' by finding events that span that time.
         """
         try:
-            query_dt = datetime.strptime(query_time, "%H:%M")
+            datetime.strptime(query_time, "%H:%M")
         except Exception:
             return self.format_events_for_speech(events, date_label)
 
@@ -1191,23 +1292,17 @@ class GcalIntegrationCapability(MatchingCapability):
             self.capability_worker.resume_normal_flow()
             return
 
-        intent = self.classify_intent(msg)
-        self.worker.editor_logging_handler.info(f"[GCal] Intent: {intent} for: {msg}")
+        # Parse into potentially multiple actions
+        actions = self.parse_multi_intent(msg)
+        self.worker.editor_logging_handler.info(f"[GCal] Action queue ({len(actions)}): {actions}")
 
-        if intent == "LIST":
-            await self.handle_list_events(msg)
-        elif intent == "QUERY_ATTENDEES":
-            await self.handle_query_attendees(msg)
-        elif intent == "RESCHEDULE":
-            await self.handle_reschedule_event(msg)
-        elif intent == "INVITE":
-            await self.handle_add_attendee(msg)
-        elif intent == "DELETE":
-            await self.handle_delete_event(msg)
-        elif intent == "REMOVE_ATTENDEE":
-            await self.handle_remove_attendee(msg)
-        elif intent == "SCHEDULE":
-            await self.handle_schedule_event(msg)
+        for i, action_text in enumerate(actions):
+            intent = self.classify_intent(action_text)
+            if intent == "EXIT":
+                break
+            if i > 0:
+                await self.capability_worker.speak("Next up.")
+            await self.execute_action(action_text)
 
         self.capability_worker.resume_normal_flow()
 
@@ -1316,6 +1411,85 @@ class GcalIntegrationCapability(MatchingCapability):
         await self.capability_worker.speak(
             f"{event_title} has {count} {'person' if count == 1 else 'people'} on it: {names_str}."
         )
+
+    async def handle_rename_event(self, user_input: str):
+        """Rename an existing calendar event."""
+        await self.capability_worker.speak("Sure, let me find it.")
+
+        ctx = get_today_context()
+        prompt = (
+            f"The user wants to rename or change the title of a calendar event.\n"
+            f"Extract what they want.\n\n"
+            f"RIGHT NOW it is {ctx['current_time']} on {ctx['day_name']}, {ctx['today']}.\n"
+            f"User said: \"{user_input}\"\n\n"
+            "Return ONLY a JSON object:\n"
+            '{{"event_hint": "how they describe the current event (name, \'that meeting\', etc.)", '
+            '"new_name": "the new name they want, or null if not specified", '
+            '"event_date": "YYYY-MM-DD or null", '
+            '"event_time": "HH:MM or null"}}\n'
+            "Return ONLY valid JSON."
+        )
+        raw = self.capability_worker.text_to_text_response(prompt)
+        clean = raw.replace("```json", "").replace("```", "").strip()
+        self.worker.editor_logging_handler.info(f"[GCal] Rename extraction: {clean}")
+
+        try:
+            details = json.loads(clean)
+        except Exception:
+            await self.capability_worker.speak("I didn't catch that. Which event do you want to rename?")
+            return
+
+        event_hint = details.get("event_hint", user_input)
+        matched_event = self.find_matching_event(
+            event_hint=event_hint,
+            original_time=details.get("event_time"),
+            original_date=details.get("event_date"),
+        )
+
+        if not matched_event:
+            await self.capability_worker.speak(
+                f"I'm not seeing an event called {event_hint} on your calendar."
+            )
+            return
+
+        event_title = matched_event.get("summary", "Untitled")
+        event_id = matched_event["id"]
+        new_name = details.get("new_name")
+
+        if not new_name:
+            new_name = await self.capability_worker.run_io_loop(
+                f"Found {event_title}. What do you want to call it instead?"
+            )
+            if not new_name or not new_name.strip():
+                await self.capability_worker.speak("I didn't catch a name. Try again whenever.")
+                return
+            new_name = new_name.strip()
+
+        response = await self.capability_worker.run_io_loop(
+            f"I'll rename {event_title} to {new_name}. Good?"
+        )
+        parsed = self.parse_confirmation_response(response)
+
+        if not parsed["confirmed"]:
+            if parsed["followup"]:
+                await self.dispatch_followup(parsed["followup"])
+            else:
+                await self.capability_worker.speak("Alright, keeping the name.")
+            return
+
+        await self.capability_worker.speak("One sec.")
+        self.last_api_error = ""
+        result = self.update_event(event_id, {"summary": new_name})
+
+        if result:
+            self.last_event = result
+            await self.capability_worker.speak(f"Done. It's now called {new_name}.")
+            if parsed["followup"]:
+                await self.dispatch_followup(parsed["followup"])
+        else:
+            await self.capability_worker.speak(
+                f"That didn't work. The error was: {self.last_api_error}."
+            )
 
     async def handle_reschedule_event(self, user_input: str):
         await self.capability_worker.speak("On it, let me pull that up.")
