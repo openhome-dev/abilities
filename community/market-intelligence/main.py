@@ -79,6 +79,13 @@ CRYPTO_IDS = {
     "matic": "matic-network",
 }
 
+# Stop-words stripped when extracting search keywords from user query
+_STRIP_WORDS = re.compile(
+    r"\b(what|the|market|saying|about|does|polymarket|say|"
+    r"are|odds|of|for|on|is|any|predictions?|how|big|movers?|"
+    r"this|week|going|crash|moon|rally|dump)\b"
+)
+
 
 class MarketIntelligenceCapability(MatchingCapability):
     """Market intelligence via Polymarket prediction markets and CoinGecko."""
@@ -176,53 +183,75 @@ class MarketIntelligenceCapability(MatchingCapability):
         return "general"
 
     def _wants_price(self, text: str) -> bool:
-        price_words = {"price", "trading", "worth", "cost", "how much", "doing"}
+        """Return True only for pure crypto price queries, not odds/prediction queries."""
+        # If the user is asking about odds or predictions, route to Polymarket even for crypto
+        odds_words = {
+            "odds", "chance", "probability", "predict", "crash", "moon",
+            "rally", "dump", "will", "going to", "forecast", "bet",
+        }
         text_lower = text.lower()
+        if any(w in text_lower for w in odds_words):
+            return False
+        price_words = {"price", "trading", "worth", "cost", "how much", "doing"}
         return any(w in text_lower for w in price_words)
 
+    def _extract_keywords(self, query: str) -> List[str]:
+        """Extract meaningful keywords from the user query for market scoring."""
+        cleaned = _STRIP_WORDS.sub("", query.lower()).strip()
+        # Also capture category keywords present in the original query
+        extra = []
+        for keywords in CATEGORIES.values():
+            for kw in keywords:
+                if kw in query.lower() and kw not in cleaned:
+                    extra.append(kw)
+        words = [w for w in cleaned.split() if len(w) > 2]
+        # Deduplicate while preserving order
+        seen: set = set()
+        result = []
+        for w in words + extra:
+            if w not in seen:
+                seen.add(w)
+                result.append(w)
+        return result
+
+    # Search strategy: fetch the top active markets by recent 24hr volume, then
+    # score each by how many query keywords appear in the question text. This is
+    # more reliable than tag_slug (which requires exact taxonomy matches) and
+    # surfaces genuinely relevant markets for open-ended natural-language queries.
     def _search_polymarket(self, query: str) -> List[Dict]:
         try:
-            params = {
-                "limit": 10,
-                "active": "true",
-                "closed": "false",
-            }
-            clean_query = re.sub(
-                r"\b(what|the|market|saying|about|does|polymarket|say|"
-                r"are|odds|of|for|on|is|any|predictions?)\b",
-                "",
-                query.lower(),
-            ).strip()
-            if clean_query:
-                params["tag_slug"] = clean_query.replace(" ", "-")
+            keywords = self._extract_keywords(query)
 
             resp = requests.get(
-                POLYMARKET_GAMMA_URL, params=params, timeout=15
+                POLYMARKET_GAMMA_URL,
+                params={
+                    "active": "true",
+                    "closed": "false",
+                    "limit": 300,
+                    "order": "volume24hr",
+                    "ascending": "false",
+                },
+                timeout=15,
             )
             resp.raise_for_status()
-            markets = resp.json()
+            all_markets = resp.json()
 
-            if not markets and clean_query:
-                del params["tag_slug"]
-                resp = requests.get(
-                    POLYMARKET_GAMMA_URL,
-                    params={**params, "limit": 50},
-                    timeout=15,
-                )
-                resp.raise_for_status()
-                all_markets = resp.json()
-                keywords = clean_query.split()
-                markets = [
-                    m for m in all_markets
-                    if any(
-                        kw in m.get("question", "").lower()
-                        or kw in m.get("description", "").lower()
-                        for kw in keywords
-                        if len(kw) > 2
-                    )
-                ][:10]
+            if not keywords:
+                # No specific keywords — return top markets by volume
+                return all_markets[:10]
 
-            return markets
+            # Score each market by keyword matches in the question field
+            scored = []
+            for m in all_markets:
+                question_lower = m.get("question", "").lower()
+                score = sum(1 for kw in keywords if kw in question_lower)
+                if score > 0:
+                    scored.append((score, m))
+
+            # Sort by relevance score descending, return top 10
+            scored.sort(key=lambda x: x[0], reverse=True)
+            return [m for _, m in scored[:10]]
+
         except requests.RequestException:
             return []
 
