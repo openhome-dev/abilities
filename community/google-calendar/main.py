@@ -235,7 +235,7 @@ class GcalIntegrationCapability(MatchingCapability):
     contacts: dict = None
     last_event: dict = None
 
-    # {{register_capability}}
+    #{{register_capability}}
 
     def call(self, worker: AgentWorker):
         self.worker = worker
