@@ -20,13 +20,13 @@ from src.agent.capability_worker import CapabilityWorker
 
 # ── FedEx ────────────────────────────────────────────────────────────────────
 # Get credentials from https://developer.fedex.com → My Apps → Track API scope
-FEDEX_API_KEY    = "your_fedex_api_key"     # ← paste here
+FEDEX_API_KEY = "your_fedex_api_key"     # ← paste here
 FEDEX_SECRET_KEY = "your_fedex_secret_key"  # ← paste here
 FEDEX_USE_SANDBOX = True   # Set False for production (apis.fedex.com)
 
 # ── UPS ──────────────────────────────────────────────────────────────────────
 # Get credentials from https://developer.ups.com → Add App → Track product
-UPS_CLIENT_ID     = "your_ups_client_id"
+UPS_CLIENT_ID = "your_ups_client_id"
 UPS_CLIENT_SECRET = "your_ups_client_secret"
 UPS_USE_CIE = True         # Set False for production (onlinetools.ups.com)
 
@@ -37,17 +37,17 @@ USPS_USER_ID = "your_usps_user_id"
 
 # ── DHL ──────────────────────────────────────────────────────────────────────
 # Get API key from https://developer.dhl.com → Shipment Tracking - Unified
-DHL_API_KEY  = "your_dhl_api_key"
+DHL_API_KEY = "your_dhl_api_key"
 DHL_USE_TEST = True        # Set False for production
 
 # ── Derived base URLs ─────────────────────────────────────────────────────────
 FEDEX_BASE_URL = "https://apis-sandbox.fedex.com" if FEDEX_USE_SANDBOX else "https://apis.fedex.com"
-UPS_BASE_URL   = "https://wwwcie.ups.com"          if UPS_USE_CIE       else "https://onlinetools.ups.com"
-USPS_BASE_URL  = "https://secure.shippingapis.com"
-DHL_BASE_URL   = "https://api.dhl.com"
+UPS_BASE_URL = "https://wwwcie.ups.com" if UPS_USE_CIE else "https://onlinetools.ups.com"
+USPS_BASE_URL = "https://secure.shippingapis.com"
+DHL_BASE_URL = "https://api.dhl.com"
 
-PACKAGES_FILE        = "pkgtracker_packages.json"
-MAX_PACKAGES         = 20
+PACKAGES_FILE = "pkgtracker_packages.json"
+MAX_PACKAGES = 20
 DELIVERED_CLEANUP_DAYS = 2
 
 EXIT_WORDS = [
@@ -59,23 +59,23 @@ CANCEL_WORDS = ["never mind", "cancel", "forget it", "nevermind"]
 
 # Normalized status tags (all lowercase) → voice descriptions
 STATUS_DESCRIPTIONS = {
-    "delivered":        "Your package was delivered.",
+    "delivered": "Your package was delivered.",
     "out_for_delivery": "Your package is out for delivery today.",
-    "in_transit":       "Your package is in transit.",
-    "exception":        "There's an issue with your package. Check the carrier website for details.",
-    "returned":         "Your package is being returned to the sender.",
-    "held":             "Your package is being held for pickup.",
-    "cancelled":        "This shipment has been cancelled.",
-    "label_created":    "A label was created but the carrier hasn't picked it up yet.",
-    "pending":          "Tracking registered but no carrier scan yet.",
-    "unknown":          "Status not available.",
+    "in_transit": "Your package is in transit.",
+    "exception": "There's an issue with your package. Check the carrier website for details.",
+    "returned": "Your package is being returned to the sender.",
+    "held": "Your package is being held for pickup.",
+    "cancelled": "This shipment has been cancelled.",
+    "label_created": "A label was created but the carrier hasn't picked it up yet.",
+    "pending": "Tracking registered but no carrier scan yet.",
+    "unknown": "Status not available.",
 }
 
 CARRIER_DISPLAY = {
-    "ups":    "UPS",
-    "fedex":  "FedEx",
-    "usps":   "USPS",
-    "dhl":    "DHL",
+    "ups": "UPS",
+    "fedex": "FedEx",
+    "usps": "USPS",
+    "dhl": "DHL",
     "amazon": "Amazon Logistics",
 }
 
@@ -239,11 +239,11 @@ class PackageTrackerCapability(MatchingCapability):
 
     def _carrier_configured(self, carrier: str) -> bool:
         if carrier == "fedex":
-            return (FEDEX_API_KEY not in ("", "your_fedex_api_key") and
-                    FEDEX_SECRET_KEY not in ("", "your_fedex_secret_key"))
+            return (FEDEX_API_KEY not in ("", "your_fedex_api_key")
+                    and FEDEX_SECRET_KEY not in ("", "your_fedex_secret_key"))
         if carrier == "ups":
-            return (UPS_CLIENT_ID not in ("", "your_ups_client_id") and
-                    UPS_CLIENT_SECRET not in ("", "your_ups_client_secret"))
+            return (UPS_CLIENT_ID not in ("", "your_ups_client_id")
+                    and UPS_CLIENT_SECRET not in ("", "your_ups_client_secret"))
         if carrier == "usps":
             return USPS_USER_ID not in ("", "your_usps_user_id")
         if carrier == "dhl":
@@ -259,14 +259,22 @@ class PackageTrackerCapability(MatchingCapability):
         Returns: 'ups' | 'fedex' | 'usps' | 'dhl' | 'amazon' | 'unknown'."""
         t = tracking_number.upper().replace(" ", "").replace("-", "")
 
-        if t.startswith("TBA"):                              return "amazon"  # Amazon Logistics
-        if re.match(r"^1Z[A-Z0-9]{16}$", t):               return "ups"     # UPS 18-char
-        if re.match(r"^(JJD|JVGL|GM|LX|RX|3S)", t):        return "dhl"     # DHL Express prefixes
-        if re.match(r"^\d{10}$", t):                         return "dhl"     # DHL Express 10-digit
-        if re.match(r"^9[2-6]\d{18,}$", t):                 return "usps"    # USPS 20+ digit
-        if re.match(r"^[A-Z]{2}\d{9}US$", t):               return "usps"    # USPS international
-        if t.isdigit() and len(t) in (12, 15, 20):          return "fedex"   # FedEx numeric
-        if re.match(r"^96\d{20}$", t):                      return "fedex"   # FedEx Ground 96-prefix
+        if t.startswith("TBA"):
+            return "amazon"  # Amazon Logistics
+        if re.match(r"^1Z[A-Z0-9]{16}$", t):
+            return "ups"     # UPS 18-char
+        if re.match(r"^(JJD|JVGL|GM|LX|RX|3S)", t):
+            return "dhl"     # DHL Express prefixes
+        if re.match(r"^\d{10}$", t):
+            return "dhl"     # DHL Express 10-digit
+        if re.match(r"^9[2-6]\d{18,}$", t):
+            return "usps"    # USPS 20+ digit
+        if re.match(r"^[A-Z]{2}\d{9}US$", t):
+            return "usps"    # USPS international
+        if t.isdigit() and len(t) in (12, 15, 20):
+            return "fedex"   # FedEx numeric
+        if re.match(r"^96\d{20}$", t):
+            return "fedex"   # FedEx Ground 96-prefix
         return "unknown"
 
     def _parse_carrier_from_text(self, text: str) -> str:
@@ -389,15 +397,23 @@ class PackageTrackerCapability(MatchingCapability):
 
     def _normalize_fedex_status(self, code: str, desc: str) -> str:
         c, d = code.upper(), desc.upper()
-        if c == "DL" or "DELIVERED" in d:                                  return "delivered"
-        if c == "OD" or "OUT FOR DELIVERY" in d:                           return "out_for_delivery"
+        if c == "DL" or "DELIVERED" in d:
+            return "delivered"
+        if c == "OD" or "OUT FOR DELIVERY" in d:
+            return "out_for_delivery"
         if c in ("IT", "AR", "DP", "AF", "OC") or "IN TRANSIT" in d \
-                or "ARRIVED" in d or "DEPARTED" in d:                      return "in_transit"
-        if c == "DE" or "EXCEPTION" in d or "DELAY" in d:                  return "exception"
-        if c == "HL" or "HOLD" in d:                                       return "held"
-        if c == "RS" or "RETURN" in d:                                     return "returned"
-        if c == "CA" or "CANCEL" in d:                                     return "cancelled"
-        if c in ("PU", "PX") or "PICKED UP" in d or "LABEL" in d:         return "label_created"
+                or "ARRIVED" in d or "DEPARTED" in d:
+            return "in_transit"
+        if c == "DE" or "EXCEPTION" in d or "DELAY" in d:
+            return "exception"
+        if c == "HL" or "HOLD" in d:
+            return "held"
+        if c == "RS" or "RETURN" in d:
+            return "returned"
+        if c == "CA" or "CANCEL" in d:
+            return "cancelled"
+        if c in ("PU", "PX") or "PICKED UP" in d or "LABEL" in d:
+            return "label_created"
         return "in_transit"
 
     # ─────────────────────────────────────────────────────────────────────────
@@ -502,11 +518,16 @@ class PackageTrackerCapability(MatchingCapability):
 
     def _normalize_ups_status(self, type_: str, desc: str) -> str:
         t, d = type_.upper(), desc.upper()
-        if t == "D" or "DELIVERED" in d:                     return "delivered"
-        if t == "O" or "OUT FOR DELIVERY" in d:              return "out_for_delivery"
-        if t == "X" or "EXCEPTION" in d or "DELAY" in d:    return "exception"
-        if t == "M" or "LABEL CREATED" in d:                 return "label_created"
-        if "RETURNED" in d:                                   return "returned"
+        if t == "D" or "DELIVERED" in d:
+            return "delivered"
+        if t == "O" or "OUT FOR DELIVERY" in d:
+            return "out_for_delivery"
+        if t == "X" or "EXCEPTION" in d or "DELAY" in d:
+            return "exception"
+        if t == "M" or "LABEL CREATED" in d:
+            return "label_created"
+        if "RETURNED" in d:
+            return "returned"
         return "in_transit"  # covers I, P, and any other in-motion type
 
     # ─────────────────────────────────────────────────────────────────────────
@@ -568,14 +589,21 @@ class PackageTrackerCapability(MatchingCapability):
 
     def _normalize_usps_status(self, desc: str) -> str:
         d = desc.upper()
-        if "DELIVERED" in d:                                        return "delivered"
-        if "OUT FOR DELIVERY" in d:                                 return "out_for_delivery"
+        if "DELIVERED" in d:
+            return "delivered"
+        if "OUT FOR DELIVERY" in d:
+            return "out_for_delivery"
         if "IN TRANSIT" in d or "ARRIVED" in d or "DEPARTED" in d \
-                or "PROCESSED" in d or "ACCEPTED" in d:            return "in_transit"
-        if "HELD" in d or "HOLD" in d or "AVAILABLE FOR PICKUP" in d: return "held"
-        if "RETURN" in d:                                           return "returned"
-        if "ALERT" in d or "NOTICE" in d:                          return "exception"
-        if "LABEL" in d or "ELECTRONIC" in d:                      return "label_created"
+                or "PROCESSED" in d or "ACCEPTED" in d:
+            return "in_transit"
+        if "HELD" in d or "HOLD" in d or "AVAILABLE FOR PICKUP" in d:
+            return "held"
+        if "RETURN" in d:
+            return "returned"
+        if "ALERT" in d or "NOTICE" in d:
+            return "exception"
+        if "LABEL" in d or "ELECTRONIC" in d:
+            return "label_created"
         return "in_transit"
 
     # ─────────────────────────────────────────────────────────────────────────
@@ -636,14 +664,21 @@ class PackageTrackerCapability(MatchingCapability):
 
     def _normalize_dhl_status(self, code: str, desc: str) -> str:
         c, d = code.upper(), desc.upper()
-        if c == "DELIVERED" or "DELIVERED" in d:                   return "delivered"
-        if c in ("OUT-FOR-DELIVERY",) or "OUT FOR DELIVERY" in d:  return "out_for_delivery"
+        if c == "DELIVERED" or "DELIVERED" in d:
+            return "delivered"
+        if c in ("OUT-FOR-DELIVERY",) or "OUT FOR DELIVERY" in d:
+            return "out_for_delivery"
         if c in ("TRANSIT", "IN-TRANSIT", "PROCESSED") \
-                or "TRANSIT" in d or "ARRIVED" in d:               return "in_transit"
-        if "EXCEPTION" in d or "DELAY" in d or "DAMAGE" in d:      return "exception"
-        if "RETURN" in d:                                           return "returned"
-        if "HELD" in d or "HOLD" in d:                             return "held"
-        if "LABEL" in d:                                           return "label_created"
+                or "TRANSIT" in d or "ARRIVED" in d:
+            return "in_transit"
+        if "EXCEPTION" in d or "DELAY" in d or "DAMAGE" in d:
+            return "exception"
+        if "RETURN" in d:
+            return "returned"
+        if "HELD" in d or "HOLD" in d:
+            return "held"
+        if "LABEL" in d:
+            return "label_created"
         return "in_transit"
 
     # ─────────────────────────────────────────────────────────────────────────
@@ -652,10 +687,14 @@ class PackageTrackerCapability(MatchingCapability):
 
     def _track_package(self, carrier: str, tracking_number: str) -> dict:
         """Route to the appropriate carrier API. Returns normalized dict or {'error': ...}."""
-        if carrier == "ups":   return self._track_ups(tracking_number)
-        if carrier == "fedex": return self._track_fedex(tracking_number)
-        if carrier == "usps":  return self._track_usps(tracking_number)
-        if carrier == "dhl":   return self._track_dhl(tracking_number)
+        if carrier == "ups":
+            return self._track_ups(tracking_number)
+        if carrier == "fedex":
+            return self._track_fedex(tracking_number)
+        if carrier == "usps":
+            return self._track_usps(tracking_number)
+        if carrier == "dhl":
+            return self._track_dhl(tracking_number)
         return {"error": f"Carrier '{carrier}' is not supported"}
 
     # ─────────────────────────────────────────────────────────────────────────
@@ -1316,10 +1355,14 @@ class PackageTrackerCapability(MatchingCapability):
                 return s  # return raw string as fallback
         now = datetime.now(timezone.utc)
         diff = (dt.date() - now.date()).days
-        if diff == 0:   return "today"
-        if diff == 1:   return "tomorrow"
-        if diff == -1:  return "yesterday"
-        if 2 <= diff <= 6: return dt.strftime("%A")
+        if diff == 0:
+            return "today"
+        if diff == 1:
+            return "tomorrow"
+        if diff == -1:
+            return "yesterday"
+        if 2 <= diff <= 6:
+            return dt.strftime("%A")
         return dt.strftime("%B %d")
 
     def log_info(self, msg: str):
