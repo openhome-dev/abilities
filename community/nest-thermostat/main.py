@@ -190,11 +190,19 @@ class NestThermostatCapability(MatchingCapability):
         self.prefs = await self.load_prefs()
 
         if not self.prefs.get("refresh_token"):
-            has_creds = await self._ask_yes_no(
-                "To control your Nest thermostat I need to connect to Google. "
-                "Do you already have your Client ID, Client Secret, and "
-                "Device Access Project ID ready?"
+            creds_ready = bool(
+                self.prefs.get("client_id")
+                and self.prefs.get("client_secret")
+                and self.prefs.get("project_id")
             )
+            if not creds_ready:
+                has_creds = await self._ask_yes_no(
+                    "To control your Nest thermostat I need to connect to Google. "
+                    "Do you already have your Client ID, Client Secret, and "
+                    "Device Access Project ID ready?"
+                )
+            else:
+                has_creds = True
             success = await self.run_oauth_setup_flow(skip_walkthrough=has_creds)
             if not success:
                 await self.capability_worker.speak(
@@ -313,28 +321,33 @@ class NestThermostatCapability(MatchingCapability):
                 )
                 await self.capability_worker.user_response()
 
-            # Collect credentials
-            await self.capability_worker.speak("What is your OAuth Client ID?")
-            client_id = (await self.capability_worker.user_response() or "").strip()
-            if not client_id:
-                await self.capability_worker.speak("I didn't catch a Client ID. Setup cancelled.")
-                return False
+            # Collect credentials (skip if already pre-filled, e.g. AUTH_TEST mode)
+            if self.prefs.get("client_id") and self.prefs.get("client_secret") and self.prefs.get("project_id"):
+                client_id = self.prefs["client_id"]
+                client_secret = self.prefs["client_secret"]
+                project_id = self.prefs["project_id"]
+            else:
+                await self.capability_worker.speak("What is your OAuth Client ID?")
+                client_id = (await self.capability_worker.user_response() or "").strip()
+                if not client_id:
+                    await self.capability_worker.speak("I didn't catch a Client ID. Setup cancelled.")
+                    return False
 
-            await self.capability_worker.speak("What is your Client Secret?")
-            client_secret = (await self.capability_worker.user_response() or "").strip()
-            if not client_secret:
-                await self.capability_worker.speak("I didn't catch a Client Secret. Setup cancelled.")
-                return False
+                await self.capability_worker.speak("What is your Client Secret?")
+                client_secret = (await self.capability_worker.user_response() or "").strip()
+                if not client_secret:
+                    await self.capability_worker.speak("I didn't catch a Client Secret. Setup cancelled.")
+                    return False
 
-            await self.capability_worker.speak("What is your Device Access Project ID?")
-            project_id = (await self.capability_worker.user_response() or "").strip()
-            if not project_id:
-                await self.capability_worker.speak("I didn't catch a Project ID. Setup cancelled.")
-                return False
+                await self.capability_worker.speak("What is your Device Access Project ID?")
+                project_id = (await self.capability_worker.user_response() or "").strip()
+                if not project_id:
+                    await self.capability_worker.speak("I didn't catch a Project ID. Setup cancelled.")
+                    return False
 
-            self.prefs["client_id"] = client_id
-            self.prefs["client_secret"] = client_secret
-            self.prefs["project_id"] = project_id
+                self.prefs["client_id"] = client_id
+                self.prefs["client_secret"] = client_secret
+                self.prefs["project_id"] = project_id
 
             # Build consent URL and walk user through it
             consent_url = (
@@ -346,15 +359,13 @@ class NestThermostatCapability(MatchingCapability):
                 f"&response_type=code"
                 f"&scope={SDM_SCOPE}"
             )
+            # Log the URL so the user can copy it from logs — speaking it is useless
+            self._log(f"Consent URL: {consent_url}")
             await self.capability_worker.speak(
-                f"Open this link in your browser: {consent_url}"
-            )
-            await self.capability_worker.speak(
-                "Sign in with the Google account that has your Nest thermostat, "
-                "select your devices, and allow access. "
-                "You'll be redirected to google dot com. "
-                "Look at the URL — find the part after 'code equals' and before the ampersand. "
-                "Read or paste that authorization code to me now."
+                "I've generated your Google sign-in link. "
+                "Check the logs to copy it, then open it in your browser. "
+                "Sign in, allow access, and you'll be redirected to google dot com. "
+                "Copy the code from the URL bar and paste it back here."
             )
 
             raw_code = (await self.capability_worker.user_response() or "").strip()
