@@ -168,6 +168,40 @@ self.capability_worker.resume_normal_flow()
 
 If you forget this, the Agent will be stuck and unresponsive.
 
+### `send_interrupt_signal()`
+
+Stops current assistant output and returns control to user input.
+
+```python
+interrupt_signal = await self.capability_worker.send_interrupt_signal()
+```
+
+Async. Use when you need to cut off ongoing speech/audio and listen immediately.
+
+---
+
+## User Context
+
+### `get_timezone()`
+
+Returns the current user's timezone string.
+
+```python
+timezone = self.capability_worker.get_timezone()
+```
+
+Synchronous. Returns a string like `America/Chicago` or `None` if unavailable.
+
+### `get_full_message_history()`
+
+Returns the full conversation history from the current session.
+
+```python
+history = self.capability_worker.get_full_message_history()
+```
+
+Use this to read what happened before your Ability was triggered — gives context for smarter responses.
+
 ---
 
 ## AgentWorker Reference
