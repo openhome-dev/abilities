@@ -35,7 +35,7 @@ This Ability requires a Twilio account and an active Twilio phone number.
 - `text_to_text_response()` — LLM text generation used for intent routing, data extraction, and fuzzy contact resolution (called synchronously without `await`).
 - `session_tasks.create()` — Safely runs the main asynchronous interaction loop.
 - `editor_logging_handler.error()` — Safe logging of API or internal errors without using `print()`.
-- `resume_normal_flow()` — Safely returns control to the Personality, guaranteed to execute via a `finally` block.
+- `resume_normal_flow()` — Safely returns control to the Agent, guaranteed to execute via a `finally` block.
 
 ## Example Conversation
 

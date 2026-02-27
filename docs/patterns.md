@@ -203,7 +203,7 @@ await self.worker.session_tasks.sleep(5)
 # ❌ Don't forget resume_normal_flow
 async def run(self):
     await self.capability_worker.speak("Done!")
-    # Agent is now stuck!
+    # Personality is now stuck!
 # ✅ Always call it
 async def run(self):
     await self.capability_worker.speak("Done!")
