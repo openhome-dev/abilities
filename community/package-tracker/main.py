@@ -20,8 +20,8 @@ from src.agent.capability_worker import CapabilityWorker
 
 # ── FedEx ────────────────────────────────────────────────────────────────────
 # Get credentials from https://developer.fedex.com → My Apps → Track API scope
-FEDEX_API_KEY    = "l70d7a0844f44a4f25845a16e1183434bd"     # ← paste here
-FEDEX_SECRET_KEY = "5057a0cda71a4ad1b16db11ad87c2258"  # ← paste here
+FEDEX_API_KEY    = "your_fedex_api_key"     # ← paste here
+FEDEX_SECRET_KEY = "your_fedex_secret_key"  # ← paste here
 FEDEX_USE_SANDBOX = True   # Set False for production (apis.fedex.com)
 
 # ── UPS ──────────────────────────────────────────────────────────────────────
@@ -32,7 +32,7 @@ UPS_USE_CIE = True         # Set False for production (onlinetools.ups.com)
 
 # ── USPS ─────────────────────────────────────────────────────────────────────
 # Register at https://registration.shippingapis.com/
-USPS_USER_ID = "338OPENH22O13"
+USPS_USER_ID = "your_usps_user_id"
 # USPS has no sandbox — the same endpoint handles all requests
 
 # ── DHL ──────────────────────────────────────────────────────────────────────
@@ -823,10 +823,8 @@ class PackageTrackerCapability(MatchingCapability):
 
             if detected == "amazon":
                 await self.capability_worker.speak(
-                    "This looks like an Amazon Logistics tracking number. "
-                    "Amazon doesn't provide a public tracking API, "
-                    "so I can't pull live status. "
-                    "You can track it at amazon.com or in the Amazon app."
+                    "That looks like an Amazon Logistics number. "
+                    "Amazon doesn't have a public tracking API, so I can't check it here."
                 )
                 confirmed = await self.capability_worker.run_confirmation_loop(
                     "Want to track a different package instead?"
@@ -839,8 +837,7 @@ class PackageTrackerCapability(MatchingCapability):
                 # Detected a carrier we don't have credentials for — fail fast
                 display = CARRIER_DISPLAY.get(detected, detected.upper())
                 await self.capability_worker.speak(
-                    f"That looks like a {display} tracking number, "
-                    f"but I'm not set up for {display} yet. "
+                    f"That looks like a {display} number, but I'm not set up for {display} yet. "
                     f"I can currently track {configured_display}."
                 )
                 confirmed = await self.capability_worker.run_confirmation_loop(
