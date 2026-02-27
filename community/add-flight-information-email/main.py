@@ -10,9 +10,9 @@ from src.agent.capability_worker import CapabilityWorker
 
 
 # Composio credentials (replace with your own)
-COMPOSIO_API_KEY = "ak_xxx"  # Your api key
-COMPOSIO_USER_ID = "pg-test-xxxxxxxx"  # Your user id
-COMPOSIO_CONNECTED_ACCOUNT_ID = "ca_xxxx"  # Your account i
+COMPOSIO_API_KEY = "Place you API Key here"  # Your api key
+COMPOSIO_USER_ID = "Place User_id here"  # Your user id
+COMPOSIO_CONNECTED_ACCOUNT_ID = "Place Account_ID here"  # Your account id
 COMPOSIO_BASE_URL = "https://backend.composio.dev/api/v3"
 
 
@@ -20,8 +20,8 @@ class FlightInformationEmailCapability(MatchingCapability):
     worker: AgentWorker = None
     capability_worker: CapabilityWorker = None
 
-    AMADEUS_API_KEY: ClassVar[str] = "YOUR_API_KEY"
-    AMADEUS_API_SECRET: ClassVar[str] = "YOUR_API_SECRET"
+    AMADEUS_API_KEY: ClassVar[str] = "Place API Key here"
+    AMADEUS_API_SECRET: ClassVar[str] = "Place Secret Key here"
 
     MONTH_MAP: ClassVar[Dict[str, int]] = {
         "january": 1, "jan": 1,
@@ -38,22 +38,7 @@ class FlightInformationEmailCapability(MatchingCapability):
         "december": 12, "dec": 12,
     }
 
-    COMMON_IATA: ClassVar[Dict[str, str]] = {
-        "dhaka": "DAC", "dheka": "DAC", "dhaga": "DAC", "dha": "DAC", "dhka": "DAC",
-        "ढाका": "DAC", "धाका": "DAC", "dhaka bangladesh": "DAC",
-        "bangkok": "BKK", "बैंकोक": "BKK", "बैंकाक": "BKK", "bankok": "BKK",
-        "singapore": "SIN", "singapur": "SIN", "सिंगापुर": "SIN", "सिंगापोर": "SIN",
-        "dilli": "DEL", "delhi": "DEL", "new delhi": "DEL",
-    }
-
     # {{register capability}}
-
-    @classmethod
-    def register_capability(cls) -> "MatchingCapability":
-        # Use CapabilityWorker to read config.json from Ability folder
-        raw = cls.capability_worker.read_file("config.json", in_ability_directory=True)
-        data = json.loads(raw)
-        return cls(unique_name=data["unique_name"], matching_hotwords=data["matching_hotwords"])
 
     PREFS_FILE: ClassVar[str] = "flight_email_prefs.json"
 
@@ -150,15 +135,33 @@ class FlightInformationEmailCapability(MatchingCapability):
         return response.json()["access_token"]
 
     async def search_iata(self, keyword: str, prefs: Dict, token: str) -> str:
-        key = re.sub(r'[^a-z]', '', keyword.lower().strip())
-        if key in self.COMMON_IATA:
-            return self.COMMON_IATA[key]
+        """Look up IATA code using Amadeus Airport & City Search API, with cache."""
+        cache = prefs.get("iata_cache", {})
+        cache_key = keyword.lower().strip()
 
-        alpha = re.sub(r'[^a-z]', '', key)
-        if len(alpha) >= 3:
-            return alpha[:3].upper()
+        # Return from cache if already looked up
+        if cache_key in cache:
+            return cache[cache_key]
 
-        return keyword.upper()[:3]
+        base_url = "https://test.api.amadeus.com" if prefs["amadeus_env"] == "test" else "https://api.amadeus.com"
+        url = f"{base_url}/v1/reference-data/locations"
+        headers = {"Authorization": f"Bearer {token}"}
+        params = {"keyword": keyword, "subType": "CITY,AIRPORT"}
+
+        try:
+            response = requests.get(url, headers=headers, params=params, timeout=10)
+            if response.status_code == 200:
+                data = response.json().get("data", [])
+                if data:
+                    iata = data[0]["iataCode"]
+                    cache[cache_key] = iata
+                    prefs["iata_cache"] = cache
+                    return iata
+        except Exception:
+            pass
+
+        # Fallback: first 3 letters uppercase
+        return keyword[:3].upper()
 
     def sanitize_date(self, date_str: str, current_year: int, current_month: int, current_day: int) -> str:
         if not date_str:
@@ -264,6 +267,9 @@ Return ONLY valid JSON:
         token = await self.get_amadeus_token(prefs)
         origin_iata = await self.search_iata(origin, prefs, token)
         dest_iata = await self.search_iata(dest, prefs, token)
+
+        # Save IATA cache to prefs
+        await self.save_prefs(prefs)
 
         if origin_iata == dest_iata:
             await self.capability_worker.speak("Origin and destination airports are the same. Please choose different cities.")
