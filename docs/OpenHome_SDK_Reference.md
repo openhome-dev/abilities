@@ -505,6 +505,9 @@ await self.capability_worker.send_devkit_action("led_on")
 self.capability_worker.resume_normal_flow()
 ```
 
+- **Async:** Yes (`await`)
+- **Use case:** Manual cutoffs when your Ability needs to immediately stop ongoing output and listen for fresh input
+
 - **Async:** No (synchronous)
 - **When to call:** On EVERY exit path:
   - End of your main logic (happy path)
@@ -519,6 +522,14 @@ self.capability_worker.resume_normal_flow()
 - [ ] Called in every `except` block that ends the ability?
 - [ ] Called after timeout logic?
 - [ ] Called after user exit detection?
+
+### `send_interrupt_signal()`
+
+Sends an interrupt event to stop the current assistant output (speech/audio) and switch back to user input.
+
+```python
+interrupt_signal = await self.capability_worker.send_interrupt_signal()
+```
 
 ---
 
@@ -570,6 +581,18 @@ await self.worker.session_tasks.sleep(5.0)
 
 ## 13. User Connection Info
 
+### `get_timezone()`
+
+Returns the timezone for the active user/session when available.
+
+```python
+timezone = self.capability_worker.get_timezone()
+```
+
+- **Async:** No (synchronous)
+- **Returns:** Timezone string (for example `America/Chicago`) or empty/`None` when unavailable
+- **Use case:** Time-aware scheduling, local date/time formatting, reminders
+
 ### `user_socket.client.host`
 The user's public IP address at connection time.
 
@@ -617,11 +640,12 @@ def get_user_location(self):
 
 ## 14. Conversation Memory & History
 
-### `agent_memory.full_message_history`
-Access the full conversation message history from the current session.
+### `get_full_message_history()`
+
+Access the full conversation message history from the current session through `CapabilityWorker`.
 
 ```python
-history = self.worker.agent_memory.full_message_history
+history = self.capability_worker.get_full_message_history()
 self.worker.editor_logging_handler.info(f"Messages so far: {len(history)}")
 ```
 
