@@ -6,9 +6,20 @@ from typing import Any
 
 import requests
 
-from src.agent.capability import MatchingCapability
-from src.main import AgentWorker
-from src.agent.capability_worker import CapabilityWorker
+try:
+    from src.agent.capability import MatchingCapability
+    from src.main import AgentWorker
+    from src.agent.capability_worker import CapabilityWorker
+except ImportError:
+    # Local testing fallback stubs
+    class MatchingCapability:
+        pass
+
+    class AgentWorker:
+        pass
+
+    class CapabilityWorker:
+        pass
 
 
 # =============================================================================
@@ -1233,7 +1244,7 @@ class RingSecurityAbility(MatchingCapability):
 
         data = await self._ring_request_with_retry(endpoint)
 
-        if not data:
+        if data is None:
             return  # wrapper already logged/spoke error
 
         try:
@@ -1330,7 +1341,7 @@ class RingSecurityAbility(MatchingCapability):
 
         data = await self._ring_request_with_retry(endpoint)
 
-        if not data:
+        if data is None:
             return  # wrapper already handled logging/speaking
 
         try:
