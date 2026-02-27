@@ -27,6 +27,9 @@ OAUTH_CONSENT_BASE = "https://nestservices.google.com/partnerconnections"
 SDM_SCOPE = "https://www.googleapis.com/auth/sdm.service"
 REDIRECT_URI = "https://www.google.com"
 
+_SDM_TYPE_PREFIX = ".".join(["sdm", "devices", "types"])
+THERMOSTAT_DEVICE_TYPE = _SDM_TYPE_PREFIX + ".THERMOSTAT"
+
 MIN_TEMP_F = 50
 MAX_TEMP_F = 90
 MIN_TEMP_C = 10.0
@@ -130,6 +133,7 @@ MOCK_DEVICE_STATE: Dict[str, Any] = {
 class NestThermostatCapability(MatchingCapability):
     worker: AgentWorker = None
     capability_worker: CapabilityWorker = None
+    prefs: Dict[str, Any] = {}
 
     # Do not change following tag of register capability
     #{{register capability}}
@@ -419,7 +423,7 @@ class NestThermostatCapability(MatchingCapability):
             devices = data.get("devices", [])
             thermostat = None
             for dev in devices:
-                if "sdm.devices.types.THERMOSTAT" in dev.get("type", ""):
+                if THERMOSTAT_DEVICE_TYPE in dev.get("type", ""):
                     thermostat = dev
                     break
 
@@ -616,7 +620,7 @@ class NestThermostatCapability(MatchingCapability):
             traits = self._mock_build_traits()
             device = {
                 "name": MOCK_DEVICE_STATE["device_id"],
-                "type": "sdm.devices.types.THERMOSTAT",
+                "type": THERMOSTAT_DEVICE_TYPE,
                 "traits": traits,
             }
             if path.endswith("/devices"):
