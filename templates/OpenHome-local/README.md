@@ -87,7 +87,7 @@ nohup python3 local_client.py > /tmp/openhome_client.log 2>&1 &
    - OpenHome Dashboard abilities library, OR
    - [GitHub Repository](https://github.com/OpenHome-dev/abilities)
 
-2. Add to your OpenHome Personality
+2. Add to your OpenHome Agent
 
 3. The template is ready to test immediately!
 
