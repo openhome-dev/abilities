@@ -1,8 +1,10 @@
 # Nest Thermostat
-![Community](https://img.shields.io/badge/OpenHome-Community-orange?style=flat-square)
-![Author](https://img.shields.io/badge/Author-@megz2020-lightgrey?style=flat-square)
+> Control your Nest Thermostat with OpenHome voice commands. Connects to the Google Smart Device Management API for real-time status and control—check temperature, set targets, change modes, toggle Eco, and control the fan, all by voice.
 
-Voice control your Google Nest Thermostat through OpenHome. Check the temperature, set targets, change modes, toggle eco mode, and control the fan — all by voice.
+
+![Community](https://img.shields.io/badge/OpenHome-Community-orange?style=flat-square)
+[![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+![Author](https://img.shields.io/badge/Author-@megz2020-lightgrey?style=flat-square)
 
 ---
 

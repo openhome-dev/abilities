@@ -5,7 +5,6 @@ import time
 from typing import Any, Dict, Optional
 
 import requests
-
 from src.agent.capability import MatchingCapability
 from src.agent.capability_worker import CapabilityWorker
 from src.main import AgentWorker
@@ -15,9 +14,13 @@ from src.main import AgentWorker
 # =============================================================================
 
 # RUN_MODE controls how the ability connects to the Nest API.
-MODE_FULL_MOCK = "FULL_MOCK"   # No real API calls; simulated device data. No credentials needed.
-MODE_AUTH_TEST = "AUTH_TEST"   # Real OAuth but mock device data. Verify credentials without hardware.
-MODE_LIVE = "LIVE"             # Fully real: OAuth + real device API. Requires a physical Nest.
+MODE_FULL_MOCK = (
+    "FULL_MOCK"  # No real API calls; simulated device data. No credentials needed.
+)
+MODE_AUTH_TEST = (
+    "AUTH_TEST"  # Real OAuth but mock device data. Verify credentials without hardware.
+)
+MODE_LIVE = "LIVE"  # Fully real: OAuth + real device API. Requires a physical Nest.
 
 RUN_MODE = MODE_FULL_MOCK
 
@@ -39,11 +42,25 @@ MIN_TEMP_C = 10.0
 MAX_TEMP_C = 32.0
 
 EXIT_WORDS = {
-    "stop", "exit", "quit", "done", "cancel",
-    "bye", "goodbye", "leave", "never mind", "no thanks",
+    "stop",
+    "exit",
+    "quit",
+    "done",
+    "cancel",
+    "bye",
+    "goodbye",
+    "leave",
+    "never mind",
+    "no thanks",
+    "that's all",
+    "that's it",
+    "i'm done",
+    "all done",
+    "no more",
+    "end",
+    "close",
 }
 
-HELP_WORDS = {"help", "how", "what", "confused", "stuck", "where", "don't know"}
 
 # Maps natural-language terms to API mode values
 MODE_ALIASES: Dict[str, str] = {
@@ -139,7 +156,7 @@ class NestThermostatCapability(MatchingCapability):
     prefs: Dict[str, Any] = {}
 
     # Do not change following tag of register capability
-    #{{register capability}}
+    # {{register capability}}
 
     def call(self, worker: AgentWorker):
         self.worker = worker
@@ -170,7 +187,9 @@ class NestThermostatCapability(MatchingCapability):
                     )
                     self.prefs["device_id"] = MOCK_DEVICE_STATE["device_id"]
                     self.prefs["device_custom_name"] = MOCK_DEVICE_STATE["custom_name"]
-                    self.prefs["temperature_scale"] = MOCK_DEVICE_STATE["temperature_scale"]
+                    self.prefs["temperature_scale"] = MOCK_DEVICE_STATE[
+                        "temperature_scale"
+                    ]
                     self.prefs["available_modes"] = MOCK_DEVICE_STATE["available_modes"]
                     self.prefs["has_fan"] = MOCK_DEVICE_STATE["has_fan"]
 
@@ -228,7 +247,9 @@ class NestThermostatCapability(MatchingCapability):
 
     async def load_prefs(self) -> Dict[str, Any]:
         try:
-            exists = await self.capability_worker.check_if_file_exists(PREFS_FILE, False)
+            exists = await self.capability_worker.check_if_file_exists(
+                PREFS_FILE, False
+            )
             if not exists:
                 return {}
             raw = await self.capability_worker.read_file(PREFS_FILE, False)
@@ -248,7 +269,9 @@ class NestThermostatCapability(MatchingCapability):
 
     async def save_prefs(self):
         try:
-            exists = await self.capability_worker.check_if_file_exists(PREFS_FILE, False)
+            exists = await self.capability_worker.check_if_file_exists(
+                PREFS_FILE, False
+            )
             if exists:
                 await self.capability_worker.delete_file(PREFS_FILE, False)
             await self.capability_worker.write_file(
@@ -322,7 +345,11 @@ class NestThermostatCapability(MatchingCapability):
                 await self.capability_worker.user_response()
 
             # Collect credentials (skip if already pre-filled, e.g. AUTH_TEST mode)
-            if self.prefs.get("client_id") and self.prefs.get("client_secret") and self.prefs.get("project_id"):
+            if (
+                self.prefs.get("client_id")
+                and self.prefs.get("client_secret")
+                and self.prefs.get("project_id")
+            ):
                 client_id = self.prefs["client_id"]
                 client_secret = self.prefs["client_secret"]
                 project_id = self.prefs["project_id"]
@@ -330,19 +357,31 @@ class NestThermostatCapability(MatchingCapability):
                 await self.capability_worker.speak("What is your OAuth Client ID?")
                 client_id = (await self.capability_worker.user_response() or "").strip()
                 if not client_id:
-                    await self.capability_worker.speak("I didn't catch a Client ID. Setup cancelled.")
+                    await self.capability_worker.speak(
+                        "I didn't catch a Client ID. Setup cancelled."
+                    )
                     return False
 
                 await self.capability_worker.speak("What is your Client Secret?")
-                client_secret = (await self.capability_worker.user_response() or "").strip()
+                client_secret = (
+                    await self.capability_worker.user_response() or ""
+                ).strip()
                 if not client_secret:
-                    await self.capability_worker.speak("I didn't catch a Client Secret. Setup cancelled.")
+                    await self.capability_worker.speak(
+                        "I didn't catch a Client Secret. Setup cancelled."
+                    )
                     return False
 
-                await self.capability_worker.speak("What is your Device Access Project ID?")
-                project_id = (await self.capability_worker.user_response() or "").strip()
+                await self.capability_worker.speak(
+                    "What is your Device Access Project ID?"
+                )
+                project_id = (
+                    await self.capability_worker.user_response() or ""
+                ).strip()
                 if not project_id:
-                    await self.capability_worker.speak("I didn't catch a Project ID. Setup cancelled.")
+                    await self.capability_worker.speak(
+                        "I didn't catch a Project ID. Setup cancelled."
+                    )
                     return False
 
                 self.prefs["client_id"] = client_id
@@ -370,7 +409,9 @@ class NestThermostatCapability(MatchingCapability):
 
             raw_code = (await self.capability_worker.user_response() or "").strip()
             if not raw_code:
-                await self.capability_worker.speak("I didn't receive an authorization code. Setup cancelled.")
+                await self.capability_worker.speak(
+                    "I didn't receive an authorization code. Setup cancelled."
+                )
                 return False
 
             # Sanitize: user might paste the full URL
@@ -396,7 +437,9 @@ class NestThermostatCapability(MatchingCapability):
 
             self.prefs["access_token"] = token_data.get("access_token", "")
             self.prefs["refresh_token"] = refresh_token
-            self.prefs["token_expires_at"] = time.time() + int(token_data.get("expires_in", 3599)) - 60
+            self.prefs["token_expires_at"] = (
+                time.time() + int(token_data.get("expires_in", 3599)) - 60
+            )
 
             # Discover thermostat
             device = await self._discover_devices()
@@ -419,10 +462,14 @@ class NestThermostatCapability(MatchingCapability):
 
         except Exception as e:
             self._log_err(f"run_oauth_setup_flow error: {e}")
-            await self.capability_worker.speak("Setup encountered an error. Please try again.")
+            await self.capability_worker.speak(
+                "Setup encountered an error. Please try again."
+            )
             return False
 
-    async def _exchange_code_for_tokens(self, auth_code: str) -> Optional[Dict[str, Any]]:
+    async def _exchange_code_for_tokens(
+        self, auth_code: str
+    ) -> Optional[Dict[str, Any]]:
         try:
             payload = {
                 "client_id": self.prefs.get("client_id"),
@@ -438,7 +485,9 @@ class NestThermostatCapability(MatchingCapability):
                 timeout=10,
             )
             if response.status_code != 200:
-                self._log_err(f"Token exchange failed: {response.status_code} {response.text}")
+                self._log_err(
+                    f"Token exchange failed: {response.status_code} {response.text}"
+                )
                 return None
             return response.json()
         except Exception as e:
@@ -474,11 +523,11 @@ class NestThermostatCapability(MatchingCapability):
                 traits.get("sdm.devices.traits.Info", {}).get("customName", "")
                 or "Nest Thermostat"
             )
-            temp_scale = (
-                traits.get("sdm.devices.traits.Settings", {}).get("temperatureScale", "FAHRENHEIT")
+            temp_scale = traits.get("sdm.devices.traits.Settings", {}).get(
+                "temperatureScale", "FAHRENHEIT"
             )
-            available_modes = (
-                traits.get("sdm.devices.traits.ThermostatMode", {}).get("availableModes", [])
+            available_modes = traits.get("sdm.devices.traits.ThermostatMode", {}).get(
+                "availableModes", []
             )
             has_fan = "sdm.devices.traits.Fan" in traits
 
@@ -607,7 +656,9 @@ class NestThermostatCapability(MatchingCapability):
             if response.status_code == 401 and retry_on_401:
                 refreshed = await self.refresh_access_token()
                 if refreshed:
-                    return await self._do_sdm_request(method, path, json_body, retry_on_401=False)
+                    return await self._do_sdm_request(
+                        method, path, json_body, retry_on_401=False
+                    )
                 return None
 
             if response.status_code == 200:
@@ -651,8 +702,6 @@ class NestThermostatCapability(MatchingCapability):
         """Return simulated API responses based on the request path and method."""
         if method == "GET" and "/devices" in path and ":executeCommand" not in path:
             # Single device GET or list devices
-            project_id = self.prefs.get("project_id", "mock-project-id")
-            device_path = f"enterprises/{project_id}/devices"
             traits = self._mock_build_traits()
             device = {
                 "name": MOCK_DEVICE_STATE["device_id"],
@@ -674,8 +723,12 @@ class NestThermostatCapability(MatchingCapability):
             "sdm.devices.traits.Info": {"customName": s["custom_name"]},
             "sdm.devices.traits.Settings": {"temperatureScale": s["temperature_scale"]},
             "sdm.devices.traits.Connectivity": {"status": s["connectivity"]},
-            "sdm.devices.traits.Temperature": {"ambientTemperatureCelsius": s["ambient_temp_c"]},
-            "sdm.devices.traits.Humidity": {"ambientHumidityPercent": s["humidity_percent"]},
+            "sdm.devices.traits.Temperature": {
+                "ambientTemperatureCelsius": s["ambient_temp_c"]
+            },
+            "sdm.devices.traits.Humidity": {
+                "ambientHumidityPercent": s["humidity_percent"]
+            },
             "sdm.devices.traits.ThermostatMode": {
                 "mode": s["mode"],
                 "availableModes": s["available_modes"],
@@ -754,7 +807,9 @@ class NestThermostatCapability(MatchingCapability):
                     "_error": "BAD_REQUEST",
                     "_detail": "FAILED_PRECONDITION: Command not allowed in current thermostat mode.",
                 }
-            MOCK_DEVICE_STATE["heat_setpoint_c"] = params.get("heatCelsius", s["heat_setpoint_c"])
+            MOCK_DEVICE_STATE["heat_setpoint_c"] = params.get(
+                "heatCelsius", s["heat_setpoint_c"]
+            )
 
         elif command == "sdm.devices.commands.ThermostatTemperatureSetpoint.SetCool":
             if s["mode"] != "COOL":
@@ -762,7 +817,9 @@ class NestThermostatCapability(MatchingCapability):
                     "_error": "BAD_REQUEST",
                     "_detail": "FAILED_PRECONDITION: Command not allowed in current thermostat mode.",
                 }
-            MOCK_DEVICE_STATE["cool_setpoint_c"] = params.get("coolCelsius", s["cool_setpoint_c"])
+            MOCK_DEVICE_STATE["cool_setpoint_c"] = params.get(
+                "coolCelsius", s["cool_setpoint_c"]
+            )
 
         elif command == "sdm.devices.commands.ThermostatTemperatureSetpoint.SetRange":
             if s["mode"] != "HEATCOOL":
@@ -797,7 +854,6 @@ class NestThermostatCapability(MatchingCapability):
         All temperatures are stored in both Celsius (for API calls) and
         converted to the user's preferred scale (for voice output).
         """
-        project_id = self.prefs.get("project_id", "")
         device_id = self.prefs.get("device_id", "")
 
         # device_id is already the full path; use it directly
@@ -813,15 +869,29 @@ class NestThermostatCapability(MatchingCapability):
                 return None
             return round_for_voice(c_to_f(c) if scale == "FAHRENHEIT" else c)
 
-        ambient_c = traits.get("sdm.devices.traits.Temperature", {}).get("ambientTemperatureCelsius")
-        humidity = traits.get("sdm.devices.traits.Humidity", {}).get("ambientHumidityPercent")
+        ambient_c = traits.get("sdm.devices.traits.Temperature", {}).get(
+            "ambientTemperatureCelsius"
+        )
+        humidity = traits.get("sdm.devices.traits.Humidity", {}).get(
+            "ambientHumidityPercent"
+        )
         mode = traits.get("sdm.devices.traits.ThermostatMode", {}).get("mode", "OFF")
-        available_modes = traits.get("sdm.devices.traits.ThermostatMode", {}).get("availableModes", [])
+        available_modes = traits.get("sdm.devices.traits.ThermostatMode", {}).get(
+            "availableModes", []
+        )
         eco_mode = traits.get("sdm.devices.traits.ThermostatEco", {}).get("mode", "OFF")
-        hvac_status = traits.get("sdm.devices.traits.ThermostatHvac", {}).get("status", "OFF")
-        heat_c = traits.get("sdm.devices.traits.ThermostatTemperatureSetpoint", {}).get("heatCelsius")
-        cool_c = traits.get("sdm.devices.traits.ThermostatTemperatureSetpoint", {}).get("coolCelsius")
-        connectivity = traits.get("sdm.devices.traits.Connectivity", {}).get("status", "ONLINE")
+        hvac_status = traits.get("sdm.devices.traits.ThermostatHvac", {}).get(
+            "status", "OFF"
+        )
+        heat_c = traits.get("sdm.devices.traits.ThermostatTemperatureSetpoint", {}).get(
+            "heatCelsius"
+        )
+        cool_c = traits.get("sdm.devices.traits.ThermostatTemperatureSetpoint", {}).get(
+            "coolCelsius"
+        )
+        connectivity = traits.get("sdm.devices.traits.Connectivity", {}).get(
+            "status", "ONLINE"
+        )
         has_fan = "sdm.devices.traits.Fan" in traits
         fan_mode = traits.get("sdm.devices.traits.Fan", {}).get("timerMode", "OFF")
         custom_name = traits.get("sdm.devices.traits.Info", {}).get("customName", "")
@@ -846,14 +916,11 @@ class NestThermostatCapability(MatchingCapability):
             "scale_label": "degrees" if scale == "FAHRENHEIT" else "Celsius",
         }
 
-    async def execute_command(
-        self, command: str, params: Dict[str, Any]
-    ) -> tuple:
+    async def execute_command(self, command: str, params: Dict[str, Any]) -> tuple:
         """
         Execute an SDM command. Returns (success: bool, error_detail: str).
         error_detail will be empty on success.
         """
-        project_id = self.prefs.get("project_id", "")
         device_id = self.prefs.get("device_id", "")
         path = f"/{device_id}:executeCommand"
         body = {
@@ -935,7 +1002,9 @@ class NestThermostatCapability(MatchingCapability):
         elif mode == "OFF":
             parts.append("The thermostat is off.")
 
-        await self.capability_worker.speak(" ".join(parts) if parts else "I couldn't read the thermostat status.")
+        await self.capability_worker.speak(
+            " ".join(parts) if parts else "I couldn't read the thermostat status."
+        )
 
     async def handle_set_temperature(self, target_text: str):
         """
@@ -945,7 +1014,9 @@ class NestThermostatCapability(MatchingCapability):
         """
         state = await self.get_device_state()
         if not state:
-            await self.capability_worker.speak("I couldn't read your thermostat. Please try again.")
+            await self.capability_worker.speak(
+                "I couldn't read your thermostat. Please try again."
+            )
             return
 
         scale = state["scale"]
@@ -983,9 +1054,13 @@ class NestThermostatCapability(MatchingCapability):
             follow = (await self.capability_worker.user_response() or "").lower()
             if self._is_exit(follow) or "no" in follow:
                 return
-            success, err = await self.execute_command("ThermostatEco.SetMode", {"mode": "OFF"})
+            success, err = await self.execute_command(
+                "ThermostatEco.SetMode", {"mode": "OFF"}
+            )
             if not success:
-                await self.capability_worker.speak("I wasn't able to turn off eco mode. Please try again.")
+                await self.capability_worker.speak(
+                    "I wasn't able to turn off eco mode. Please try again."
+                )
                 return
             state = await self.get_device_state()
             if not state:
@@ -1016,8 +1091,12 @@ class NestThermostatCapability(MatchingCapability):
                 new_heat, new_cool = heat_c, target_c
 
             if new_heat >= new_cool:
-                heat_display = round_for_voice(c_to_f(new_heat) if scale == "FAHRENHEIT" else new_heat)
-                cool_display = round_for_voice(c_to_f(new_cool) if scale == "FAHRENHEIT" else new_cool)
+                heat_display = round_for_voice(
+                    c_to_f(new_heat) if scale == "FAHRENHEIT" else new_heat
+                )
+                cool_display = round_for_voice(
+                    c_to_f(new_cool) if scale == "FAHRENHEIT" else new_cool
+                )
                 await self.capability_worker.speak(
                     f"The heating target of {heat_display} needs to be lower than the "
                     f"cooling target of {cool_display}. Try a different temperature."
@@ -1029,13 +1108,19 @@ class NestThermostatCapability(MatchingCapability):
                 {"heatCelsius": new_heat, "coolCelsius": new_cool},
             )
         else:
-            await self.capability_worker.speak("I can't set the temperature in the current thermostat mode.")
+            await self.capability_worker.speak(
+                "I can't set the temperature in the current thermostat mode."
+            )
             return
 
         if success:
-            display_temp = round_for_voice(c_to_f(target_c) if scale == "FAHRENHEIT" else target_c)
+            display_temp = round_for_voice(
+                c_to_f(target_c) if scale == "FAHRENHEIT" else target_c
+            )
             scale_label = "degrees" if scale == "FAHRENHEIT" else "degrees Celsius"
-            await self.capability_worker.speak(f"Done. I've set the thermostat to {display_temp} {scale_label}.")
+            await self.capability_worker.speak(
+                f"Done. I've set the thermostat to {display_temp} {scale_label}."
+            )
         else:
             await self._speak_command_error(err)
 
@@ -1051,18 +1136,32 @@ class NestThermostatCapability(MatchingCapability):
         text_lower = text.lower()
 
         # Relative adjustments
-        if any(w in text_lower for w in ["turn it up", "warmer", "hotter", "increase", "raise"]):
+        if any(
+            w in text_lower
+            for w in ["turn it up", "warmer", "hotter", "increase", "raise"]
+        ):
             current_c = state.get("heat_setpoint_c") or state.get("cool_setpoint_c")
             if current_c is None:
-                await self.capability_worker.speak("I can't read the current setpoint to adjust it.")
+                await self.capability_worker.speak(
+                    "I can't read the current setpoint to adjust it."
+                )
                 return None
             adjustment = 2.0 if scale == "FAHRENHEIT" else 1.0  # 2°F ≈ 1°C
-            return round(current_c + (f_to_c(adjustment + 32) if scale == "FAHRENHEIT" else adjustment), 2)
+            return round(
+                current_c
+                + (f_to_c(adjustment + 32) if scale == "FAHRENHEIT" else adjustment),
+                2,
+            )
 
-        if any(w in text_lower for w in ["turn it down", "cooler", "colder", "decrease", "lower"]):
+        if any(
+            w in text_lower
+            for w in ["turn it down", "cooler", "colder", "decrease", "lower"]
+        ):
             current_c = state.get("heat_setpoint_c") or state.get("cool_setpoint_c")
             if current_c is None:
-                await self.capability_worker.speak("I can't read the current setpoint to adjust it.")
+                await self.capability_worker.speak(
+                    "I can't read the current setpoint to adjust it."
+                )
                 return None
             adjustment_c = f_to_c(2 + 32) if scale == "FAHRENHEIT" else 1.0
             return round(current_c - adjustment_c, 2)
@@ -1074,12 +1173,14 @@ class NestThermostatCapability(MatchingCapability):
         else:
             # Ask LLM to extract the number
             extraction = self.capability_worker.text_to_text_response(
-                f'Extract only the numeric temperature value from this text. '
+                f"Extract only the numeric temperature value from this text. "
                 f'Reply with just the number, nothing else: "{text}"'
             )
             num_match = re.search(r"\d+(?:\.\d+)?", extraction or "")
             if not num_match:
-                await self.capability_worker.speak("I didn't catch a temperature. Try saying a number like 72.")
+                await self.capability_worker.speak(
+                    "I didn't catch a temperature. Try saying a number like 72."
+                )
                 return None
             raw_val = float(num_match.group())
 
@@ -1095,8 +1196,16 @@ class NestThermostatCapability(MatchingCapability):
 
         # Sanity check
         if not (MIN_TEMP_C <= target_c <= MAX_TEMP_C):
-            display_min = round_for_voice(c_to_f(MIN_TEMP_C)) if scale == "FAHRENHEIT" else MIN_TEMP_C
-            display_max = round_for_voice(c_to_f(MAX_TEMP_C)) if scale == "FAHRENHEIT" else MAX_TEMP_C
+            display_min = (
+                round_for_voice(c_to_f(MIN_TEMP_C))
+                if scale == "FAHRENHEIT"
+                else MIN_TEMP_C
+            )
+            display_max = (
+                round_for_voice(c_to_f(MAX_TEMP_C))
+                if scale == "FAHRENHEIT"
+                else MAX_TEMP_C
+            )
             await self.capability_worker.speak(
                 f"That temperature is out of range. "
                 f"Try something between {display_min} and {display_max} degrees."
@@ -1119,7 +1228,7 @@ class NestThermostatCapability(MatchingCapability):
             # Let LLM interpret
             classification = parse_json_response(
                 self.capability_worker.text_to_text_response(
-                    f'Map this to one of: HEAT, COOL, HEATCOOL, OFF. '
+                    f"Map this to one of: HEAT, COOL, HEATCOOL, OFF. "
                     f'Reply with JSON: {{"mode": "HEAT"}}. Input: "{target_mode}"'
                 )
             )
@@ -1127,12 +1236,13 @@ class NestThermostatCapability(MatchingCapability):
 
         if api_mode not in ("HEAT", "COOL", "HEATCOOL", "OFF"):
             await self.capability_worker.speak(
-                "I didn't understand that mode. "
-                "Try: heat, cool, auto, or off."
+                "I didn't understand that mode. " "Try: heat, cool, auto, or off."
             )
             return
 
-        available = self.prefs.get("available_modes", ["HEAT", "COOL", "HEATCOOL", "OFF"])
+        available = self.prefs.get(
+            "available_modes", ["HEAT", "COOL", "HEATCOOL", "OFF"]
+        )
         if api_mode not in available:
             await self.capability_worker.speak(
                 f"Your thermostat doesn't support {api_mode.lower()} mode."
@@ -1214,7 +1324,11 @@ class NestThermostatCapability(MatchingCapability):
             )
             return
 
-        turning_on = "on" in on_or_off.lower() or "run" in on_or_off.lower() or "start" in on_or_off.lower()
+        turning_on = (
+            "on" in on_or_off.lower()
+            or "run" in on_or_off.lower()
+            or "start" in on_or_off.lower()
+        )
 
         if turning_on:
             duration_seconds = self._parse_duration(duration_text)
@@ -1242,7 +1356,9 @@ class NestThermostatCapability(MatchingCapability):
                 await self._speak_command_error(err)
 
         else:
-            success, err = await self.execute_command("Fan.SetTimer", {"timerMode": "OFF"})
+            success, err = await self.execute_command(
+                "Fan.SetTimer", {"timerMode": "OFF"}
+            )
             if success:
                 await self.capability_worker.speak("The fan is off.")
             else:
@@ -1265,30 +1381,96 @@ class NestThermostatCapability(MatchingCapability):
         msg = messages.get(error_detail, "Something went wrong. Please try again.")
         await self.capability_worker.speak(msg)
 
+    async def _handle_help(self, question: str):
+        """Handle help/explanation requests using LLM for natural responses."""
+        prompt = (
+            "You are a voice assistant that ONLY controls a Nest thermostat. "
+            "The user is asking for help. Answer in 2-3 short sentences, voice-friendly. "
+            "ONLY answer about thermostat features listed below. "
+            "If the question is unrelated to the thermostat, say you can only help with "
+            "thermostat controls and briefly list what you can do.\n"
+            "IMPORTANT: Do NOT offer to perform actions or ask 'would you like me to'. "
+            "Just explain the feature and tell the user what voice command to use.\n\n"
+            "Features you support:\n"
+            "- Check status: current temperature, humidity, mode, HVAC status\n"
+            "- Set temperature: 'set it to 72', 'turn it up', 'turn it down' (adjusts by 2 degrees)\n"
+            "- Change mode: heat, cool, auto (heat and cool), or off\n"
+            "- Eco mode: energy-saving mode with wider temperature ranges. "
+            "Temperature can't be changed while eco is on. Toggle with 'turn on/off eco mode'\n"
+            "- Fan control: run the fan with a timer. 'Turn on the fan' (15 min default), "
+            "'run the fan for an hour', 'turn off the fan'\n"
+            "- To exit: say stop, done, bye, or exit\n\n"
+            f'User asked: "{question}"\n'
+            "Reply with only the spoken response, no quotes or labels."
+        )
+        response = self.capability_worker.text_to_text_response(prompt)
+        if response and response.strip():
+            await self.capability_worker.speak(response.strip())
+        else:
+            await self.capability_worker.speak(
+                "I can check the temperature, set a target, change modes, "
+                "toggle eco mode, or control the fan. What would you like to try?"
+            )
+
     # -------------------------------------------------------------------------
     # Intent classification and dispatch
     # -------------------------------------------------------------------------
 
-    def classify_intent(self, user_input: str) -> Dict[str, Any]:
+    def classify_intent(
+        self, user_input: str, prev_intent: str = "", prev_input: str = ""
+    ) -> Dict[str, Any]:
         """
         Use the LLM to classify user intent and extract parameters.
+        Accepts optional previous exchange context for multi-turn conversations.
         Returns a dict with 'intent' and optional parameter fields.
         """
         prompt = (
-            "Classify the user's thermostat request. "
+            "You are classifying voice commands for a Nest thermostat assistant. "
+            "IMPORTANT: The input comes from speech-to-text and often contains "
+            "mishearings, stuttering, accents, or background noise. For example "
+            "'Neste' means 'Nest', 'eco mode' might appear as 'echo mode' or 'EcoVond', "
+            "'heat' might appear as 'he'd' or 'heath'. Try your best to match "
+            "the user's intent to a thermostat action even if the text is garbled.\n"
+            "Only use 'unknown' if the input is completely unrelated to "
+            "thermostat control (e.g. asking about the weather, telling a joke).\n\n"
+            "CRITICAL DISTINCTION between 'help' and action intents:\n"
+            "- 'What is eco mode?', 'What does the fan do?', 'How do I change modes?', "
+            "'Tell me about eco mode', 'Explain heat mode' → these are QUESTIONS, use 'help'\n"
+            "- 'Turn on eco mode', 'Turn on the fan', 'Switch to heat' → these are COMMANDS, "
+            "use the appropriate action intent (eco_mode, fan_control, change_mode)\n"
+            "If the user is ASKING about a feature, always use 'help'. "
+            "Only use action intents when the user clearly wants to CHANGE something.\n\n"
             "Return JSON with these fields:\n"
-            '- "intent": one of check_status, set_temperature, change_mode, eco_mode, fan_control, unknown\n'
+            '- "intent": one of check_status, set_temperature, change_mode, eco_mode, fan_control, help, exit, unknown\n'
+            '- "check_status": user wants to READ the thermostat state — current temperature, humidity, setpoint, mode. '
+            'Examples: "what\'s the temperature", "is the heat on", "check thermostat"\n'
+            '- "set_temperature": setting a specific number, "turn it up", "turn it down"\n'
+            '- "change_mode": switching to heat, cool, auto, or off\n'
+            '- "eco_mode": turning eco mode on or off (NOT asking what it is)\n'
+            '- "fan_control": turning the fan on or off, running with a timer (NOT asking what it does)\n'
+            '- "help": asking ABOUT a feature, wanting an explanation, asking what the assistant can do, '
+            'or general questions. Examples: "what is eco mode", "what are you doing", '
+            '"what can you do", "help", "how does this work"\n'
+            '- "exit": wants to stop, leave, say goodbye, or is clearly done\n'
             '- "target_value": temperature number as string if mentioned (e.g. "72"), else ""\n'
             '- "target_mode": mode if mentioned (heat/cool/auto/off), else ""\n'
             '- "on_or_off": "on" or "off" for eco and fan commands, else ""\n'
             '- "duration": duration phrase if mentioned (e.g. "an hour"), else ""\n'
-            f'User said: "{user_input}"\n'
-            "Reply with only the JSON object."
         )
+        if prev_intent:
+            prompt += f'\nConversation context: The previous exchange was about "{prev_intent}"'
+            if prev_input:
+                prompt += f' (user said: "{prev_input}")'
+            prompt += (
+                ". If the current input is a short response like 'yes', 'no', 'sure', "
+                "'ok', etc., interpret it as a follow-up to that previous context.\n"
+            )
+        prompt += f'User said: "{user_input}"\n' "Reply with only the JSON object."
         raw = self.capability_worker.text_to_text_response(prompt)
         result = parse_json_response(raw)
         if not result.get("intent"):
             result["intent"] = "unknown"
+        result["_raw_input"] = user_input
         return result
 
     async def dispatch(self, classification: Dict[str, Any]):
@@ -1317,27 +1499,41 @@ class NestThermostatCapability(MatchingCapability):
             duration = classification.get("duration", "")
             await self.handle_fan_control(on_or_off, duration)
 
+        elif intent == "help":
+            await self._handle_help(classification.get("_raw_input", ""))
+
         else:
-            await self.capability_worker.speak(
-                "I can check the temperature, set a target, change modes, "
-                "toggle eco mode, or control the fan. What would you like?"
-            )
+            self._log(f"Unrecognized intent in dispatch: {intent}")
 
     async def _conversation_loop(self, trigger_context: str):
         """
         Unified conversation loop.
         Turn 0: classify and dispatch the trigger phrase.
         Turn 1+: listen, classify, dispatch.
-        Exits on: exit words, 2 silent turns, or 20-turn cap.
+        Exits on: exit words, exit intent, 3 consecutive unknowns,
+        2 silent turns, or 20-turn cap.
         """
         max_turns = 20
         turn_count = 0
         idle_count = 0
+        unknown_streak = 0
+        prev_intent = ""
+        prev_input = ""
 
+        # Turn 0: classify trigger context
         if trigger_context and trigger_context.strip():
             classification = self.classify_intent(trigger_context)
-            await self.dispatch(classification)
+            intent = classification.get("intent", "unknown")
+            if intent in ("unknown", "exit"):
+                # Vague trigger (e.g. just "nest") — give a warm welcome
+                await self._speak_welcome()
+            else:
+                await self.dispatch(classification)
+                prev_intent = intent
+                prev_input = classification.get("_raw_input", "")
             turn_count += 1
+        else:
+            await self._speak_welcome()
 
         while turn_count < max_turns:
             user_input = await self.capability_worker.user_response()
@@ -1345,18 +1541,70 @@ class NestThermostatCapability(MatchingCapability):
             if not user_input or not user_input.strip():
                 idle_count += 1
                 if idle_count >= 2:
+                    await self.capability_worker.speak(
+                        "I didn't hear anything, so I'll hand you back. "
+                        "Just say thermostat whenever you need me."
+                    )
                     break
                 continue
 
             idle_count = 0
 
+            # Fast exit check (no LLM call needed)
             if self._is_exit(user_input):
-                await self.capability_worker.speak("Okay, let me know if you need anything else.")
+                await self._speak_exit()
                 break
 
-            classification = self.classify_intent(user_input)
-            await self.dispatch(classification)
+            classification = self.classify_intent(user_input, prev_intent, prev_input)
+            intent = classification.get("intent", "unknown")
+
+            # LLM detected exit intent
+            if intent == "exit":
+                await self._speak_exit()
+                break
+
+            if intent == "unknown":
+                unknown_streak += 1
+                if unknown_streak >= 3:
+                    await self.capability_worker.speak(
+                        "I'm having trouble understanding. "
+                        "I'll hand you back for now. "
+                        "Say thermostat when you want to try again."
+                    )
+                    break
+                elif unknown_streak >= 2:
+                    await self.capability_worker.speak(
+                        "I'm still not sure what you'd like. "
+                        "Try something like 'what's the temperature' or 'set it to 72'. "
+                        "Or just say stop if you're done."
+                    )
+                else:
+                    await self.capability_worker.speak(
+                        "I didn't quite catch that. "
+                        "I can check the temperature, set a target, change modes, "
+                        "toggle eco, or control the fan."
+                    )
+            else:
+                unknown_streak = 0
+                await self.dispatch(classification)
+                prev_intent = intent
+                prev_input = classification.get("_raw_input", "")
+
             turn_count += 1
+
+    async def _speak_welcome(self):
+        """Speak a friendly welcome when the ability is triggered."""
+        await self.capability_worker.speak(
+            "Hey! I'm your thermostat assistant. "
+            "I can check the temperature, adjust it, change modes, "
+            "toggle eco, or control the fan. What would you like?"
+        )
+
+    async def _speak_exit(self):
+        """Speak a friendly exit message."""
+        await self.capability_worker.speak(
+            "All right, just say thermostat whenever you need me."
+        )
 
     # -------------------------------------------------------------------------
     # Utilities
@@ -1383,7 +1631,10 @@ class NestThermostatCapability(MatchingCapability):
         if question:
             await self.capability_worker.speak(question)
         response = (await self.capability_worker.user_response() or "").lower()
-        return any(w in response for w in ("yes", "yeah", "yep", "sure", "ready", "done", "yup", "already"))
+        return any(
+            w in response
+            for w in ("yes", "yeah", "yep", "sure", "ready", "done", "yup", "already")
+        )
 
     def _parse_duration(self, text: str) -> Optional[str]:
         """
@@ -1413,7 +1664,10 @@ class NestThermostatCapability(MatchingCapability):
             return "1800s"
 
         # "until I say stop" / "all day"
-        if any(phrase in text_lower for phrase in ("until i say", "all day", "indefinitely")):
+        if any(
+            phrase in text_lower
+            for phrase in ("until i say", "all day", "indefinitely")
+        ):
             return "43200s"
 
         return None
