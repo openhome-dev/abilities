@@ -1,7 +1,7 @@
 import json
 import asyncio
 import re
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from typing import Any
 
 import requests
@@ -35,9 +35,13 @@ EXIT_WORDS = {
 
 OAUTH_URL = "https://oauth.ring.com/oauth/token"
 API_BASE = "https://api.ring.com/clients_api"
+DEVICES_API_BASE = "https://api.ring.com/devices/v1"
 CLIENT_ID = "ring_official_android"
 USER_AGENT = "OpenHome-Ring/1.0"
 TOKENS_FILE = "ring_tokens.json"
+
+MAX_ACTIVITY_DEVICES = 5
+SIREN_DURATION_SECONDS = 30
 
 # =============================================================================
 # Generic OpenHome Ability Template
@@ -47,11 +51,28 @@ class RingSecurityAbility(MatchingCapability):
     """
     Ring Security OpenHome Ability (V1).
     Supports authentication, device listing, device health,
-    recent activity summaries, and last ring queries.
+    recent activity summaries, last ring queries, floodlight/siren control,
+    motion detection toggle, chime test/volume, and motion history.
     """
 
-    worker: AgentWorker = None
-    capability_worker: CapabilityWorker = None
+    worker: AgentWorker | None = None
+    capability_worker: CapabilityWorker | None = None
+
+    # --- session state fields (must be declared for sandbox) ---
+    devices: dict[str, dict] = {}
+    name_map: dict[str, str] = {}
+    doorbells: list[str] = []
+    cameras: list[str] = []
+    chimes: list[str] = []
+    pending_action: dict | None = None
+    refresh_token: str | None = None
+    access_token: str | None = None
+
+    # mock mode
+    mock_mode: bool = True
+    mock_history: dict[str, list] = {}
+    mock_health: dict[str, dict] = {}
+
 
     # =========================================================================
     # Registration
@@ -71,39 +92,26 @@ class RingSecurityAbility(MatchingCapability):
     async def run(self):
         """
         Main ability lifecycle entry point.
-
-        High-level flow:
-        1. Load stored tokens.
-        2. Authenticate or refresh.
-        3. Cache Ring devices for this session.
-        4. Process initial trigger command (if present).
-        5. Enter conversation loop.
-        6. Exit cleanly with resume_normal_flow().
         """
 
         try:
             self._log("Starting Ring ability session.")
 
-            # ---------------------------------------------------------------------
             # Initialize Session State
-            # ---------------------------------------------------------------------
             self.devices = {}
             self.name_map = {}
             self.doorbells = []
             self.cameras = []
+            self.chimes = []
             self.pending_action = None
             self.refresh_token = None
             self.access_token = None
 
-            # ---------------------------------------------------------------------
-            # 1️⃣ Load Tokens
-            # ---------------------------------------------------------------------
+            # 1. Load Tokens
             self._log("Loading stored tokens.")
             await self._load_tokens()
 
-            # ---------------------------------------------------------------------
-            # 2️⃣ Authenticate (Eager)
-            # ---------------------------------------------------------------------
+            # 2. Authenticate
             self._log("Authenticating or refreshing token.")
             auth_success = await self._authenticate_or_refresh()
 
@@ -115,9 +123,7 @@ class RingSecurityAbility(MatchingCapability):
                 self.capability_worker.resume_normal_flow()
                 return
 
-            # ---------------------------------------------------------------------
-            # 3️⃣ Cache Devices
-            # ---------------------------------------------------------------------
+            # 3. Cache Devices
             self._log("Caching Ring devices for session.")
             cache_success = await self._cache_devices()
 
@@ -129,9 +135,7 @@ class RingSecurityAbility(MatchingCapability):
                 self.capability_worker.resume_normal_flow()
                 return
 
-            # ---------------------------------------------------------------------
-            # 4️⃣ Handle Trigger Context (Initial Command)
-            # ---------------------------------------------------------------------
+            # 4. Handle Trigger Context
             trigger_context = self._get_trigger_context()
 
             if trigger_context:
@@ -145,16 +149,12 @@ class RingSecurityAbility(MatchingCapability):
                 classification = self._classify(stripped)
                 await self._dispatch(classification)
 
-            # ---------------------------------------------------------------------
-            # 5️⃣ Enter Conversation Loop
-            # ---------------------------------------------------------------------
+            # 5. Conversation Loop
             await self._conversation_loop(
                 skip_greeting=bool(trigger_context)
             )
 
-            # ---------------------------------------------------------------------
-            # 6️⃣ Clean Exit
-            # ---------------------------------------------------------------------
+            # 6. Clean Exit
             self._log("Session completed normally.")
             self.capability_worker.resume_normal_flow()
             return
@@ -176,37 +176,18 @@ class RingSecurityAbility(MatchingCapability):
     # =========================================================================
 
     async def _conversation_loop(self, skip_greeting: bool = False):
-        """
-        Unified multi-turn conversation loop.
-
-        Responsibilities:
-        - Handle pending multi-turn state (2FA, clarification, etc.)
-        - Collect user input via user_response()
-        - Detect deterministic exit words
-        - Classify and dispatch intents
-        - Enforce idle timeout and max turns
-        """
-
         max_turns = 20
         turn_count = 0
         idle_count = 0
 
-        # ---------------------------------------------------------------------
-        # Optional Initial Prompt
-        # ---------------------------------------------------------------------
         if not skip_greeting:
             await self.capability_worker.speak(
                 "How can I help with your Ring devices?"
             )
 
-        # ---------------------------------------------------------------------
-        # Main Loop
-        # ---------------------------------------------------------------------
         while turn_count < max_turns:
 
-            # -------------------------------------------------------------
-            # 1️⃣ Pending State Check
-            # -------------------------------------------------------------
+            # Pending State Check
             if self.pending_action:
                 user_input = await self.capability_worker.user_response()
 
@@ -221,9 +202,7 @@ class RingSecurityAbility(MatchingCapability):
                 turn_count += 1
                 continue
 
-            # -------------------------------------------------------------
-            # 2️⃣ Collect User Input
-            # -------------------------------------------------------------
+            # Collect User Input
             user_input = await self.capability_worker.user_response()
 
             if not user_input or not user_input.strip():
@@ -234,32 +213,21 @@ class RingSecurityAbility(MatchingCapability):
 
             idle_count = 0
 
-            # -------------------------------------------------------------
-            # 3️⃣ Deterministic Exit
-            # -------------------------------------------------------------
+            # Deterministic Exit
             if self._is_exit(user_input):
                 break
 
-            # -------------------------------------------------------------
-            # 4️⃣ Strip Activation Phrase
-            # -------------------------------------------------------------
+            # Strip Activation Phrase
             cleaned = self._strip_activation_phrase(user_input)
 
-            # -------------------------------------------------------------
-            # 5️⃣ Classify Intent
-            # -------------------------------------------------------------
+            # Classify Intent
             classification = self._classify(cleaned)
 
-            # -------------------------------------------------------------
-            # 6️⃣ Dispatch
-            # -------------------------------------------------------------
+            # Dispatch
             await self._dispatch(classification)
 
             turn_count += 1
 
-        # ---------------------------------------------------------------------
-        # Exit Prompt (if normal loop end)
-        # ---------------------------------------------------------------------
         await self.capability_worker.speak(
             "Let me know if you need anything else."
         )
@@ -269,42 +237,43 @@ class RingSecurityAbility(MatchingCapability):
     # =========================================================================
 
     async def _dispatch(self, classification: dict):
-        """
-        Route classified intent to appropriate handler.
-
-        Responsibilities:
-        - Validate intent
-        - Resolve device when required
-        - Handle ambiguity
-        - Route to correct handler
-        """
-
         intent = classification.get("intent")
         device_hint = classification.get("device_hint")
 
-        # -----------------------------------------------------------------
         # Intent: List Devices
-        # -----------------------------------------------------------------
         if intent == "list_devices":
             await self._handle_list_devices()
             return
 
-        # -----------------------------------------------------------------
         # Intent: Help
-        # -----------------------------------------------------------------
         if intent == "help":
             await self._handle_help()
             return
 
-        # -----------------------------------------------------------------
-        # Intents Requiring Device
-        # -----------------------------------------------------------------
-        if intent in {"device_status", "check_activity", "last_ring"}:
+        # Intent: Activity All Devices (no device resolution)
+        if intent == "activity_all":
+            await self._handle_activity_all_devices()
+            return
 
-            device_id = await self._resolve_device(device_hint, intent)
+        # Intents requiring a doorbot/stickup_cam device
+        cam_intents = {
+            "device_status", "check_activity", "last_ring",
+            "motion_history", "floodlight_on", "floodlight_off",
+            "siren_on", "siren_off", "motion_toggle_on", "motion_toggle_off",
+        }
+
+        if intent in cam_intents:
+            if intent == "last_ring":
+                allowed = ["doorbot"]
+            else:
+                allowed = ["doorbot", "stickup_cam"]
+            device_id = await self._resolve_device(device_hint, intent, allowed_types=allowed)
 
             if device_id is None:
-                # Resolution function already spoke clarification or error
+                # Store classifier extras in pending_action if device resolution deferred
+                if self.pending_action is not None:
+                    self.pending_action["hours"] = classification.get("hours")
+                    self.pending_action["volume"] = classification.get("volume")
                 return
 
             if intent == "device_status":
@@ -319,18 +288,77 @@ class RingSecurityAbility(MatchingCapability):
                 await self._handle_last_ring(device_id)
                 return
 
-        # -----------------------------------------------------------------
+            if intent == "motion_history":
+                hours = classification.get("hours")
+                if hours is None:
+                    hours = self._extract_time_window(
+                        classification.get("_raw_text", "")
+                    )
+                await self._handle_motion_history(device_id, hours)
+                return
+
+            if intent == "floodlight_on":
+                await self._handle_floodlight(device_id, True)
+                return
+
+            if intent == "floodlight_off":
+                await self._handle_floodlight(device_id, False)
+                return
+
+            if intent == "siren_on":
+                await self._handle_siren(device_id, True)
+                return
+
+            if intent == "siren_off":
+                await self._handle_siren(device_id, False)
+                return
+
+            if intent == "motion_toggle_on":
+                await self._handle_motion_toggle(device_id, True)
+                return
+
+            if intent == "motion_toggle_off":
+                await self._handle_motion_toggle(device_id, False)
+                return
+
+        # Chime intents
+        if intent == "chime_test":
+            chime_id = await self._resolve_device(device_hint, intent, allowed_types=["chime"])
+            if chime_id is None:
+                if self.pending_action is not None:
+                    self.pending_action["hours"] = classification.get("hours")
+                    self.pending_action["volume"] = classification.get("volume")
+                return
+            await self._handle_chime_test(chime_id)
+            return
+
+        if intent == "chime_volume":
+            chime_id = await self._resolve_device(device_hint, intent, allowed_types=["chime"])
+            if chime_id is None:
+                if self.pending_action is not None:
+                    self.pending_action["hours"] = classification.get("hours")
+                    self.pending_action["volume"] = classification.get("volume")
+                return
+            volume = classification.get("volume")
+            await self._handle_chime_volume(chime_id, volume)
+            return
+
         # Unknown / Fallback
-        # -----------------------------------------------------------------
         await self.capability_worker.speak(
             "I can list your Ring devices, check battery and WiFi health, "
-            "tell you about recent activity, or find when your doorbell last rang."
+            "summarize recent activity, control floodlights and sirens, "
+            "toggle motion detection, test your chime, or adjust chime volume."
         )
 
     async def _cache_devices(self) -> bool:
         """
         Fetch devices and build lookup maps.
         """
+
+        if self.mock_mode:
+            self._init_mock_state()
+            return True
+
         data = await self._ring_request_with_retry("ring_devices")
 
         if not data or not isinstance(data, dict):
@@ -338,28 +366,36 @@ class RingSecurityAbility(MatchingCapability):
             return False
 
         try:
-            devices = []
-
-            for key in ("doorbots", "authorized_doorbots", "stickup_cams"):
-                devices.extend(data.get(key, []))
-
             self.devices = {}
             self.name_map = {}
             self.doorbells = []
             self.cameras = []
+            self.chimes = []
 
-            for device in devices:
-                device_id = str(device.get("id"))
-                name = device.get("description", "Unknown device")
-                lower = name.lower()
+            type_map = {
+                "doorbots": "doorbot",
+                "authorized_doorbots": "doorbot",
+                "stickup_cams": "stickup_cam",
+                "chimes": "chime",
+            }
 
-                self.devices[device_id] = device
-                self.name_map[lower] = device_id
+            for key, device_type in type_map.items():
+                for device in data.get(key, []):
+                    device_id = str(device.get("id"))
+                    name = device.get("description", "Unknown device")
+                    lower = name.lower()
 
-                if device.get("kind") == "doorbot":
-                    self.doorbells.append(device_id)
-                else:
-                    self.cameras.append(device_id)
+                    device["_type"] = device_type
+
+                    self.devices[device_id] = device
+                    self.name_map[lower] = device_id
+
+                    if device_type == "doorbot":
+                        self.doorbells.append(device_id)
+                    elif device_type == "stickup_cam":
+                        self.cameras.append(device_id)
+                    elif device_type == "chime":
+                        self.chimes.append(device_id)
 
             self._log(f"Cached {len(self.devices)} devices.")
             return True
@@ -371,7 +407,9 @@ class RingSecurityAbility(MatchingCapability):
     async def _handle_help(self):
         await self.capability_worker.speak(
             "I can list your Ring devices, check battery and WiFi health, "
-            "summarize recent activity, or tell you when your doorbell last rang. "
+            "summarize recent activity, tell you when your doorbell last rang, "
+            "show motion history, control floodlights and sirens, "
+            "toggle motion detection, test your chime, or adjust chime volume. "
             "What would you like?"
         )
 
@@ -380,26 +418,33 @@ class RingSecurityAbility(MatchingCapability):
     # =========================================================================
 
     def _classify(self, text: str) -> dict[str, Any]:
-        """
-        Central intent classifier using synchronous LLM call.
-        MUST strip markdown fences before parsing JSON.
-        """
-
         system_prompt = (
             "You classify commands for a Ring security assistant.\n"
             "Return ONLY valid JSON. No markdown.\n\n"
             "Schema:\n"
             "{\n"
-            '  "intent": "list_devices | device_status | check_activity | last_ring | help | unknown",\n'
-            '  "device_hint": string or null\n'
+            '  "intent": "list_devices | device_status | check_activity | activity_all | last_ring | motion_history | floodlight_on | floodlight_off | siren_on | siren_off | motion_toggle_on | motion_toggle_off | chime_test | chime_volume | help | unknown",\n'
+            '  "device_hint": string or null,\n'
+            '  "hours": number or null,\n'
+            '  "volume": number or null\n'
             "}\n\n"
             "Rules:\n"
             "- device_status: battery or WiFi health\n"
-            "- check_activity: motion or activity summary\n"
+            "- check_activity: motion or activity summary for a specific device\n"
+            "- activity_all: check activity across ALL devices (no specific device mentioned)\n"
             "- last_ring: last doorbell ring\n"
+            "- motion_history: motion history with optional time filter (set hours if mentioned)\n"
+            "- floodlight_on/floodlight_off: turn floodlight or spotlight on/off\n"
+            "- siren_on/siren_off: activate or deactivate siren\n"
+            "- motion_toggle_on/motion_toggle_off: enable or disable motion detection\n"
+            "- chime_test: test or play chime sound\n"
+            "- chime_volume: set or change chime volume (set volume to the number mentioned)\n"
             "- list_devices: list all devices\n"
             "- help: ask what assistant can do\n"
-            "- If unsure, return unknown.\n"
+            "- device_hint must be a DEVICE NAME (e.g. 'front door', 'backyard cam'), not a capability or attribute.\n"
+            "- If the user does not mention a specific device by name, set device_hint to null.\n"
+            "- Words like 'battery', 'wifi', 'status', 'activity' are NOT device names.\n"
+            "- If unsure about intent, return unknown.\n"
         )
 
         try:
@@ -415,11 +460,38 @@ class RingSecurityAbility(MatchingCapability):
             if not isinstance(parsed, dict):
                 raise ValueError("Invalid classifier output")
 
+            # Attach raw text for fallback time extraction
+            parsed["_raw_text"] = text
+
             return parsed
 
         except Exception as e:
             self._log_err(f"Classification failed: {e}")
-            return {"intent": "unknown", "device_hint": None}
+            return {"intent": "unknown", "device_hint": None, "_raw_text": text}
+
+    # =========================================================================
+    # Time Window Extraction
+    # =========================================================================
+
+    def _extract_time_window(self, text: str) -> int | None:
+        if not text:
+            return None
+        lower = text.lower()
+
+        # "last N hours" / "past N hours"
+        match = re.search(r"(?:last|past)\s+(\d+)\s+hours?", lower)
+        if match:
+            return int(match.group(1))
+
+        # "last hour" / "past hour"
+        if re.search(r"(?:last|past)\s+hour\b", lower):
+            return 1
+
+        # "last day" / "past day"
+        if re.search(r"(?:last|past)\s+day\b", lower):
+            return 24
+
+        return None
 
     # =========================================================================
     # Utilities
@@ -431,8 +503,6 @@ class RingSecurityAbility(MatchingCapability):
             if not history:
                 return ""
 
-            # Design decision: use most recent user message only
-            # (developers may extend to last 3-5 if desired)
             for msg in reversed(history):
                 if msg.get("role") == "user":
                     return msg.get("content", "")
@@ -452,11 +522,15 @@ class RingSecurityAbility(MatchingCapability):
     def _strip_activation_phrase(self, text: str) -> str:
         if not text:
             return text
+
         lowered = text.lower()
-        for hotword in getattr(self, "matching_hotwords", []):
-            hw = hotword.lower()
-            if lowered.startswith(hw):
-                return text[len(hotword):].strip(" .,")
+
+        if hasattr(self, "matching_hotwords") and self.matching_hotwords:
+            for hotword in self.matching_hotwords:
+                hw = hotword.lower()
+                if lowered.startswith(hw):
+                    return text[len(hotword):].strip(" .,")
+
         return text
 
     def _format_relative_time(self, iso_string: str) -> str:
@@ -490,7 +564,6 @@ class RingSecurityAbility(MatchingCapability):
             years = days // 365
             return f"{years} year{'s' if years != 1 else ''} ago"
         except Exception:
-            # Absolute date fallback
             try:
                 dt = datetime.fromisoformat(iso_string.replace("Z", "+00:00"))
                 return dt.strftime("on %B %d, %Y")
@@ -507,60 +580,77 @@ class RingSecurityAbility(MatchingCapability):
             f"[{ABILITY_NAMESPACE}] {msg}"
         )
 
-    async def _resolve_device(self, device_hint: str | None, intent: str) -> str | None:
+    async def _resolve_device(
+        self,
+        device_hint: str | None,
+        intent: str,
+        allowed_types: list[str] | None = None,
+    ) -> str | None:
         """
         Resolve a device hint to a device_id.
-
-        Behavior:
-        - Exact match → return device_id
-        - Partial single match → return device_id
-        - Multiple matches → set pending_action and return None
-        - No match → speak available devices and return None
+        If allowed_types is provided, only consider devices whose _type matches.
         """
 
-        # -----------------------------------------------------------------
-        # No Hint Provided
-        # -----------------------------------------------------------------
-        if not device_hint:
-            if len(self.devices) == 1:
-                # Only one device — implicit resolution
-                return next(iter(self.devices.keys()))
+        # Build filtered device set
+        if allowed_types:
+            filtered_ids = [
+                did for did, dev in self.devices.items()
+                if dev.get("_type") in allowed_types
+            ]
+            filtered_name_map = {
+                name: did for name, did in self.name_map.items()
+                if did in filtered_ids
+            }
+        else:
+            filtered_ids = list(self.devices.keys())
+            filtered_name_map = dict(self.name_map)
 
+        if not filtered_ids:
+            type_label = ", ".join(allowed_types) if allowed_types else "any"
             await self.capability_worker.speak(
-                "Which device are you asking about?"
+                f"I couldn't find any {type_label} devices on your account."
+            )
+            return None
+
+        # No Hint Provided
+        if not device_hint:
+            if len(filtered_ids) == 1:
+                return filtered_ids[0]
+
+            available_names = [
+                self.devices[did].get("description", "Unknown device")
+                for did in filtered_ids
+            ]
+            await self.capability_worker.speak(
+                "Which device are you asking about? You have: "
+                + ", ".join(available_names) + "."
             )
 
             self.pending_action = {
                 "type": "clarify_device",
                 "intent": intent,
-                "candidates": list(self.devices.keys())
+                "candidates": filtered_ids,
             }
 
             return None
 
         normalized = device_hint.lower().strip()
 
-        # -----------------------------------------------------------------
         # Exact Match
-        # -----------------------------------------------------------------
-        if normalized in self.name_map:
-            return self.name_map[normalized]
+        if normalized in filtered_name_map:
+            return filtered_name_map[normalized]
 
-        # -----------------------------------------------------------------
         # Partial Match
-        # -----------------------------------------------------------------
         matches = []
 
-        for name, device_id in self.name_map.items():
+        for name, device_id in filtered_name_map.items():
             if normalized in name:
                 matches.append(device_id)
 
         if len(matches) == 1:
             return matches[0]
 
-        # -----------------------------------------------------------------
         # Ambiguous Match
-        # -----------------------------------------------------------------
         if len(matches) > 1:
             device_names = [
                 self.devices[d]["description"]
@@ -576,47 +666,60 @@ class RingSecurityAbility(MatchingCapability):
             self.pending_action = {
                 "type": "clarify_device",
                 "intent": intent,
-                "candidates": matches
+                "candidates": matches,
             }
 
             return None
 
-        # -----------------------------------------------------------------
         # No Match Found
-        # -----------------------------------------------------------------
         available_names = [
-            d.get("description", "Unknown device")
-            for d in self.devices.values()
+            self.devices[did].get("description", "Unknown device")
+            for did in filtered_ids
         ]
 
         await self.capability_worker.speak(
-            "I couldn't find that device. You have: "
+            "I couldn't find that device. Which one did you mean? You have: "
             + ", ".join(available_names)
             + "."
         )
 
+        # IMPORTANT:
+        # We intentionally set pending_action on no-match so that a follow-up
+        # like "Front door" is treated as a clarification response rather
+        # than going through full classification again.
+        self.pending_action = {
+            "type": "clarify_device",
+            "intent": intent,
+            "candidates": filtered_ids,
+        }
+
         return None
 
     async def _handle_pending(self, user_input: str | None):
-        """
-        Handle multi-turn pending state flows.
-
-        Currently supports:
-        - Device clarification
-        """
-
         if not self.pending_action:
             return
 
         pending_type = self.pending_action.get("type")
 
-        # -----------------------------------------------------------------
         # Device Clarification Flow
-        # -----------------------------------------------------------------
         if pending_type == "clarify_device":
 
             candidates = self.pending_action.get("candidates", [])
             intent = self.pending_action.get("intent")
+            hours = self.pending_action.get("hours")
+            volume = self.pending_action.get("volume")
+
+            if not isinstance(candidates, list):
+                self._log_err(f"clarify_device bad candidates: {candidates!r}")
+                if candidates is None:
+                    candidates = []
+                else:
+                    candidates = [str(candidates)]
+
+            self._log(f"clarify_device: intent={intent!r}, candidates={len(candidates)}")
+
+            if not intent:
+                self._log_err("clarify_device missing intent")
 
             if not user_input:
                 await self.capability_worker.speak(
@@ -625,43 +728,45 @@ class RingSecurityAbility(MatchingCapability):
                 return
 
             normalized = user_input.lower().strip()
+            normalized = re.sub(r"[^\w\s']", " ", normalized)
+            normalized = " ".join(normalized.split())
 
-            # -------------------------------------------------------------
-            # Try Exact Match Among Candidates
-            # -------------------------------------------------------------
-            for device_id in candidates:
-                device_name = (
-                    self.devices.get(device_id, {})
-                    .get("description", "")
-                    .lower()
+            if not normalized:
+                await self.capability_worker.speak(
+                    "Please tell me which device you meant."
                 )
+                return
+
+            # PASS 1 — Exact match only
+            for device_id in candidates:
+                device = self.devices.get(device_id)
+                if not device:
+                    continue
+
+                device_name = device.get("description", "").lower()
                 if normalized == device_name:
+                    self._log(f"clarify_device resolved exact: {device_id!r}")
                     self.pending_action = None
-                    await self._route_device_intent(intent, device_id)
+                    await self._route_device_intent(intent, device_id, hours=hours, volume=volume)
                     return
 
-            # -------------------------------------------------------------
-            # Try Partial Match Among Candidates
-            # -------------------------------------------------------------
+            # PASS 2 — Partial match (substring)
             matches = []
-
             for device_id in candidates:
-                device_name = (
-                    self.devices.get(device_id, {})
-                    .get("description", "")
-                    .lower()
-                )
-                if normalized and normalized in device_name:
+                device = self.devices.get(device_id)
+                if not device:
+                    continue
+
+                device_name = device.get("description", "").lower()
+                if normalized in device_name:
                     matches.append(device_id)
 
             if len(matches) == 1:
+                self._log(f"clarify_device resolved partial: {matches[0]!r}")
                 self.pending_action = None
-                await self._route_device_intent(intent, matches[0])
+                await self._route_device_intent(intent, matches[0], hours=hours, volume=volume)
                 return
 
-            # -------------------------------------------------------------
-            # Still Ambiguous
-            # -------------------------------------------------------------
             if len(matches) > 1:
                 device_names = [
                     self.devices[d]["description"]
@@ -674,16 +779,14 @@ class RingSecurityAbility(MatchingCapability):
                     + ". Please be more specific."
                 )
 
-                # Narrow candidates
                 self.pending_action["candidates"] = matches
                 return
 
-            # -------------------------------------------------------------
             # No Match
-            # -------------------------------------------------------------
             device_names = [
-                self.devices[d]["description"]
-                for d in candidates
+                self.devices[did].get("description", "Unknown device")
+                for did in candidates
+                if self.devices.get(did)
             ]
 
             await self.capability_worker.speak(
@@ -694,7 +797,37 @@ class RingSecurityAbility(MatchingCapability):
 
             return
 
-    async def _route_device_intent(self, intent: str, device_id: str):
+        # Chime Volume Follow-up
+        if pending_type == "chime_volume_followup":
+            chime_id = self.pending_action.get("device_id")
+
+            if not user_input:
+                await self.capability_worker.speak(
+                    "Please specify a volume level from 0 to 10."
+                )
+                return
+
+            parsed_volume = self._parse_volume_input(user_input)
+            if parsed_volume is None:
+                await self.capability_worker.speak(
+                    "I need a number between 0 and 10. What volume level would you like?"
+                )
+                return
+
+            self.pending_action = None
+            await self._handle_chime_volume(chime_id, parsed_volume)
+            return
+
+        if pending_type:
+            self._log_err(f"Unhandled pending_action type: {pending_type!r}")
+
+    async def _route_device_intent(
+        self,
+        intent: str,
+        device_id: str,
+        hours: int | None = None,
+        volume: int | None = None,
+    ):
         """
         Route a resolved device_id to the correct handler
         based on stored intent.
@@ -712,17 +845,48 @@ class RingSecurityAbility(MatchingCapability):
             await self._handle_last_ring(device_id)
             return
 
+        if intent == "motion_history":
+            await self._handle_motion_history(device_id, hours)
+            return
+
+        if intent == "floodlight_on":
+            await self._handle_floodlight(device_id, True)
+            return
+
+        if intent == "floodlight_off":
+            await self._handle_floodlight(device_id, False)
+            return
+
+        if intent == "siren_on":
+            await self._handle_siren(device_id, True)
+            return
+
+        if intent == "siren_off":
+            await self._handle_siren(device_id, False)
+            return
+
+        if intent == "motion_toggle_on":
+            await self._handle_motion_toggle(device_id, True)
+            return
+
+        if intent == "motion_toggle_off":
+            await self._handle_motion_toggle(device_id, False)
+            return
+
+        if intent == "chime_test":
+            await self._handle_chime_test(device_id)
+            return
+
+        if intent == "chime_volume":
+            await self._handle_chime_volume(device_id, volume)
+            return
+
         # Fallback safety
         await self.capability_worker.speak(
             "Something went wrong routing your request."
         )
 
     async def _load_tokens(self):
-        """
-        Load stored refresh/access tokens from file storage.
-        Never raises fatal errors.
-        """
-
         self.refresh_token = None
         self.access_token = None
 
@@ -752,10 +916,6 @@ class RingSecurityAbility(MatchingCapability):
             self._log_err(f"Token load failed (non-fatal): {e}")
 
     async def _save_tokens(self, refresh_token: str, access_token: str):
-        """
-        Persist refresh token using delete-then-write pattern.
-        """
-
         try:
             exists = await self.capability_worker.check_if_file_exists(
                 TOKENS_FILE, False
@@ -784,11 +944,11 @@ class RingSecurityAbility(MatchingCapability):
             self._log_err(f"Token save failed: {e}")
 
     async def _authenticate_or_refresh(self) -> bool:
-        """
-        Ensure a valid access token exists.
-        """
+        if self.mock_mode:
+            self._log("Mock auth success.")
+            self.access_token = "mock_token"
+            return True
 
-        # Try refresh if refresh token exists
         if self.refresh_token:
             self._log("Attempting token refresh.")
             success = await self._refresh_token(self.refresh_token)
@@ -797,14 +957,9 @@ class RingSecurityAbility(MatchingCapability):
 
             self._log("Refresh failed. Proceeding to full auth.")
 
-        # No token or refresh failed → full auth
         return await self._full_auth_flow()
 
     async def _refresh_token(self, refresh_token: str) -> bool:
-        """
-        Attempt OAuth refresh.
-        """
-
         try:
             response = await asyncio.to_thread(
                 requests.post,
@@ -846,10 +1001,6 @@ class RingSecurityAbility(MatchingCapability):
             return False
 
     async def _full_auth_flow(self) -> bool:
-        """
-        Perform full OAuth authentication via typed credentials.
-        """
-
         try:
             await self.capability_worker.speak(
                 "To connect your Ring account, please type your Ring email into the chat."
@@ -922,9 +1073,7 @@ class RingSecurityAbility(MatchingCapability):
                     timeout=10,
                 )
 
-                # ---------------------------------------------------------
                 # Single Retry for Incorrect 2FA Code
-                # ---------------------------------------------------------
                 if response.status_code != 200:
                     await self.capability_worker.speak(
                         "That code didn't work. Please type your two-factor authentication code again."
@@ -991,28 +1140,33 @@ class RingSecurityAbility(MatchingCapability):
             )
             return False
 
+    # =========================================================================
+    # Ring API Request with Retry
+    # =========================================================================
+
     async def _ring_request_with_retry(
         self,
         endpoint: str,
         method: str = "GET",
         data: dict | None = None,
-    ) -> dict | None:
+        params: dict | None = None,
+        base_override: str | None = None,
+        force_null_body: bool = False,
+    ) -> dict | list | None:
         """
         Make a Ring API request with a single refresh retry on 401.
-
-        Behavior:
-        - Perform request
-        - If 401 → attempt token refresh
-        - Retry once
-        - If still failing → speak reconnect message and return None
-        - Never triggers full auth
+        Supports GET, POST, PUT, PATCH.
         """
+
+        if self.mock_mode:
+            return self._mock_api_response(endpoint, method)
 
         if not self.access_token:
             self._log_err("No access token available for API request.")
             return None
 
-        url = f"{API_BASE}/{endpoint}"
+        base = base_override if base_override else API_BASE
+        url = f"{base}/{endpoint}"
 
         headers = {
             "Authorization": f"Bearer {self.access_token}",
@@ -1022,30 +1176,74 @@ class RingSecurityAbility(MatchingCapability):
         self._log(f"Calling Ring API: {method} {endpoint}")
 
         async def _perform_request():
-            if method.upper() == "GET":
+            upper = method.upper()
+
+            if upper == "GET":
                 return await asyncio.to_thread(
                     requests.get,
                     url,
                     headers=headers,
+                    params=params,
                     timeout=10,
                 )
-            elif method.upper() == "POST":
+            elif upper == "POST":
+                kwargs = {
+                    "headers": headers,
+                    "params": params,
+                    "timeout": 10,
+                }
+                if data is not None:
+                    kwargs["json"] = data
                 return await asyncio.to_thread(
                     requests.post,
                     url,
-                    headers=headers,
-                    json=data,
-                    timeout=10,
+                    **kwargs,
+                )
+            elif upper == "PUT":
+                if force_null_body:
+                    put_headers = dict(headers)
+                    put_headers["Content-Type"] = "application/json"
+                    return await asyncio.to_thread(
+                        requests.put,
+                        url,
+                        headers=put_headers,
+                        params=params,
+                        data="null",
+                        timeout=10,
+                    )
+                else:
+                    kwargs = {
+                        "headers": headers,
+                        "params": params,
+                        "timeout": 10,
+                    }
+                    if data is not None:
+                        kwargs["json"] = data
+                    return await asyncio.to_thread(
+                        requests.put,
+                        url,
+                        **kwargs,
+                    )
+            elif upper == "PATCH":
+                kwargs = {
+                    "headers": headers,
+                    "params": params,
+                    "timeout": 10,
+                }
+                if data is not None:
+                    kwargs["json"] = data
+                return await asyncio.to_thread(
+                    requests.patch,
+                    url,
+                    **kwargs,
                 )
             else:
-                raise ValueError("Unsupported HTTP method")
+                raise ValueError(f"Unsupported HTTP method: {method}")
 
         try:
             response = await _perform_request()
 
-            # ---------------------------------------------------------
-            # If Unauthorized → Attempt Refresh
-            # ---------------------------------------------------------
+            # If Unauthorized -> Attempt Refresh
             if response.status_code == 401:
                 self._log("401 received. Attempting token refresh.")
 
@@ -1060,12 +1258,10 @@ class RingSecurityAbility(MatchingCapability):
                     )
                     return None
 
-                # Update header with new token
                 headers["Authorization"] = (
                     f"Bearer {self.access_token}"
                 )
 
-                # Retry once
                 response = await _perform_request()
 
                 if response.status_code == 401:
@@ -1075,18 +1271,18 @@ class RingSecurityAbility(MatchingCapability):
                     )
                     return None
 
-            # ---------------------------------------------------------
-            # Non-200 Errors
-            # ---------------------------------------------------------
-            if response.status_code != 200:
+            # 204 No Content is success for PUT/PATCH commands
+            if response.status_code == 204:
+                return {}
+
+            # Non-success errors
+            if response.status_code not in (200, 201):
                 self._log_err(
                     f"API error {response.status_code} on {endpoint}"
                 )
                 return None
 
-            # ---------------------------------------------------------
             # Parse JSON
-            # ---------------------------------------------------------
             try:
                 return response.json()
             except Exception as parse_err:
@@ -1102,11 +1298,148 @@ class RingSecurityAbility(MatchingCapability):
             )
             return None
 
-    async def _handle_device_status(self, device_id: str):
+    # =========================================================================
+    # Confirmation Helper
+    # =========================================================================
+
+    async def _confirm_action(self, prompt: str) -> bool:
+        return await self.capability_worker.run_confirmation_loop(prompt)
+
+    # =========================================================================
+    # MOCK IMPLEMENTATION
+    # =========================================================================
+
+    def _init_mock_state(self):
+        self._log("Initializing mock Ring state.")
+        self.mock_history = {}
+        self.mock_health = {}
+
+        mock_devices_doorbots = [
+            {"id": "1", "description": "Front Door", "kind": "doorbot"},
+        ]
+
+        mock_devices_stickup = [
+            {"id": "2", "description": "Backyard Cam", "kind": "stickup_cam"},
+        ]
+
+        mock_devices_chimes = [
+            {"id": "3", "description": "Hallway Chime", "kind": "chime",
+             "settings": {"volume": 5}},
+        ]
+
+        self.devices = {}
+        self.name_map = {}
+        self.doorbells = []
+        self.cameras = []
+        self.chimes = []
+
+        for d in mock_devices_doorbots:
+            device_id = d["id"]
+            d["_type"] = "doorbot"
+            self.devices[device_id] = d
+            self.name_map[d["description"].lower()] = device_id
+            self.doorbells.append(device_id)
+
+        for d in mock_devices_stickup:
+            device_id = d["id"]
+            d["_type"] = "stickup_cam"
+            self.devices[device_id] = d
+            self.name_map[d["description"].lower()] = device_id
+            self.cameras.append(device_id)
+
+        for d in mock_devices_chimes:
+            device_id = d["id"]
+            d["_type"] = "chime"
+            self.devices[device_id] = d
+            self.name_map[d["description"].lower()] = device_id
+            self.chimes.append(device_id)
+
+        self.mock_history = {
+            "1": [
+                {"kind": "ding", "created_at": "2026-01-01T12:00:00Z"},
+                {"kind": "motion", "created_at": "2026-01-01T10:00:00Z"},
+            ],
+            "2": [
+                {"kind": "motion", "created_at": "2026-01-02T09:00:00Z"}
+            ],
+        }
+
+        self.mock_health = {
+            "1": {
+                "device_health": {
+                    "battery_percentage": 85,
+                    "latest_signal_strength": -58,
+                }
+            },
+            "2": {
+                "device_health": {
+                    "battery_percentage": 62,
+                    "latest_signal_strength": -72,
+                }
+            },
+            "3": {
+                "device_health": {
+                    "wifi_name": "ring_mock_wifi",
+                    "latest_signal_strength": -61,
+                    "latest_signal_category": "good",
+                }
+            },
+        }
+
+    def _mock_api_response(self, endpoint: str, method: str = "GET"):
         """
-        Retrieve and speak battery and WiFi health for a device.
+        Return fake responses matching Ring API structure.
         """
 
+        if endpoint == "ring_devices":
+            return {
+                "doorbots": [self.devices["1"]],
+                "authorized_doorbots": [],
+                "stickup_cams": [self.devices["2"]],
+                "chimes": [self.devices["3"]],
+            }
+
+        # Health endpoints
+        if endpoint.startswith("doorbots/") and endpoint.endswith("/health"):
+            device_id = endpoint.split("/")[1]
+            return self.mock_health.get(device_id)
+
+        if endpoint.startswith("chimes/") and endpoint.endswith("/health"):
+            device_id = endpoint.split("/")[1]
+            return self.mock_health.get(device_id)
+
+        # History
+        if "history" in endpoint:
+            device_id = endpoint.split("/")[1]
+            return self.mock_history.get(device_id, [])
+
+        # Floodlight on/off
+        if "floodlight_light_on" in endpoint or "floodlight_light_off" in endpoint:
+            return {}
+
+        # Siren on/off
+        if "siren_on" in endpoint or "siren_off" in endpoint:
+            return {}
+
+        # Motion toggle (devices/{id}/settings via PATCH)
+        if "settings" in endpoint:
+            return {}
+
+        # Chime play_sound
+        if "play_sound" in endpoint:
+            return {}
+
+        # Chime volume update (PUT chimes/{id})
+        if endpoint.startswith("chimes/") and "/" not in endpoint.split("chimes/")[1]:
+            return {}
+
+        return None
+
+    # =========================================================================
+    # Device Handlers
+    # =========================================================================
+
+    async def _handle_device_status(self, device_id: str):
         device = self.devices.get(device_id)
 
         if not device:
@@ -1123,19 +1456,14 @@ class RingSecurityAbility(MatchingCapability):
         data = await self._ring_request_with_retry(endpoint)
 
         if not data:
-            # Error already logged or spoken by wrapper
             return
 
         try:
-            # Health fields are nested under device_health
             health = data.get("device_health", {})
 
             battery = health.get("battery_percentage")
             rssi = health.get("latest_signal_strength")
 
-            # ---------------------------------------------------------
-            # Battery Speech
-            # ---------------------------------------------------------
             if battery is not None:
                 battery_text = (
                     f"{device_name} battery is at {battery} percent."
@@ -1145,16 +1473,11 @@ class RingSecurityAbility(MatchingCapability):
                     f"I couldn't determine the battery level for {device_name}."
                 )
 
-            # ---------------------------------------------------------
-            # WiFi Signal Mapping
-            # ---------------------------------------------------------
             signal_text = ""
 
             if isinstance(rssi, (int, float)):
                 signal_label = self._rssi_to_label(rssi)
                 signal_text = f" WiFi signal is {signal_label.lower()}."
-            else:
-                signal_text = ""
 
             await self.capability_worker.speak(
                 battery_text + signal_text
@@ -1167,10 +1490,6 @@ class RingSecurityAbility(MatchingCapability):
             )
 
     def _rssi_to_label(self, rssi: float) -> str:
-        """
-        Convert RSSI value to qualitative label.
-        """
-
         if rssi >= -50:
             return "Excellent"
         if rssi >= -60:
@@ -1182,10 +1501,6 @@ class RingSecurityAbility(MatchingCapability):
         return "Very weak"
 
     async def _handle_list_devices(self):
-        """
-        Speak a summary of available Ring devices.
-        """
-
         try:
             if not self.devices:
                 self._log("No devices found in cache.")
@@ -1207,7 +1522,6 @@ class RingSecurityAbility(MatchingCapability):
                 )
                 return
 
-            # Join naturally: A, B, and C
             if count == 2:
                 joined = f"{device_names[0]} and {device_names[1]}"
             else:
@@ -1224,11 +1538,6 @@ class RingSecurityAbility(MatchingCapability):
             )
 
     async def _handle_check_activity(self, device_id: str):
-        """
-        Summarize recent activity for a device.
-        Includes motion events and doorbell rings.
-        """
-
         device = self.devices.get(device_id)
 
         if not device:
@@ -1240,15 +1549,14 @@ class RingSecurityAbility(MatchingCapability):
 
         device_name = device.get("description", "That device")
 
-        endpoint = f"doorbots/{device_id}/history?limit=10"
+        endpoint = f"doorbots/{device_id}/history"
 
-        data = await self._ring_request_with_retry(endpoint)
+        data = await self._ring_request_with_retry(endpoint, params={"limit": 10})
 
         if data is None:
-            return  # wrapper already logged/spoke error
+            return
 
         try:
-            # Ring history returns a list
             if not isinstance(data, list):
                 self._log_err("Unexpected history response format.")
                 await self.capability_worker.speak(
@@ -1275,7 +1583,6 @@ class RingSecurityAbility(MatchingCapability):
                 elif kind == "ding":
                     ring_count += 1
 
-                # Track most recent timestamp explicitly
                 if created_at:
                     if not most_recent_time or created_at > most_recent_time:
                         most_recent_time = created_at
@@ -1286,7 +1593,6 @@ class RingSecurityAbility(MatchingCapability):
                 )
                 return
 
-            # Build summary sentence
             parts = []
 
             if motion_count:
@@ -1302,17 +1608,15 @@ class RingSecurityAbility(MatchingCapability):
                 )
 
             summary = " and ".join(parts)
-            total_events = motion_count + ring_count
-            verb = "was" if total_events == 1 else "were"
 
             if most_recent_time:
                 relative = self._format_relative_time(most_recent_time)
                 await self.capability_worker.speak(
-                    f"There {verb} {summary}. The most recent was {relative}."
+                    f"In the last 10 events, {summary}. The most recent was {relative}."
                 )
             else:
                 await self.capability_worker.speak(
-                    f"There {verb} {summary}."
+                    f"In the last 10 events, {summary}."
                 )
 
         except Exception as e:
@@ -1322,10 +1626,6 @@ class RingSecurityAbility(MatchingCapability):
             )
 
     async def _handle_last_ring(self, device_id: str):
-        """
-        Report when the doorbell last rang for a device.
-        """
-
         device = self.devices.get(device_id)
 
         if not device:
@@ -1336,13 +1636,20 @@ class RingSecurityAbility(MatchingCapability):
             return
 
         device_name = device.get("description", "That device")
+        device_type = device.get("_type", "")
 
-        endpoint = f"doorbots/{device_id}/history?limit=10"
+        if device_type == "stickup_cam":
+            await self.capability_worker.speak(
+                f"{device_name} is a camera, not a doorbell. It doesn't have ring events, but I can check its activity if you like."
+            )
+            return
 
-        data = await self._ring_request_with_retry(endpoint)
+        endpoint = f"doorbots/{device_id}/history"
+
+        data = await self._ring_request_with_retry(endpoint, params={"limit": 10})
 
         if data is None:
-            return  # wrapper already handled logging/speaking
+            return
 
         try:
             if not isinstance(data, list):
@@ -1352,7 +1659,6 @@ class RingSecurityAbility(MatchingCapability):
                 )
                 return
 
-            # Filter for doorbell rings
             ring_events = [
                 event for event in data
                 if event.get("kind") == "ding"
@@ -1364,7 +1670,6 @@ class RingSecurityAbility(MatchingCapability):
                 )
                 return
 
-            # Explicitly sort by created_at (ISO-safe lexicographic sort)
             ring_events.sort(
                 key=lambda e: e.get("created_at", ""),
                 reverse=True,
@@ -1389,4 +1694,364 @@ class RingSecurityAbility(MatchingCapability):
             self._log_err(f"Last ring parsing error: {e}")
             await self.capability_worker.speak(
                 "I couldn't retrieve the last ring information."
+            )
+
+    # =========================================================================
+    # New V1 Handlers
+    # =========================================================================
+
+    async def _handle_activity_all_devices(self):
+        """Check activity across all doorbots and stickup cams."""
+        cam_ids = [
+            did for did, dev in self.devices.items()
+            if dev.get("_type") in ("doorbot", "stickup_cam")
+        ]
+
+        if not cam_ids:
+            await self.capability_worker.speak(
+                "You don't have any cameras or doorbells to check."
+            )
+            return
+
+        capped = len(cam_ids) > MAX_ACTIVITY_DEVICES
+        check_ids = cam_ids[:MAX_ACTIVITY_DEVICES]
+
+        total_motion = 0
+        total_dings = 0
+        most_recent_time = None
+
+        for device_id in check_ids:
+            endpoint = f"doorbots/{device_id}/history"
+            data = await self._ring_request_with_retry(endpoint, params={"limit": 10})
+
+            if data is None or not isinstance(data, list):
+                continue
+
+            for event in data:
+                kind = event.get("kind")
+                created_at = event.get("created_at")
+
+                if kind == "motion":
+                    total_motion += 1
+                elif kind == "ding":
+                    total_dings += 1
+
+                if created_at:
+                    if not most_recent_time or created_at > most_recent_time:
+                        most_recent_time = created_at
+
+        if total_motion == 0 and total_dings == 0:
+            await self.capability_worker.speak(
+                "No recent activity across your devices."
+            )
+            return
+
+        parts = []
+        if total_motion:
+            parts.append(
+                f"{total_motion} motion event"
+                + ("s" if total_motion != 1 else "")
+            )
+        if total_dings:
+            parts.append(
+                f"{total_dings} ring"
+                + ("s" if total_dings != 1 else "")
+            )
+
+        summary = " and ".join(parts)
+
+        msg = f"Across your devices, {summary}."
+
+        if most_recent_time:
+            relative = self._format_relative_time(most_recent_time)
+            msg += f" The most recent was {relative}."
+
+        if capped:
+            msg += f" I checked your first {MAX_ACTIVITY_DEVICES} devices."
+
+        await self.capability_worker.speak(msg)
+
+    async def _handle_motion_history(self, device_id: str, hours: int | None):
+        """Fetch motion history for a device with optional time filter."""
+        device = self.devices.get(device_id)
+
+        if not device:
+            self._log_err(f"Device {device_id} not found in cache.")
+            await self.capability_worker.speak("That device may be offline.")
+            return
+
+        device_name = device.get("description", "That device")
+
+        endpoint = f"doorbots/{device_id}/history"
+        data = await self._ring_request_with_retry(endpoint, params={"limit": 30})
+
+        if data is None:
+            return
+
+        try:
+            if not isinstance(data, list):
+                self._log_err("Unexpected history response format.")
+                await self.capability_worker.speak(
+                    "I couldn't retrieve motion history."
+                )
+                return
+
+            motion_events = [e for e in data if e.get("kind") == "motion"]
+
+            # Time filter
+            if hours is not None and hours > 0:
+                cutoff = datetime.now(timezone.utc) - timedelta(hours=hours)
+                filtered = []
+                for event in motion_events:
+                    created_at = event.get("created_at", "")
+                    try:
+                        if created_at.endswith("Z"):
+                            created_at = created_at.replace("Z", "+00:00")
+                        dt = datetime.fromisoformat(created_at)
+                        if dt.tzinfo is None:
+                            dt = dt.replace(tzinfo=timezone.utc)
+                        if dt >= cutoff:
+                            filtered.append(event)
+                    except Exception:
+                        continue
+                motion_events = filtered
+
+            if not motion_events:
+                if hours:
+                    await self.capability_worker.speak(
+                        f"No motion at {device_name} in the last {hours} hour{'s' if hours != 1 else ''}."
+                    )
+                else:
+                    await self.capability_worker.speak(
+                        f"No recent motion at {device_name}."
+                    )
+                return
+
+            count = len(motion_events)
+
+            # Find most recent
+            motion_events.sort(
+                key=lambda e: e.get("created_at", ""),
+                reverse=True,
+            )
+            most_recent = motion_events[0].get("created_at")
+
+            msg = f"{count} motion event{'s' if count != 1 else ''} at {device_name}"
+
+            if hours:
+                msg += f" in the last {hours} hour{'s' if hours != 1 else ''}"
+
+            msg += "."
+
+            if most_recent:
+                relative = self._format_relative_time(most_recent)
+                msg += f" The most recent was {relative}."
+
+            await self.capability_worker.speak(msg)
+
+        except Exception as e:
+            self._log_err(f"Motion history error: {e}")
+            await self.capability_worker.speak(
+                "I couldn't retrieve motion history."
+            )
+
+    async def _handle_floodlight(self, device_id: str, turn_on: bool):
+        """Turn floodlight on or off."""
+        device = self.devices.get(device_id)
+        device_name = device.get("description", "Your device") if device else "Your device"
+
+        state = "on" if turn_on else "off"
+        endpoint = f"doorbots/{device_id}/floodlight_light_{state}"
+
+        result = await self._ring_request_with_retry(
+            endpoint, method="PUT", force_null_body=True,
+        )
+
+        if result is not None:
+            await self.capability_worker.speak(
+                f"Floodlight turned {state} for {device_name}."
+            )
+        else:
+            await self.capability_worker.speak(
+                f"I couldn't turn the floodlight {state} for {device_name}."
+            )
+
+    async def _handle_siren(self, device_id: str, turn_on: bool):
+        """Activate or deactivate siren. Requires confirmation for activation."""
+        device = self.devices.get(device_id)
+        device_name = device.get("description", "Your device") if device else "Your device"
+
+        if turn_on:
+            confirmed = await self._confirm_action(
+                f"Are you sure you want to activate the siren on {device_name} "
+                f"for {SIREN_DURATION_SECONDS} seconds?"
+            )
+
+            if not confirmed:
+                await self.capability_worker.speak("Siren activation cancelled.")
+                return
+
+            endpoint = f"doorbots/{device_id}/siren_on"
+            result = await self._ring_request_with_retry(
+                endpoint,
+                method="PUT",
+                params={"duration": SIREN_DURATION_SECONDS},
+                force_null_body=True,
+            )
+
+            if result is not None:
+                await self.capability_worker.speak(
+                    f"Siren activated on {device_name} for {SIREN_DURATION_SECONDS} seconds."
+                )
+            else:
+                await self.capability_worker.speak(
+                    f"I couldn't activate the siren on {device_name}."
+                )
+        else:
+            endpoint = f"doorbots/{device_id}/siren_off"
+            result = await self._ring_request_with_retry(
+                endpoint, method="PUT", force_null_body=True,
+            )
+
+            if result is not None:
+                await self.capability_worker.speak(
+                    f"Siren turned off for {device_name}."
+                )
+            else:
+                await self.capability_worker.speak(
+                    f"I couldn't turn off the siren for {device_name}."
+                )
+
+    async def _handle_motion_toggle(self, device_id: str, enabled: bool):
+        """Enable or disable motion detection."""
+        device = self.devices.get(device_id)
+        device_name = device.get("description", "Your device") if device else "Your device"
+
+        endpoint = f"devices/{device_id}/settings"
+        body = {"motion_settings": {"motion_detection_enabled": enabled}}
+
+        result = await self._ring_request_with_retry(
+            endpoint,
+            method="PATCH",
+            data=body,
+            base_override=DEVICES_API_BASE,
+        )
+
+        state = "enabled" if enabled else "disabled"
+        action = "enable" if enabled else "disable"
+
+        if result is not None:
+            await self.capability_worker.speak(
+                f"Motion detection {state} for {device_name}."
+            )
+        else:
+            await self.capability_worker.speak(
+                f"I couldn't {action} motion detection for {device_name}."
+            )
+
+    async def _handle_chime_test(self, chime_id: str):
+        """Play a test sound on a chime."""
+        device = self.devices.get(chime_id)
+        device_name = device.get("description", "Your chime") if device else "Your chime"
+
+        endpoint = f"chimes/{chime_id}/play_sound"
+
+        result = await self._ring_request_with_retry(
+            endpoint,
+            method="POST",
+            params={"kind": "ding"},
+        )
+
+        if result is not None:
+            await self.capability_worker.speak(
+                f"Playing test sound on {device_name}."
+            )
+        else:
+            await self.capability_worker.speak(
+                f"I couldn't play the test sound on {device_name}."
+            )
+
+    def _parse_volume_input(self, volume: Any) -> int | None:
+        """Parse a spoken or typed volume value and return 0-10 candidate."""
+        if isinstance(volume, int):
+            return volume
+
+        cleaned = str(volume).lower().strip()
+        cleaned = re.sub(r"[^\w\s]", "", cleaned)
+
+        digit_match = re.search(r"\d+", cleaned)
+        if digit_match:
+            return int(digit_match.group())
+
+        number_words = {
+            "zero": 0,
+            "one": 1,
+            "two": 2,
+            "three": 3,
+            "four": 4,
+            "five": 5,
+            "six": 6,
+            "seven": 7,
+            "eight": 8,
+            "nine": 9,
+            "ten": 10,
+        }
+
+        for word, value in number_words.items():
+            if word in cleaned:
+                return value
+
+        return None
+
+    async def _handle_chime_volume(self, chime_id: str, volume: int | None):
+        """Set chime volume."""
+        device = self.devices.get(chime_id)
+        device_name = device.get("description", "Your chime") if device else "Your chime"
+
+        # Follow-up flow
+        if volume is None:
+            await self.capability_worker.speak(
+                "What volume level would you like? Please specify a number from 0 to 10."
+            )
+            self.pending_action = {
+                "type": "chime_volume_followup",
+                "device_id": chime_id,
+            }
+            return
+
+        volume = self._parse_volume_input(volume)
+        if volume is None:
+            await self.capability_worker.speak(
+                "I need a number between 0 and 10. What volume level would you like?"
+            )
+            return
+
+        # Bounds check
+        if volume < 0 or volume > 10:
+            await self.capability_worker.speak(
+                "Volume must be a number between 0 and 10."
+            )
+            return
+
+        desc = device.get("description", "Chime") if device else "Chime"
+
+        endpoint = f"chimes/{chime_id}"
+
+        result = await self._ring_request_with_retry(
+            endpoint,
+            method="PUT",
+            params={
+                "chime[description]": desc,
+                "chime[settings][volume]": volume,
+            },
+            force_null_body=True,
+        )
+
+        if result is not None:
+            await self.capability_worker.speak(
+                f"Volume set to {volume} for {device_name}."
+            )
+        else:
+            await self.capability_worker.speak(
+                f"I couldn't update the volume for {device_name}."
             )
