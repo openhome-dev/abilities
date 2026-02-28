@@ -9,13 +9,22 @@ from src.agent.capability import MatchingCapability
 from src.agent.capability_worker import CapabilityWorker
 from src.main import AgentWorker
 
+# --- App Config ---
+class AppConfig:
+    # Hardcode your API keys here for easier setup. 
+    # If these are empty, the ability will fall back to checking the preferences file.
+    # WARNING: DO NOT COMMIT REAL API KEYS TO GITHUB.
+    TICKETMASTER_API_KEY = ""
+    SEATGEEK_CLIENT_ID = ""
+    SERPER_API_KEY = ""
+
 # --- Preferences & Constants ---
 PREFS_FILE = "event_explorer_prefs.json"
 DEFAULT_PREFS = {
     "home_city": None,
-    "api_key_ticketmaster": "YOUR_TICKETMASTER_KEY", # Configured by user
-    "api_key_seatgeek": "YOUR_SEATGEEK_CLIENT_ID",   # Configured by user
-    "api_key_serper": "YOUR_SERPER_API_KEY"          # Configured by user
+    "api_key_ticketmaster": AppConfig.TICKETMASTER_API_KEY, 
+    "api_key_seatgeek": AppConfig.SEATGEEK_CLIENT_ID,   
+    "api_key_serper": AppConfig.SERPER_API_KEY          
 }
 
 TICKETMASTER_URL = "https://app.ticketmaster.com/discovery/v2/events.json"
@@ -229,7 +238,8 @@ class LocalEventExplorerAbility(MatchingCapability):
 
     # --- API Integrations ---
     def _fetch_ticketmaster(self, city: str, keyword: str, start_dt: str, end_dt: str, api_key: str) -> List[Dict]:
-        if not api_key or api_key == "YOUR_TICKETMASTER_KEY":
+        key_to_use = AppConfig.TICKETMASTER_API_KEY or api_key
+        if not key_to_use or key_to_use == "YOUR_TICKETMASTER_KEY":
             return []
             
         params = {
@@ -279,7 +289,8 @@ class LocalEventExplorerAbility(MatchingCapability):
         return []
 
     def _fetch_seatgeek(self, city: str, keyword: str, client_id: str) -> List[Dict]:
-        if not client_id or client_id == "YOUR_SEATGEEK_CLIENT_ID":
+        id_to_use = AppConfig.SEATGEEK_CLIENT_ID or client_id
+        if not id_to_use or id_to_use == "YOUR_SEATGEEK_CLIENT_ID":
             return []
             
         params = {
@@ -321,7 +332,8 @@ class LocalEventExplorerAbility(MatchingCapability):
 
     def _fetch_serper(self, city: str, keyword: str, time_context: str, api_key: str) -> List[Dict]:
         """Uses Google's Event graph directly. Extremely broad coverage."""
-        if not api_key or api_key == "YOUR_SERPER_API_KEY":
+        key_to_use = AppConfig.SERPER_API_KEY or api_key
+        if not key_to_use or key_to_use == "YOUR_SERPER_API_KEY":
             return []
 
         query = f"events in {city}"
