@@ -1,0 +1,10 @@
+{
+  "unique_name": "local-event-explorer",
+  "matching_hotwords": [
+    "local events",
+    "concerts near me",
+    "what's happening near me",
+    "find tickets",
+    "event explorer"
+  ]
+}
