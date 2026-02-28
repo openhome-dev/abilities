@@ -1,6 +1,6 @@
 # Local Event Explorer
 
-The **Local Event Explorer** is an OpenHome community ability that helps users discover concerts, sports, comedy, and festivals in their area. It leverages the **Ticketmaster Discovery API** as its primary source, falling back to **SeatGeek** if needed.
+The **Local Event Explorer** is an OpenHome community ability that helps users discover concerts, sports, comedy, and festivals in their area. It leverages the **Ticketmaster Discovery API** for major ticketed events and **Serper.dev** for broad local Google Events discovery, falling back to **SeatGeek** if needed.
 
 ## Features
 - **Smart Geolocation**: Uses your IP to guess your city or asks you to set a default home city (saved persistently).
@@ -13,14 +13,16 @@ To use this ability, you need to provide an API key. This prevents rate-limiting
 
 ### 1. Get API Keys
 1. **Ticketmaster** (Primary): Go to the [Ticketmaster Developer Portal](https://developer.ticketmaster.com/) and create a free account to get an API Key.
-2. **SeatGeek** (Fallback): Go to the [SeatGeek Platform](https://seatgeek.com/account/develop) and register an app to get a Client ID.
+2. **Serper.dev** (Local Events): Go to [Serper.dev](https://serper.dev/) and sign up for 2,500 free Google Search queries.
+3. **SeatGeek** (Fallback): Go to the [SeatGeek Platform](https://seatgeek.com/account/develop) and register an app to get a Client ID.
 
 ### 2. Configure Your Keys
 Add your keys to the OpenHome Settings UI or place them directly in the preferences file `data/event_explorer_prefs.json`:
 ```json
 {
   "api_key_ticketmaster": "YOUR_KEY_HERE",
-  "api_key_seatgeek": "YOUR_KEY_HERE"
+  "api_key_seatgeek": "YOUR_KEY_HERE",
+  "api_key_serper": "YOUR_KEY_HERE"
 }
 ```
 

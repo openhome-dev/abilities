@@ -14,11 +14,13 @@ PREFS_FILE = "event_explorer_prefs.json"
 DEFAULT_PREFS = {
     "home_city": None,
     "api_key_ticketmaster": "YOUR_TICKETMASTER_KEY", # Configured by user
-    "api_key_seatgeek": "YOUR_SEATGEEK_CLIENT_ID"    # Configured by user
+    "api_key_seatgeek": "YOUR_SEATGEEK_CLIENT_ID",   # Configured by user
+    "api_key_serper": "YOUR_SERPER_API_KEY"          # Configured by user
 }
 
 TICKETMASTER_URL = "https://app.ticketmaster.com/discovery/v2/events.json"
 SEATGEEK_URL = "https://api.seatgeek.com/2/events"
+SERPER_URL = "https://google.serper.dev/search"
 
 # --- Prompts ---
 INTENT_CLASSIFIER_PROMPT = """You are an intent classifier for a voice-activated local event explorer.
@@ -48,17 +50,6 @@ class LocalEventExplorerAbility(MatchingCapability):
     # State for current session
     current_events: List[Dict] = []
     
-    @classmethod
-    def register_capability(cls) -> "MatchingCapability":
-        with open(
-            os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.json")
-        ) as file:
-            data = json.load(file)
-        return cls(
-            unique_name=data["unique_name"],
-            matching_hotwords=data["matching_hotwords"],
-        )
-
     def call(self, worker: AgentWorker):
         self.worker = worker
         self.capability_worker = CapabilityWorker(self.worker)
@@ -328,6 +319,47 @@ class LocalEventExplorerAbility(MatchingCapability):
             self._err(f"SeatGeek API error: {e}")
         return []
 
+    def _fetch_serper(self, city: str, keyword: str, time_context: str, api_key: str) -> List[Dict]:
+        """Uses Google's Event graph directly. Extremely broad coverage."""
+        if not api_key or api_key == "YOUR_SERPER_API_KEY":
+            return []
+
+        query = f"events in {city}"
+        if keyword:
+            query += f" {keyword}"
+        if time_context:
+            query += f" {time_context}"
+
+        headers = {
+            "X-API-KEY": api_key,
+            "Content-Type": "application/json"
+        }
+        try:
+            resp = requests.post(SERPER_URL, headers=headers, json={"q": query}, timeout=8)
+            if resp.status_code == 200:
+                data = resp.json()
+                events = data.get("events", [])
+                parsed = []
+                for e in events[:3]: # Cap at 3 for serper to limit voice length
+                    title = e.get("title", "Unknown Event")
+                    address = e.get("address", "an unknown location")
+                    date_str = e.get("date", "")
+                    link = e.get("link", "")
+                    
+                    # Serper usually returns date like "Sat, Nov 16, 7 PM"
+                    parsed.append({
+                        "name": title,
+                        "venue": address,
+                        "date": date_str,
+                        "time": "", # Time is usually bundled in the date string for Serper
+                        "url": link,
+                        "source": "Google Events"
+                    })
+                return parsed
+        except Exception as e:
+            self._err(f"Serper API error: {e}")
+        return []
+
     # --- Handlers ---
     async def _handle_search(self, intent: dict, prefs: dict):
         city = intent.get("location") or prefs.get("home_city")
@@ -348,7 +380,7 @@ class LocalEventExplorerAbility(MatchingCapability):
         start_dt, end_dt = self._parse_time_context(time_context)
         
         # 1. Try Ticketmaster
-        events = self._fetch_ticketmaster(
+        tm_events = self._fetch_ticketmaster(
             city=city, 
             keyword=keyword, 
             start_dt=start_dt, 
@@ -356,23 +388,45 @@ class LocalEventExplorerAbility(MatchingCapability):
             api_key=prefs.get("api_key_ticketmaster")
         )
         
-        # 2. Fallback to SeatGeek if empty/failed
-        if not events:
+        # 2. Try SeatGeek if TM empty
+        if not tm_events:
             self._log("Ticketmaster returned 0 events or failed. Trying SeatGeek fallback.")
-            events = self._fetch_seatgeek(
+            tm_events = self._fetch_seatgeek(
                 city=city,
                 keyword=keyword,
                 client_id=prefs.get("api_key_seatgeek")
             )
             
-        self.current_events = events
+        # 3. Try Serper (Google Events)
+        serper_events = self._fetch_serper(
+            city=city,
+            keyword=keyword,
+            time_context=time_context,
+            api_key=prefs.get("api_key_serper")
+        )
         
-        if not events:
-            await self.capability_worker.speak("I couldn't find any events matching that description right now. Note that you may need to configure your API keys in the settings file first. What else can I check for you?")
+        # Combine! Take top 2 from structured APIs, Top 2 from Serper
+        combined_events = []
+        if tm_events: combined_events.extend(tm_events[:2])
+        if serper_events: combined_events.extend(serper_events[:2])
+        
+        # Deduplicate titles lightly just in case TM and Serper returned the same massive concert
+        seen = set()
+        final_events = []
+        for e in combined_events:
+            title_lower = e["name"].lower().strip()
+            if title_lower not in seen:
+                seen.add(title_lower)
+                final_events.append(e)
+
+        self.current_events = final_events
+        
+        if not final_events:
+            await self.capability_worker.speak("I couldn't find any events matching that description right now. Note that you may need to configure your API keys for Ticketmaster and Serper in the settings file first. What else can I check for you?")
             return
             
-        summary = f"I found {len(events)} events."
-        for i, ev in enumerate(events):
+        summary = f"I found {len(final_events)} events."
+        for i, ev in enumerate(final_events):
             num = ["First", "Second", "Third", "Fourth", "Fifth"][i]
             
             # Format time
