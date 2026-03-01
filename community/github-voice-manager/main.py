@@ -208,7 +208,7 @@ class GitHubVoiceManagerCapability(MatchingCapability):
     default_repo: str = ""
 
     # Do not change following tag of register capability
-    #{{register_capability}}
+    # {{register_capability}}
 
     def call(self, worker: AgentWorker):
         self.worker = worker
@@ -508,7 +508,7 @@ class GitHubVoiceManagerCapability(MatchingCapability):
         summaries = []
         for r in repos[:5]:
             name = r.get("full_name", "")
-            desc = r.get("description", "no description")
+            r.get("description", "no description")
             stars = r.get("stargazers_count", 0)
             pushed = _time_ago(r.get("pushed_at", ""))
             summaries.append(f"{name} with {stars} stars, last active {pushed}")
