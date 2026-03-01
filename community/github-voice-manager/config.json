@@ -1,0 +1,26 @@
+{
+  "unique_name": "github-voice-manager",
+  "matching_hotwords": [
+    "github",
+    "pull requests",
+    "pull request",
+    "notifications",
+    "my repos",
+    "my repositories",
+    "open issues",
+    "check my PRs",
+    "any open PRs",
+    "github notifications",
+    "github status",
+    "code review",
+    "what's on github",
+    "whats on github",
+    "star a repo",
+    "star repo",
+    "unstar",
+    "create an issue",
+    "open an issue",
+    "file an issue",
+    "new issue"
+  ]
+}
