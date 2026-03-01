@@ -38,7 +38,7 @@ No setup required. The ability uses icanhazdadjoke.com, which is free and does n
 - `speak()` — Text-to-speech output
 - `user_response()` — Listen for user input
 - `text_to_text_response()` — LLM intent classification for ambiguous input
-- `resume_normal_flow()` — Return to Personality
+- `resume_normal_flow()` — Return to Agent
 
 ## Example Conversation
 

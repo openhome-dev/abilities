@@ -46,7 +46,7 @@ Every community Ability PR is reviewed against these criteria before merge:
 
 - All Abilities must use the `CapabilityWorker` SDK — direct platform internals access is forbidden
 - `register_capability()` must load from `config.json` only (no custom config file paths)
-- `resume_normal_flow()` must be called on every exit path to return control to the Personality
+- `resume_normal_flow()` must be called on every exit path to return control to the Agent
 
 ## Security Best Practices for Contributors
 
