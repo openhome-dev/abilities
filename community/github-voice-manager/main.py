@@ -517,7 +517,7 @@ class GitHubVoiceManagerCapability(MatchingCapability):
         summaries = []
         for r in repos[:5]:
             name = r.get("full_name", "")
-            desc = r.get("description", "no description")
+            r.get("description", "no description")
             stars = r.get("stargazers_count", 0)
             pushed = _time_ago(r.get("pushed_at", ""))
             summaries.append(f"{name} with {stars} stars, last active {pushed}")
