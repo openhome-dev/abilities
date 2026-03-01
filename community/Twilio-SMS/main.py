@@ -743,7 +743,7 @@ class TwilioSmsCapability(MatchingCapability):
                 user_input = await self.capability_worker.user_response()
 
                 if not user_input or not user_input.strip():
-                    await self.capability_worker.speak("Please say something like 'Call mom', 'Send a text' or 'Read my calls'.")
+                    await self.capability_worker.speak("Please say something like 'Call mom', 'Send a text', 'Read my calls or messeges' or 'Stop'.")
                     continue
 
                 lower_input = user_input.lower().strip()
