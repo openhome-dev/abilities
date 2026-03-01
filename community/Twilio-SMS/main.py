@@ -18,7 +18,7 @@ class TwilioSmsCapability(MatchingCapability):
     prefs_file: str = "twilio_sms_prefs.json"
     prefs: dict = None
 
-    #{{register_capability}}
+    # {{register_capability}}
 
     async def load_prefs(self):
         """Safe, async loading of preferences using OpenHome SDK file helpers."""
@@ -133,11 +133,11 @@ class TwilioSmsCapability(MatchingCapability):
         """Compose TwiML for a voice message call with XML escaping."""
         voice = self.prefs.get("voice_say_voice", "alice")
         lang = self.prefs.get("voice_say_language", "en-US")
-        
+
         safe_msg = html.escape(message_text)
         safe_voice = html.escape(voice)
         safe_lang = html.escape(lang)
-        
+
         return (
             f'<Response>'
             f'<Pause length="1"/>'
@@ -176,7 +176,7 @@ class TwilioSmsCapability(MatchingCapability):
             params["From"] = self.prefs.get("twilio_number", "")
         elif direction == "inbound":
             params["To"] = self.prefs.get("twilio_number", "")
-            
+
         result = self.twilio_request("GET", "Calls.json", params=params)
         if isinstance(result, dict):
             return result.get("calls", [])
@@ -274,7 +274,7 @@ class TwilioSmsCapability(MatchingCapability):
         status = call.get("status", "")
         duration = call.get("duration", "0")
         dur_int = int(duration) if duration else 0
-        
+
         status_map = {
             "queued": "Your call is waiting to go through.",
             "ringing": "The phone is ringing right now.",
@@ -368,14 +368,14 @@ class TwilioSmsCapability(MatchingCapability):
                 return
 
         await self.capability_worker.speak(f"Calling {recipient_name} now. The message will play when they pick up.")
-        
+
         twiml = self.compose_twiml(body)
         result = self.make_voice_call(to_number, twiml)
 
         if "error" in result:
             error_code = result.get("code")
             error_message = result.get("message", str(result.get("error")))
-            
+
             if self.worker and hasattr(self.worker, 'editor_logging_handler'):
                 self.worker.editor_logging_handler.error(f"TWILIO CALL ERROR -> Code: {error_code}, Message: {error_message}")
 
@@ -396,7 +396,7 @@ class TwilioSmsCapability(MatchingCapability):
         """Read recent call log."""
         await self.capability_worker.speak("Checking your recent calls...")
         calls = self.get_recent_calls(limit=5)
-        
+
         if not calls:
             await self.capability_worker.speak("You don't have any recent calls.")
             return
