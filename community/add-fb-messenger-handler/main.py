@@ -1,11 +1,11 @@
 from typing import ClassVar, Dict
 import json
-from datetime import datetime, timedelta, timezone
 import requests
 
 from src.agent.capability import MatchingCapability
 from src.main import AgentWorker
 from src.agent.capability_worker import CapabilityWorker
+
 
 class MessengerHandlerFB(MatchingCapability):
     # {{register capability}}
@@ -84,7 +84,7 @@ Return ONLY valid JSON:
                     intent = intent_data.get("intent", "unknown")
                     keyword = intent_data.get("keyword")
                     name = intent_data.get("name")
-                    message = intent_data.get("message")
+                    intent_data.get("message")
                 except:
                     intent = "unknown"
 
