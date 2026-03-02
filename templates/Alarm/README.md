@@ -23,12 +23,12 @@ However, **watcher mode is a special case**. When an ability is initialized with
 - **Periodic monitoring** (checking APIs every N seconds)
 - **Event detection** (watching for conditions to trigger actions)
 
-**Critical limitation:** The watcher loop stops when the Personality session ends. You cannot build:
+**Critical limitation:** The watcher loop stops when the Agent session ends. You cannot build:
 - ❌ Truly "background" tasks that run 24/7
 - ❌ Alarms that fire when the user isn't active
 - ❌ Proactive notifications that interrupt the user
 
-This template is best for **active session alarms** — alarms that fire while the user is already interacting with their Personality.
+This template is best for **active session alarms** — alarms that fire while the user is already interacting with their Agent.
 
 ## What You Can Build
 
@@ -97,7 +97,7 @@ await self.worker.session_tasks.sleep(20.0)
 message_history = self.capability_worker.get_full_message_history()[-10:]
 ```
 - Returns list of message dicts: `[{"role": "user", "content": "..."}, ...]`
-- Scoped per-Personality per-user
+- Scoped per-agent per-user
 - Gets last 10 messages (adjust as needed)
 
 ## Production Alarm Implementation
@@ -344,11 +344,11 @@ while True:
 From the official docs:
 > **You can't set a timer that fires in 15 minutes to remind the user of a meeting. You can't poll an API every 5 minutes in the background. You can't have an ability proactively interrupt the user with a notification.**
 
-**Why?** The watcher only exists while the Personality session is active. When the user stops talking or the session ends, the watcher stops.
+**Why?** The watcher only exists while the Agent session is active. When the user stops talking or the session ends, the watcher stops.
 
 ### What This Means for Alarms
 
-This alarm template will work **only while the user is actively using their Personality**:
+This alarm template will work **only while the user is actively using their Agent**:
 - ✅ Set alarm for 5 minutes → alarm fires (if user stays active)
 - ❌ Set alarm for tomorrow 8 AM → alarm won't fire (session ended)
 
