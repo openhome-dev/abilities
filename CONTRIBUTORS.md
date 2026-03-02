@@ -14,7 +14,7 @@ Format: - **@username** — ability-name ([ability-name](community/ability-name/
 -->
 - **[@Rizwan-algoryc](https://github.com/Rizwan-algoryc)** — slow-music ([slow-music](community/slow-music/))
 - **[@engrumair842-arch](https://github.com/engrumair842-arch)** — reddit-daily-digest ([reddit-daily-digest](community/reddit-daily-digest/)), smart-sous-chef ([smart-sous-chef](community/smart-sous-chef/))
-- **[@samsonadmasu](https://github.com/samsonadmasu)** — voice-unit-converter ([voice-unit-converter](community/voice-unit-converter/)), food-water-log ([food-water-log](community/food-water-log/)), gmail-connector ([gmail-connector](community/gmail-connector/)), google-tasks ([google-tasks](community/google-tasks/))
+- **[@samsonadmasu](https://github.com/samsonadmasu)** — voice-unit-converter ([voice-unit-converter](community/voice-unit-converter/)), food-water-log ([food-water-log](community/food-water-log/)), gmail-connector ([gmail-connector](community/gmail-connector/)), google-tasks ([google-tasks](community/google-tasks/)), traffic-travel-time ([traffic-travel-time](community/traffic-travel-time/))
 - **[@hassan1731996](https://github.com/hassan1731996)** — daily-briefing ([daily-briefing](community/daily-briefing/)), voice-journal ([voice-journal](community/voice-journal/)), whatsapp-messenger ([whatsapp-messenger](community/whatsapp-messenger/))
 - **[@BhargavTelu](https://github.com/BhargavTelu)** — grocery-list-manager ([grocery-list-manager](community/grocery-list-manager/))
 - **[@ArturKozhushnyi](https://github.com/ArturKozhushnyi)** — coin-flipper ([coin-flipper](community/coin-flipper/)), Bedtime-Wind-Down ([Bedtime-Wind-Down](community/Bedtime-Wind-Down/)), Twilio-SMS ([Twilio-SMS](community/Twilio-SMS/))
@@ -38,3 +38,4 @@ Format: - **@username** — ability-name ([ability-name](community/ability-name/
 - **[@MKmuneebkhalid](https://github.com/MKmuneebkhalid)** — discord-connector ([discord-connector](community/discord-connector/))
 - **[@Ju-usc](https://github.com/Ju-usc)** — coding-agent-runner ([coding-agent-runner](community/coding-agent-runner/))
 - **[@code-guru1](https://github.com/code-guru1)** — todoist-voice-tasks ([todoist-voice-tasks](community/todoist-voice-tasks/))
+- **[@saifrehman100](https://github.com/saifrehman100)** — github-voice-manager ([github-voice-manager](community/github-voice-manager/))
