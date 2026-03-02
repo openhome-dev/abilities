@@ -90,6 +90,30 @@ OUTLOOK_ERROR_SPEAK = (
 )
 
 # =============================================================================
+# WEATHER & GEO (ip-api.com + Open-Meteo)
+# =============================================================================
+
+CLOUD_INDICATORS = [
+    "amazon", "aws", "google", "microsoft", "azure",
+    "digitalocean", "linode", "vultr", "hetzner", "ovh",
+    "oracle", "cloudflare", "rackspace", "ibm cloud",
+]
+
+WEATHER_DESCRIPTIONS = {
+    0: "clear skies", 1: "mostly clear", 2: "partly cloudy", 3: "overcast",
+    45: "foggy", 48: "foggy with frost",
+    51: "light drizzle", 53: "drizzle", 55: "heavy drizzle",
+    61: "light rain", 63: "rain", 65: "heavy rain",
+    71: "light snow", 73: "snow", 75: "heavy snow", 77: "snow grains",
+    80: "light rain showers", 81: "rain showers", 82: "heavy rain showers",
+    85: "light snow showers", 86: "heavy snow showers",
+    95: "thunderstorm", 96: "thunderstorm with light hail",
+    99: "thunderstorm with heavy hail",
+}
+
+IMPERIAL_COUNTRIES = ["US"]
+
+# =============================================================================
 # LLM PROMPTS
 # =============================================================================
 
@@ -284,6 +308,7 @@ class OutlookConnectorCapability(MatchingCapability):
     prefs: Dict = {}
     in_triage: bool = False
     triage_index: int = 0
+    geo_context: Dict = {}
     _just_gave_summary: bool = False  # "yes" after summary → start triage
     _triage_just_sent_reply: bool = (
         False  # after "Sent." in triage, advance to next email
@@ -345,6 +370,7 @@ class OutlookConnectorCapability(MatchingCapability):
                 pass
 
             self.prefs = await self.load_preferences()
+            self.collect_geo_context()
             try:
                 self.emails, err = self.outlook_list_unread(MAX_UNREAD_FETCH)
                 if err:
@@ -732,9 +758,9 @@ class OutlookConnectorCapability(MatchingCapability):
 
     async def handle_summary(self):
         if not self.emails:
-            await self.capability_worker.speak(
-                "Your inbox is clear — no unread emails."
-            )
+            weather_line = self.build_weather_line()
+            msg = (weather_line + "Your inbox is clear — no unread emails.").strip()
+            await self.capability_worker.speak(msg)
             return
 
         # Summarize all fetched emails so spoken count matches count-only path (len(self.emails))
@@ -742,7 +768,11 @@ class OutlookConnectorCapability(MatchingCapability):
         prompt = SUMMARY_PROMPT.format(emails=json.dumps(self.emails[:max_summary]))
 
         summary = self.capability_worker.text_to_text_response(prompt)
-        to_speak = ((summary or "").strip() + " Want me to go through them?").strip()
+        weather_line = self.build_weather_line()
+        base = (summary or "").strip()
+        if weather_line:
+            base = weather_line + base
+        to_speak = (base + " Want me to go through them?").strip()
         await self.capability_worker.speak(
             to_speak or "You have unread emails. Want me to go through them?"
         )
@@ -1774,6 +1804,132 @@ class OutlookConnectorCapability(MatchingCapability):
         if err:
             return ([], err)
         return (data.get("value", []) if data else [], None)
+
+    # =========================================================================
+    # GEO & WEATHER
+    # =========================================================================
+
+    def fetch_ip_geo(self) -> Dict:
+        """Fetch geolocation from IP (per OpenHome SDK)."""
+        try:
+            user_ip = self.worker.user_socket.client.host
+            self.log(f"User IP: {user_ip}")
+            resp = requests.get(f"http://ip-api.com/json/{user_ip}", timeout=5)
+            data = resp.json()
+            self.log(f"Geo response: {json.dumps(data)[:200]}")
+            return data
+        except Exception as e:
+            self.log_err(f"IP geo failed: {e}")
+            return {}
+
+    def is_cloud_ip(self, geo_data: Dict) -> bool:
+        """Check if IP belongs to a cloud provider."""
+        isp = (geo_data.get("isp") or "").lower()
+        org = (geo_data.get("org") or "").lower()
+        combined = isp + " " + org
+        for indicator in CLOUD_INDICATORS:
+            if indicator in combined:
+                return True
+        return False
+
+    def fetch_weather(self, lat: float, lon: float, use_fahrenheit: bool = True) -> Dict:
+        """Fetch current weather from Open-Meteo."""
+        try:
+            temp_unit = "fahrenheit" if use_fahrenheit else "celsius"
+            speed_unit = "mph" if use_fahrenheit else "kmh"
+            url = (
+                f"https://api.open-meteo.com/v1/forecast"
+                f"?latitude={lat}&longitude={lon}"
+                f"&current=temperature_2m,relative_humidity_2m,weather_code,wind_speed_10m"
+                f"&temperature_unit={temp_unit}"
+                f"&wind_speed_unit={speed_unit}"
+            )
+            resp = requests.get(url, timeout=5)
+            data = resp.json()
+            current = data.get("current", {})
+            weather_code = current.get("weather_code", 0)
+            return {
+                "temp": current.get("temperature_2m"),
+                "humidity": current.get("relative_humidity_2m"),
+                "condition": WEATHER_DESCRIPTIONS.get(
+                    weather_code, "unclear conditions"
+                ),
+                "wind": current.get("wind_speed_10m"),
+            }
+        except Exception as e:
+            self.log_err(f"Weather failed: {e}")
+            return {}
+
+    def collect_geo_context(self):
+        """Collect IP geo and weather data."""
+        geo = self.fetch_ip_geo()
+
+        if geo and geo.get("status") == "success" and not self.is_cloud_ip(geo):
+            city = geo.get("city", "")
+            region = geo.get("regionName", "")
+            country = geo.get("countryCode", "US")
+            lat = geo.get("lat", 0)
+            lon = geo.get("lon", 0)
+            timezone = geo.get("timezone", "America/New_York")
+        else:
+            # Fallback defaults when geo fails or cloud IP
+            city = "New York"
+            region = "New York"
+            country = "US"
+            lat = 40.71
+            lon = -74.01
+            timezone = "America/New_York"
+
+        is_imperial = country in IMPERIAL_COUNTRIES
+        weather = self.fetch_weather(lat, lon, use_fahrenheit=is_imperial)
+
+        self.geo_context = {
+            "city": city,
+            "region": region,
+            "country": country,
+            "timezone": timezone,
+            "lat": lat,
+            "lon": lon,
+            "weather_temp": weather.get("temp", "unknown"),
+            "weather_condition": weather.get("condition", "unknown"),
+            "weather_humidity": weather.get("humidity", "unknown"),
+            "weather_wind": weather.get("wind", "unknown"),
+            "is_imperial": is_imperial,
+        }
+
+        self.log(
+            f"Geo context: {city}, {region} | {weather.get('temp')}° "
+            f"{weather.get('condition', '')}"
+        )
+
+    def build_weather_line(self) -> str:
+        """Build a natural spoken weather line from geo_context."""
+        condition = self.geo_context.get("weather_condition", "")
+        temp = self.geo_context.get("weather_temp", "")
+        city = self.geo_context.get("city", "there")
+
+        if not temp or temp == "unknown":
+            return ""
+
+        try:
+            temp_rounded = int(round(float(temp)))
+        except (TypeError, ValueError):
+            return ""
+
+        if "rain" in condition or "drizzle" in condition:
+            return f"A bit wet out in {city} right now. "
+        elif "snow" in condition:
+            return f"Snowy in {city} right now. "
+        elif "thunder" in condition:
+            return f"Sounds like some thunder out in {city}. "
+        elif temp_rounded < 40:
+            return f"Pretty cold out there at {temp_rounded} degrees. "
+        elif temp_rounded > 85:
+            return f"Hot one today, about {temp_rounded} degrees. "
+        elif "clear" in condition:
+            return f"Nice and clear out in {city}. "
+
+        return f"It's {temp_rounded} and {condition} in {city}. "
 
     # =========================================================================
     # UTILITIES
