@@ -7,7 +7,7 @@
 
 A voice-powered food and water intake tracker that persists across sessions. Log meals and water hands-free, review today's intake, get weekly summaries — all saved to persistent storage so your data survives between conversations. The LLM classifies natural speech so you can say things like "I had eggs for breakfast" or "drank 2 glasses of water" naturally.
 
-**Why this needs to be an Ability:** The LLM can't persist data across sessions on its own. This Ability uses the File Storage API to save and recall your food and water log over time — something the Personality alone cannot do.
+**Why this needs to be an Ability:** The LLM can't persist data across sessions on its own. This Ability uses the File Storage API to save and recall your food and water log over time — something the Agent alone cannot do.
 
 ## Suggested Trigger Words
 
@@ -80,7 +80,7 @@ No API keys or external services required. Uses only the built-in LLM and persis
 | `read_file()` | Load persistent log data |
 | `write_file()` | Save log data (with delete-first pattern for JSON) |
 | `delete_file()` | Clear old JSON before writing updated data |
-| `resume_normal_flow()` | Return to Personality (in try/finally) |
+| `resume_normal_flow()` | Return to Agent (in try/finally) |
 | `editor_logging_handler` | All logging (no print statements) |
 
 ## Architecture

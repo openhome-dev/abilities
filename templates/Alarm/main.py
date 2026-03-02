@@ -96,8 +96,13 @@ Rules:
 - If the user requests deleting alarms (e.g., "delete all alarms", "remove all alarms", "clear alarms"),
   respond with EXACTLY:
   DELETE_ALL_ALARMS
-- If day/date is missing, ask exactly:
+- If day/date is missing, ask:
   QUESTION:at what day ?
+- If user says something like "26 February" then it automatically means you can know the day and year will be current year
+- Prefer to use the same year of current date, unless the user tells about a different year.
+- If the user text clearly contains a day + month (including spelled numbers), then we never allow “QUESTION:at what day ?”
+Instead, if anything is missing, only allow time questions.
+- If date and month is present no need to ask about what day.
 - If time is missing, ask exactly:
   QUESTION:at what time ?
 - If hour/minute unclear, ask exactly:
@@ -105,11 +110,15 @@ Rules:
 - If "after X hours/minutes" is given, treat it as relative to current datetime.
 - "tomorrow" means next day in given timezone.
 - "next Friday" means next occurrence (if today is Friday, use next week).
+- You can only give three type of responses:
+  * DELETE_ALL_ALARMS
+  * QUESTION: (anything related to setting alarm)
+  * Valid JSON response of alarm
 - Output MUST be either:
   - DELETE_ALL_ALARMS
   - one QUESTION:... line (exactly as specified above), OR
   - valid JSON only (no extra text).
-
+- If User's first message is "Set an alarm for 11:07AM Thursday, 26 February" then it means you have all the info no need to ask further question just return in valid json
 Return JSON only when complete:
 {{
   "target_iso": "ISO8601 datetime with timezone offset",
@@ -125,7 +134,7 @@ Return JSON only when complete:
 
             # Fast-path: if user literally says it, reset without LLM
             t0 = (user_text or "").strip().lower()
-            if t0 in {"delete all alarms", "clear alarms", "remove all alarms"} or "delete all alarms" in t0:
+            if "delete all alarms" in t0:
                 await self._reset_alarms_file("User requested delete all alarms")
                 # leave a clean empty list behind
                 try:
@@ -151,7 +160,9 @@ Return JSON only when complete:
                     history,
                     system_prompt,
                 )
-
+                self.worker.editor_logging_handler.info(user_text)
+                self.worker.editor_logging_handler.info(system_prompt)
+                self.worker.editor_logging_handler.info(llm_response)
                 history.append({"role": "user", "content": user_text})
 
                 if isinstance(llm_response, str):

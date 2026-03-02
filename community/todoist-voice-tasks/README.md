@@ -26,7 +26,7 @@ This ability connects OpenHome’s voice pipeline to your Todoist account. After
 
 ## Prerequisites
 
-- An [OpenHome](https://app.openhome.com) account and a Personality that supports abilities.
+- An [OpenHome](https://app.openhome.com) account and an Agent that supports abilities.
 - A [Todoist](https://todoist.com) account and an API token.
 
 ---
@@ -83,7 +83,7 @@ The full list is in `config.json`:
 2. **Greeting** — The ability speaks a short greeting and lists what you can do (add, update, complete, reopen, delete, list, overdue, today).
 3. **Loop** — The ability listens with `user_response()` (platform voice → text). Each utterance is sent to the platform LLM via `text_to_text_response()` to get a structured intent (add, delete, update, complete, reopen, list, overdue, today, exit) plus optional `content`, `task_ref`, and `due`.
 4. **Action** — The ability calls the Todoist API (GET/POST) and speaks a confirmation or error.
-5. **Exit** — User says “stop”, “exit”, “done”, “bye”, etc. The ability says goodbye and calls `resume_normal_flow()` so control returns to the main Personality.
+5. **Exit** — User says “stop”, “exit”, “done”, “bye”, etc. The ability says goodbye and calls `resume_normal_flow()` so control returns to the main Agent.
 
 No custom speech-to-text or LLM client is used; everything goes through the OpenHome SDK.
 

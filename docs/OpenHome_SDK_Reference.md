@@ -43,14 +43,14 @@ Inside any Ability, you have access to two objects:
 ## 1. Speaking / TTS
 
 ### `speak(text)`
-Converts text to speech using the Personality's default voice. Streams audio to the user.
+Converts text to speech using the Agent's default voice. Streams audio to the user.
 
 ```python
 await self.capability_worker.speak("Hello! How can I help?")
 ```
 
 - **Async:** Yes (`await`)
-- **Voice:** Uses whatever voice is configured on the Personality
+- **Voice:** Uses whatever voice is configured on the Agent
 - **Tip:** Keep it to 1-2 sentences. This is voice, not text.
 
 ---
@@ -63,7 +63,7 @@ await self.capability_worker.text_to_speech("Welcome aboard.", "pNInz6obpgDQGcFm
 ```
 
 - **Async:** Yes (`await`)
-- **Voice:** Overrides the Personality's default
+- **Voice:** Overrides the Agent's default
 - **See:** [Voice ID catalog](#voice-id-quick-reference) at the bottom of this doc
 
 ---
@@ -107,7 +107,7 @@ answer = await self.capability_worker.run_io_loop("What's your favorite color?")
 
 - **Async:** Yes (`await`)
 - **Returns:** `str` — user's reply
-- **Note:** Uses the Personality's default voice (not a custom voice ID)
+- **Note:** Uses the Agent's default voice (not a custom voice ID)
 
 ---
 
@@ -499,11 +499,14 @@ await self.capability_worker.send_devkit_action("led_on")
 
 ### `resume_normal_flow()`
 
-**⚠️ CRITICAL: You MUST call this when your Ability is done.** It hands control back to the Personality. Without it, the Personality goes silent and the user has to restart the conversation.
+**⚠️ CRITICAL: You MUST call this when your Ability is done.** It hands control back to the Agent. Without it, the Agent goes silent and the user has to restart the conversation.
 
 ```python
 self.capability_worker.resume_normal_flow()
 ```
+
+- **Async:** Yes (`await`)
+- **Use case:** Manual cutoffs when your Ability needs to immediately stop ongoing output and listen for fresh input
 
 - **Async:** No (synchronous)
 - **When to call:** On EVERY exit path:
@@ -519,6 +522,14 @@ self.capability_worker.resume_normal_flow()
 - [ ] Called in every `except` block that ends the ability?
 - [ ] Called after timeout logic?
 - [ ] Called after user exit detection?
+
+### `send_interrupt_signal()`
+
+Sends an interrupt event to stop the current assistant output (speech/audio) and switch back to user input.
+
+```python
+interrupt_signal = await self.capability_worker.send_interrupt_signal()
+```
 
 ---
 
@@ -570,6 +581,18 @@ await self.worker.session_tasks.sleep(5.0)
 
 ## 13. User Connection Info
 
+### `get_timezone()`
+
+Returns the timezone for the active user/session when available.
+
+```python
+timezone = self.capability_worker.get_timezone()
+```
+
+- **Async:** No (synchronous)
+- **Returns:** Timezone string (for example `America/Chicago`) or empty/`None` when unavailable
+- **Use case:** Time-aware scheduling, local date/time formatting, reminders
+
 ### `user_socket.client.host`
 The user's public IP address at connection time.
 
@@ -617,11 +640,12 @@ def get_user_location(self):
 
 ## 14. Conversation Memory & History
 
-### `agent_memory.full_message_history`
-Access the full conversation message history from the current session.
+### `get_full_message_history()`
+
+Access the full conversation message history from the current session through `CapabilityWorker`.
 
 ```python
-history = self.worker.agent_memory.full_message_history
+history = self.capability_worker.get_full_message_history()
 self.worker.editor_logging_handler.info(f"Messages so far: {len(history)}")
 ```
 
@@ -654,19 +678,19 @@ async def main_loop(self):
 
 ### Passing Context Back After `resume_normal_flow()`
 
-Currently, there is **no direct way** to inject data into the Personality's system prompt after an Ability finishes. When `resume_normal_flow()` fires, the Ability is done and control returns to the Personality.
+Currently, there is **no direct way** to inject data into the Agent's system prompt after an Ability finishes. When `resume_normal_flow()` fires, the Ability is done and control returns to the Agent.
 
 **What you CAN do:**
 
-1. **Save to conversation history** — Anything spoken during the Ability (via `speak()`) becomes part of the conversation history, which the Personality's LLM can see in subsequent turns.
+1. **Save to conversation history** — Anything spoken during the Ability (via `speak()`) becomes part of the conversation history, which the Agent's LLM can see in subsequent turns.
 
-2. **Use file storage** — Write data to persistent files (see [File Storage](#8-file-storage-persistent--temporary)) that other Abilities can read later. The Personality itself won't read these files directly, but your Abilities can share data through them.
+2. **Use file storage** — Write data to persistent files (see [File Storage](#8-file-storage-persistent--temporary)) that other Abilities can read later. The Agent itself won't read these files directly, but your Abilities can share data through them.
 
 3. **Memory feature** — OpenHome has a new memory feature that can persist user context. (Details TBD as this feature evolves.)
 
 **What you CANNOT do (yet):**
-- Directly update or modify the Personality's system prompt from within an Ability
-- Pass structured data (like user location or preferences) to the Personality's LLM context after `resume_normal_flow()`
+- Directly update or modify the Agent's system prompt from within an Ability
+- Pass structured data (like user location or preferences) to the Agent's LLM context after `resume_normal_flow()`
 
 ---
 
@@ -774,8 +798,8 @@ Being explicit about limitations saves developers hours of guessing:
 
 | You might want to... | Status |
 |----------------------|--------|
-| Update the Personality's system prompt from an Ability | ❌ Not possible |
-| Pass structured data back to the Personality after `resume_normal_flow()` | ❌ Not possible — use conversation history or file storage as workarounds |
+| Update the Agent's system prompt from an Ability | ❌ Not possible |
+| Pass structured data back to the Agent after `resume_normal_flow()` | ❌ Not possible — use conversation history or file storage as workarounds |
 | Access other Abilities from within an Ability | ❌ Not supported |
 | Run background tasks after `resume_normal_flow()` | ❌ Tasks are cancelled on session end |
 | Access a database directly (Redis, SQL, etc.) | ❌ Blocked — use File Storage API instead |

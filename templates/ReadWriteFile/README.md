@@ -6,7 +6,7 @@
 **This is a template ability** that demonstrates OpenHome's persistent file storage system. Learn how to save data that persists across sessions — the foundation for building abilities that "remember" information.
 
 ## Why This Matters
-Every OpenHome Personality already has an LLM out of the box that can handle conversational tasks. **The file storage API exists because the LLM can't persist data on its own.** This template shows you how to build abilities that:
+Every OpenHome Agent already has an LLM out of the box that can handle conversational tasks. **The file storage API exists because the LLM can't persist data on its own.** This template shows you how to build abilities that:
 
 - Remember user preferences across sessions
 - Track activity over time (journals, habit trackers, logs)
