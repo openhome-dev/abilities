@@ -116,7 +116,7 @@ class OrderPizzaCapability(MatchingCapability):
     checked_items: list = []
     saved_location: dict = None
 
-    #{{register capability}}
+    # {{register capability}}
 
     def call(self, worker: AgentWorker):
         self.worker = worker
