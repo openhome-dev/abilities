@@ -131,7 +131,7 @@ All logic lives in a single `main.py` file, following the OpenHome Ability patte
 1. Go to your OpenHome Dashboard
 2. Navigate to **Abilities** section
 3. Find **Pet Care Assistant** in the community library
-4. Click **Add to Personality**
+4. Click **Add to Agent**
 
 ### Step 2: Configure Serper API Key (Optional but Recommended)
 The emergency vet finder and food recall news headlines require a Serper API key.
