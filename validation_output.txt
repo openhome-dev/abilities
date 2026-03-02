@@ -1,0 +1,3 @@
+
+📋 Validating: community/crypto-sol-wallet/
+  ✅ All checks passed!
