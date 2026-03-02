@@ -52,16 +52,8 @@ class CryptoSolWalletCapability(MatchingCapability):
     worker: AgentWorker = None
     capability_worker: CapabilityWorker = None
 
-    @classmethod
-    def register_capability(cls) -> "MatchingCapability":
-        with open(
-            os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.json")
-        ) as file:
-            data = json.load(file)
-        return cls(
-            unique_name=data["unique_name"],
-            matching_hotwords=data["matching_hotwords"],
-        )
+    # Do not change following tag of register capability
+    # {{register capability}}
 
     def call(self, worker: AgentWorker):
         self.worker = worker
@@ -488,7 +480,7 @@ class CryptoSolWalletCapability(MatchingCapability):
                         continue
                     to_address = self._resolve_contact(contact_name, prefs)
                     if not to_address:
-                        names = list((prefs.get("contacts") or {}).keys()
+                        names = list((prefs.get("contacts") or {}).keys())
                         await self.capability_worker.speak(
                             f"I don't have a contact named {contact_name}. Your contacts are {', '.join(names) or 'none'}."
                         )
