@@ -1,0 +1,8 @@
+{
+    "unique_name": "quiet_company",
+    "matching_hotwords": [
+        "quiet company",
+        "sleep lecture",
+        "help me sleep"
+    ]
+}
