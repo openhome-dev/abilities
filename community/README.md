@@ -15,7 +15,7 @@ This folder contains Abilities contributed by the OpenHome community.
    cp -r templates/basic-template community/your-ability-name
    ```
 
-2. **Build your Ability** — edit `main.py`, add a `README.md`
+2. **Build your Ability** — edit `main.py`, add a `README.md` and `__init__.py`
 
 3. **Test it** in the [OpenHome Live Editor](https://app.openhome.com/dashboard/abilities)
 
@@ -32,6 +32,7 @@ Each community Ability should follow this structure:
 ```
 community/
 └── your-ability-name/
+    ├── __init__.py
     ├── main.py          # Your Ability code
     └── README.md        # Description, trigger words, setup instructions
 ```
@@ -43,7 +44,7 @@ community/
 Before submitting, make sure your Ability:
 
 - [ ] Extends `MatchingCapability`
-- [ ] Includes `register_capability()` boilerplate
+- [ ] Includes `#{{register_capability}}` boilerplate
 - [ ] Calls `resume_normal_flow()` on every exit path
 - [ ] Has no `print()` statements (use `editor_logging_handler`)
 - [ ] Has no hardcoded API keys
