@@ -16,7 +16,7 @@ from src.agent.capability import MatchingCapability
 from src.main import AgentWorker
 from src.agent.capability_worker import CapabilityWorker
 
-from dm_personalities import DM_REGISTRY, DM_NAMES
+from dm_personalities import DM_REGISTRY
 
 # ─── Configuration ───────────────────────────────────────────────────────────
 _env_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
