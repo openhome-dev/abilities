@@ -79,11 +79,20 @@ CRYPTO_IDS = {
     "matic": "matic-network",
 }
 
-# Stop-words stripped when extracting search keywords from user query
+# Stop-words stripped when extracting search keywords from user query.
+# Intentionally keeps intent-bearing words (crash, moon, rally, dump) --
+# these match real Polymarket questions like "Will Bitcoin crash?"
 _STRIP_WORDS = re.compile(
     r"\b(what|the|market|saying|about|does|polymarket|say|"
     r"are|odds|of|for|on|is|any|predictions?|how|big|movers?|"
-    r"this|week|going|crash|moon|rally|dump)\b"
+    r"this|week|going)\b"
+)
+
+# Explicit price-request patterns -- only these route to CoinGecko
+_PRICE_PATTERNS = re.compile(
+    r"(price of|how much is|trading at|current price|"
+    r"what does \w+ cost|check \w+ price)",
+    re.IGNORECASE,
 )
 
 
@@ -157,15 +166,25 @@ class MarketIntelligenceCapability(MatchingCapability):
     def _handle_query(
         self, user_input: str, history: List[Dict]
     ) -> Optional[str]:
+        """Route query: Polymarket first, CoinGecko as fallback for crypto."""
         category = self._classify_query(user_input)
 
+        # Only go straight to CoinGecko for explicit price requests
         if category == "crypto" and self._wants_price(user_input):
             return self._handle_crypto_price(user_input)
 
+        # Polymarket is the primary data source -- try it first for everything
         markets = self._search_polymarket(user_input)
         if markets:
-            return self._format_market_response(markets, user_input)
+            response = self._format_market_response(markets, user_input)
+            # For crypto queries, append a price summary alongside predictions
+            if category == "crypto":
+                price_info = self._handle_crypto_price(user_input)
+                if price_info:
+                    response = f"{price_info} {response}"
+            return response
 
+        # Fallback: if no Polymarket results for a crypto query, show price
         if category == "crypto":
             return self._handle_crypto_price(user_input)
 
@@ -183,20 +202,17 @@ class MarketIntelligenceCapability(MatchingCapability):
         return "general"
 
     def _wants_price(self, text: str) -> bool:
-        """Return True only for pure crypto price queries, not odds/prediction queries."""
-        # If the user is asking about odds or predictions, route to Polymarket even for crypto
-        odds_words = {
-            "odds", "chance", "probability", "predict", "crash", "moon",
-            "rally", "dump", "will", "going to", "forecast", "bet",
-        }
-        text_lower = text.lower()
-        if any(w in text_lower for w in odds_words):
-            return False
-        price_words = {"price", "trading", "worth", "cost", "how much", "doing"}
-        return any(w in text_lower for w in price_words)
+        """Return True only for explicit price lookups like 'price of BTC'.
+
+        Vague queries ('How's Bitcoin doing?') and prediction queries
+        ('Will Bitcoin crash?') should route to Polymarket first.
+        """
+        return bool(_PRICE_PATTERNS.search(text))
 
     def _extract_keywords(self, query: str) -> List[str]:
         """Extract meaningful keywords from the user query for market scoring."""
+        # Strip punctuation so keywords match cleanly
+        query = re.sub(r"[?!.,;:'\"()]", "", query)
         cleaned = _STRIP_WORDS.sub("", query.lower()).strip()
         # Also capture category keywords present in the original query
         extra = []
@@ -206,7 +222,7 @@ class MarketIntelligenceCapability(MatchingCapability):
                     extra.append(kw)
         words = [w for w in cleaned.split() if len(w) > 2]
         # Deduplicate while preserving order
-        seen: set = set()
+        seen = set()
         result = []
         for w in words + extra:
             if w not in seen:
@@ -216,8 +232,8 @@ class MarketIntelligenceCapability(MatchingCapability):
 
     # Search strategy: fetch the top active markets by recent 24hr volume, then
     # score each by how many query keywords appear in the question text. This is
-    # more reliable than tag_slug (which requires exact taxonomy matches) and
-    # surfaces genuinely relevant markets for open-ended natural-language queries.
+    # more reliable than tag_slug (which Gamma silently ignores) and surfaces
+    # genuinely relevant markets for open-ended natural-language queries.
     def _search_polymarket(self, query: str) -> List[Dict]:
         try:
             keywords = self._extract_keywords(query)
@@ -237,14 +253,16 @@ class MarketIntelligenceCapability(MatchingCapability):
             all_markets = resp.json()
 
             if not keywords:
-                # No specific keywords — return top markets by volume
+                # No specific keywords -- return top markets by volume
                 return all_markets[:10]
 
-            # Score each market by keyword matches in the question field
+            # Score each market by keyword matches in question + description
             scored = []
             for m in all_markets:
                 question_lower = m.get("question", "").lower()
-                score = sum(1 for kw in keywords if kw in question_lower)
+                desc_lower = m.get("description", "").lower()
+                combined = f"{question_lower} {desc_lower}"
+                score = sum(1 for kw in keywords if kw in combined)
                 if score > 0:
                     scored.append((score, m))
 
