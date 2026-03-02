@@ -1,4 +1,3 @@
-import json
 import random
 from src.agent.capability import MatchingCapability
 from src.main import AgentWorker
@@ -70,20 +69,7 @@ class QuietCompanyCapability(MatchingCapability):
     should_stop: bool = False
     # ----------------------------------
 
-    @classmethod
-    def register_capability(cls) -> "MatchingCapability":
-        # os import ONLY allowed inside this method
-        import os
-        
-        with open(
-            os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.json")
-        ) as file:
-            data = json.load(file)
-
-        return cls(
-            unique_name=data["unique_name"],
-            matching_hotwords=data["matching_hotwords"],
-        )
+    #{{register capability}}
 
     def call(self, worker: AgentWorker):
         self.worker = worker
@@ -209,13 +195,13 @@ class QuietCompanyCapability(MatchingCapability):
                     if user_input:
                         self.worker.editor_logging_handler.info(f"[SleepLectures] User said: {user_input}")
                         if any(word in user_input.lower() for word in EXIT_WORDS):
-                            self.worker.editor_logging_handler.info(f"[SleepLectures] Stop detected, exiting")
+                            self.worker.editor_logging_handler.info("[SleepLectures] Stop detected, exiting")
                             await self.speak(random.choice(CLOSING_STATEMENTS))
                             self.capability_worker.resume_normal_flow()
                             return
                         else:
                             # User interrupted but didn't say stop - replay this segment
-                            self.worker.editor_logging_handler.info(f"[SleepLectures] Non-stop interruption, replaying segment")
+                            self.worker.editor_logging_handler.info("[SleepLectures] Non-stop interruption, replaying segment")
                             await self.speak(lecture_text)
 
             # If we completed all segments naturally (not stopped early)
