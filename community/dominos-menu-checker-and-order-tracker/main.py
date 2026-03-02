@@ -911,6 +911,7 @@ class Address(object):
 
 class Order(object):
     """Minimal Order class — only used for pricing items via the price endpoint."""
+
     def __init__(self, store, customer, address, country=COUNTRY_USA):
         self.store = store
         self.menu = _Menu.from_store(store_id=store.id, country=country)
