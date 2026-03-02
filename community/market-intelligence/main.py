@@ -90,7 +90,7 @@ _STRIP_WORDS = re.compile(
 
 # Explicit price-request patterns -- only these route to CoinGecko
 _PRICE_PATTERNS = re.compile(
-    r"(price of|how much is|trading at|current price|"
+    r"(price of|how much is|trading at|current price|\w+ price|"
     r"what does \w+ cost|check \w+ price)",
     re.IGNORECASE,
 )
@@ -179,9 +179,12 @@ class MarketIntelligenceCapability(MatchingCapability):
             response = self._format_market_response(markets, user_input)
             # For crypto queries, append a price summary alongside predictions
             if category == "crypto":
-                price_info = self._handle_crypto_price(user_input)
-                if price_info:
-                    response = f"{price_info} {response}"
+                try:
+                    price_info = self._handle_crypto_price(user_input)
+                    if price_info:
+                        response = f"{price_info} {response}"
+                except Exception:
+                    pass  # Price supplement is best-effort
             return response
 
         # Fallback: if no Polymarket results for a crypto query, show price
@@ -251,6 +254,9 @@ class MarketIntelligenceCapability(MatchingCapability):
             )
             resp.raise_for_status()
             all_markets = resp.json()
+
+            if not isinstance(all_markets, list):
+                return []
 
             if not keywords:
                 # No specific keywords -- return top markets by volume
