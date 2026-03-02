@@ -887,7 +887,6 @@ class ContactMemoryCapability(MatchingCapability):
             #  loaded cntent
             self._log_info(f"Current contacts: {len(self.crm_detail)}")
 
-            
             # Seed context from recent main-flow history for this activation.
             try:
                 prev = self.capability_worker.get_full_message_history() or []
@@ -900,7 +899,7 @@ class ContactMemoryCapability(MatchingCapability):
             while True:
                 # hitory
                 self._log_info(f"Recent session history: {self._session_context_text(limit=10)}")
-                
+
                 user_input = await self.capability_worker.user_response()
                 self._log_info(f"user_input={user_input}")
                 if not user_input:
