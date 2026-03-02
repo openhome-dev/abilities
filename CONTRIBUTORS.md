@@ -38,3 +38,4 @@ Format: - **@username** — ability-name ([ability-name](community/ability-name/
 - **[@MKmuneebkhalid](https://github.com/MKmuneebkhalid)** — discord-connector ([discord-connector](community/discord-connector/))
 - **[@Ju-usc](https://github.com/Ju-usc)** — coding-agent-runner ([coding-agent-runner](community/coding-agent-runner/))
 - **[@code-guru1](https://github.com/code-guru1)** — todoist-voice-tasks ([todoist-voice-tasks](community/todoist-voice-tasks/))
+- **[@saifrehman100](https://github.com/saifrehman100)** — github-voice-manager ([github-voice-manager](community/github-voice-manager/))
