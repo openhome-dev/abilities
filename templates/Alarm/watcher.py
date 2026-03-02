@@ -11,7 +11,7 @@ from src.agent.capability_worker import CapabilityWorker
 class AlarmCapabilityWatcher(MatchingCapability):
     worker: AgentWorker = None
     capability_worker: CapabilityWorker = None
-    watcher_mode: bool = False
+    background_daemon_mode: bool = False
 
     # Do not change following tag of register capability
     #{{register capability}}
@@ -141,7 +141,7 @@ class AlarmCapabilityWatcher(MatchingCapability):
                         # Mark as triggered to avoid repeat firing
                         await self._mark_alarm_triggered(alarms, alarm_id)
 
-                await self.worker.session_tasks.sleep(1.0)
+                await self.worker.session_tasks.sleep(5.0)
 
             except Exception as e:
                 self.worker.editor_logging_handler.error(f"{time()}: watcher loop error: {e}")
@@ -150,10 +150,10 @@ class AlarmCapabilityWatcher(MatchingCapability):
         # Resume the normal workflow (unreachable, but keep structure)
         self.capability_worker.resume_normal_flow()
 
-    def call(self, worker: AgentWorker, watcher_mode: bool):
+    def call(self, worker: AgentWorker, background_daemon_mode: bool):
         # Initialize the worker and capability worker
         self.worker = worker
-        self.watcher_mode = watcher_mode
+        self.background_daemon_mode = background_daemon_mode
         self.capability_worker = CapabilityWorker(self)
 
         self.worker.session_tasks.create(self.first_function())
