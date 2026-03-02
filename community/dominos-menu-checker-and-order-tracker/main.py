@@ -1,6 +1,4 @@
 import json
-import os
-
 import asyncio
 import requests
 from src.agent.capability import MatchingCapability
@@ -118,16 +116,7 @@ class OrderPizzaCapability(MatchingCapability):
     checked_items: list = []
     saved_location: dict = None
 
-    @classmethod
-    def register_capability(cls) -> "MatchingCapability":
-        with open(
-            os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.json")
-        ) as file:
-            data = json.load(file)
-        return cls(
-            unique_name=data["unique_name"],
-            matching_hotwords=data["matching_hotwords"],
-        )
+    #{{register capability}}
 
     def call(self, worker: AgentWorker):
         self.worker = worker
