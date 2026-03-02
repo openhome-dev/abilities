@@ -13,7 +13,7 @@ from src.agent.capability_worker import CapabilityWorker
 # Supports continuous conversation — user can keep searching until done.
 # =============================================================================
 
-FSQ_API_KEY = "" # Add your own API key here
+FSQ_API_KEY = ""  # Add your own API key here
 FSQ_SEARCH_URL = "https://places-api.foursquare.com/places/search"
 FSQ_HEADERS = {
     "Authorization": f"Bearer {FSQ_API_KEY}",
