@@ -63,23 +63,23 @@ class QuietCompanyCapability(MatchingCapability):
     # --- REQUIRED FIELD DEFINITIONS ---
     worker: AgentWorker = None
     capability_worker: CapabilityWorker = None
-    
+
     current_topic: str = None
     segment_count: int = 0
     should_stop: bool = False
     # ----------------------------------
 
-    #{{register capability}}
+    # {{register capability}}
 
     def call(self, worker: AgentWorker):
         self.worker = worker
         self.capability_worker = CapabilityWorker(self.worker)
-        
+
         # Reset state
         self.current_topic = None
         self.segment_count = 0
         self.should_stop = False
-        
+
         self.worker.session_tasks.create(self.run_quiet_lecture())
 
     async def speak(self, text: str):
