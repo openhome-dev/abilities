@@ -9,18 +9,16 @@ Optional Codex API integration for campaign context (NPCs, scenes, history).
 """
 
 import json
-import os
 import requests
-
 from src.agent.capability import MatchingCapability
 from src.main import AgentWorker
 from src.agent.capability_worker import CapabilityWorker
 
-from dm_personalities import DM_REGISTRY
+from .dm_personalities import DM_REGISTRY
 
 # ─── Configuration ───────────────────────────────────────────────────────────
 # Set CODEX_URL env var to enable optional Narrator's Codex integration
-CODEX_URL = os.environ.get("CODEX_URL", "")
+CODEX_URL = ""
 
 EXIT_WORDS = ["done", "stop", "end session", "goodbye", "bye", "quit", "exit", "that's all"]
 
@@ -150,11 +148,9 @@ class DungeonMasterAbility(MatchingCapability):
 
             # DM opening narration
             opening = self.capability_worker.text_to_text_response(
-                prompt=(
-                    "The player has just sat down at your table. Give a brief, "
-                    "atmospheric opening — set the scene and draw them into your world. "
-                    "Stay fully in character. 2-3 paragraphs maximum."
-                ),
+                "The player has just sat down at your table. Give a brief, atmospheric opening. "
+                "Set the scene and draw them into your world. "
+                "Stay fully in character. 2-3 paragraphs maximum.",
                 history=[],
                 system_prompt=dm_prompt,
             )
@@ -177,10 +173,8 @@ class DungeonMasterAbility(MatchingCapability):
                 if any(word in player_input.lower() for word in EXIT_WORDS):
                     # DM gives closing line in character
                     farewell = self.capability_worker.text_to_text_response(
-                        prompt=(
-                            "The player is leaving the table. Give a brief farewell "
-                            "in character — 1-2 sentences maximum. Stay in character."
-                        ),
+                        "The player is leaving the table. Give a brief farewell in character, "
+                        "1-2 sentences maximum. Stay in character.",
                         history=history,
                         system_prompt=dm_prompt,
                     )
@@ -291,7 +285,7 @@ class DungeonMasterAbility(MatchingCapability):
 
         try:
             raw = self.capability_worker.text_to_text_response(
-                prompt=prompt,
+                prompt,
                 history=[],
                 system_prompt=system,
             )
