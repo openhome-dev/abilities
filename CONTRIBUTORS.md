@@ -22,7 +22,7 @@ Format: - **@username** — ability-name ([ability-name](community/ability-name/
 - **[@megz2020](https://github.com/megz2020)** — marketplus ([marketplus](community/marketplus/)), real-time-forex-metal-data ([real-time-forex-metal-data](community/real-time-forex-metal-data/)), pet-care-assistant ([pet-care-assistant](community/pet-care-assistant/))
 - **[@yonaseth12](https://github.com/yonaseth12)** — live-flight-status ([live-flight-status](community/live-flight-status/)), noise-machine ([noise-machine](community/noise-machine/))
 - **[@alimujtaba478](https://github.com/alimujtaba478)** — x-news-feed ([x-news-feed](community/x-news-feed/))
-- **[@Akio9090-dev](https://github.com/Akio9090-dev)** — WeatherPro ([WeatherPro](community/WeatherPro/))
+- **[@Akio9090-dev](https://github.com/Akio9090-dev)** — WeatherPro ([WeatherPro](community/WeatherPro/)), Hubspot ([Hubspot](community/Hubspot/))
 - **[@RyanBhandal](https://github.com/RyanBhandal)** — Outlook ([Outlook](community/Outlook/))
 - **[@fiction17](https://github.com/fiction17)** — flight-price-checker ([flight-price-checker](community/flight-price-checker/)), voice-memory-capture ([voice-memory-capture](community/voice-memory-capture/)), add-flight-information-email ([add-flight-information-email](community/add-flight-information-email/))
 - **[@pipinstallshan](https://github.com/pipinstallshan)** — crypto-insight ([crypto-insight](community/crypto-insight/)), vibe-trivia ([vibe-trivia](community/vibe-trivia/))
