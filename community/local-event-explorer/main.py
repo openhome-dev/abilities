@@ -16,6 +16,7 @@ _IDLE_WARN = 2
 _IDLE_MAX = 3
 _WORD_LIMIT_SHORT = 5
 
+
 class AppConfig:
     """Hardcoded API keys — override these for local development only."""
 
