@@ -2,6 +2,7 @@ import random
 from src.agent.capability import MatchingCapability
 from src.main import AgentWorker
 from src.agent.capability_worker import CapabilityWorker
+import json
 
 
 # =============================================================================
