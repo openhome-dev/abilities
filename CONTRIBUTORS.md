@@ -20,7 +20,7 @@ Format: - **@username** — ability-name ([ability-name](community/ability-name/
 - **[@ArturKozhushnyi](https://github.com/ArturKozhushnyi)** — coin-flipper ([coin-flipper](community/coin-flipper/)), Bedtime-Wind-Down ([Bedtime-Wind-Down](community/Bedtime-Wind-Down/)), Twilio-SMS ([Twilio-SMS](community/Twilio-SMS/))
 - **[@ammyyou112](https://github.com/ammyyou112)** — dad-joke-teller ([dad-joke-teller](community/dad-joke-teller/)), youtube-search-play ([youtube-search-play](community/youtube-search-play/)), google-daily-brief ([google-daily-brief](community/google-daily-brief/))
 - **[@megz2020](https://github.com/megz2020)** — marketplus ([marketplus](community/marketplus/)), real-time-forex-metal-data ([real-time-forex-metal-data](community/real-time-forex-metal-data/)), pet-care-assistant ([pet-care-assistant](community/pet-care-assistant/))
-- **[@yonaseth12](https://github.com/yonaseth12)** — live-flight-status ([live-flight-status](community/live-flight-status/)), noise-machine ([noise-machine](community/noise-machine/))
+- **[@yonaseth12](https://github.com/yonaseth12)** — live-flight-status ([live-flight-status](community/live-flight-status/)), noise-machine ([noise-machine](community/noise-machine/)), dev-standup-assistant ([dev-standup-assistant](community/dev-standup-assistant/))
 - **[@alimujtaba478](https://github.com/alimujtaba478)** — x-news-feed ([x-news-feed](community/x-news-feed/))
 - **[@Akio9090-dev](https://github.com/Akio9090-dev)** — WeatherPro ([WeatherPro](community/WeatherPro/)), Hubspot ([Hubspot](community/Hubspot/))
 - **[@RyanBhandal](https://github.com/RyanBhandal)** — Outlook ([Outlook](community/Outlook/))
