@@ -15,20 +15,11 @@ from src.main import AgentWorker
 from src.agent.capability_worker import CapabilityWorker
 
 # ─── Configuration ───────────────────────────────────────────────────────────
-# Load from .env file alongside main.py, or set environment variables:
+# Set these environment variables before running:
 #   HA_TOKEN - Long-Lived Access Token (generate at http://YOUR_HA_IP:8123/profile)
-#   HA_URL   - Home Assistant base URL
-_env_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
-if os.path.exists(_env_path):
-    with open(_env_path) as _f:
-        for _line in _f:
-            _line = _line.strip()
-            if _line and not _line.startswith("#") and "=" in _line:
-                _key, _val = _line.split("=", 1)
-                os.environ.setdefault(_key.strip(), _val.strip())
-
+#   HA_URL   - Home Assistant base URL (e.g. http://192.168.1.100:8123)
 HA_TOKEN = os.environ.get("HA_TOKEN", "YOUR_HOME_ASSISTANT_TOKEN_HERE")
-HA_URL = os.environ.get("HA_URL", "http://192.168.68.60:8123")
+HA_URL = os.environ.get("HA_URL", "http://YOUR_HA_IP:8123")
 
 ACTIONABLE_DOMAINS = [
     "light", "switch", "cover", "media_player",
@@ -64,16 +55,7 @@ class HomeAssistantAbility(MatchingCapability):
     worker: AgentWorker = None
     capability_worker: CapabilityWorker = None
 
-    @classmethod
-    def register_capability(cls) -> "MatchingCapability":
-        with open(
-            os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.json")
-        ) as file:
-            data = json.load(file)
-        return cls(
-            unique_name=data["unique_name"],
-            matching_hotwords=data["matching_hotwords"],
-        )
+    # {{register_capability}}
 
     def call(self, worker: AgentWorker):
         self.worker = worker
@@ -161,7 +143,7 @@ class HomeAssistantAbility(MatchingCapability):
                     await self.capability_worker.speak(spoken)
                 else:
                     await self.capability_worker.speak(
-                        f"Sorry, I couldn't complete that action. Please check Home Assistant."
+                        "Sorry, I couldn't complete that action. Please check Home Assistant."
                     )
 
         except Exception as e:
@@ -250,9 +232,9 @@ class HomeAssistantAbility(MatchingCapability):
             json_str = raw.strip()
             if json_str.startswith("```"):
                 # Strip markdown code fences
-                lines = json_str.split("\n")
-                lines = [l for l in lines if not l.strip().startswith("```")]
-                json_str = "\n".join(lines).strip()
+                parts = json_str.split("\n")
+                parts = [p for p in parts if not p.strip().startswith("```")]
+                json_str = "\n".join(parts).strip()
 
             intent = json.loads(json_str)
             return intent
