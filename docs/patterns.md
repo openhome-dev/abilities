@@ -146,7 +146,7 @@ async def run(self):
 
 ## Pattern 7: Custom Voice
 
-Use a specific ElevenLabs voice instead of the Personality's default.
+Use a specific ElevenLabs voice instead of the Agent's default.
 
 ```python
 VOICE_ID = "pNInz6obpgDQGcFmaJgB"  # Deep American male
