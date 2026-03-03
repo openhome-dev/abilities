@@ -73,11 +73,11 @@ Aliases are matched phonetically by the LLM, so STT errors like "Von" for "Vaugh
 
 | Intent | Example phrases |
 |---|---|
-| Schedule | "Schedule a meeting with Melody tomorrow at 3 PM" |
+| Schedule | "Schedule a meeting with called 'sales meeting' for tomorrow at 3 PM" |
 | Reschedule | "Move the standup to 4 PM", "Reschedule test meeting to Friday" |
-| Delete | "Cancel the meeting tomorrow", "Delete the standup" |
+| Delete | "Cancel the sales meeting tomorrow", "Delete the standup" |
 | List | "What's on my calendar tomorrow", "What do I have at 2 PM" |
-| Invite | "Add Vaughn to the standup", "Invite Chris to that meeting" |
+| Invite | "Add Vaughn to the standup meeting", "Invite Chris to that meeting" |
 | Remove attendee | "Take Melody off the invite", "Remove Vaughn from the meeting" |
 | Query attendees | "Who's on the standup?", "Who's attending the meeting tomorrow?" |
 
