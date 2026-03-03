@@ -73,7 +73,7 @@ Aliases are matched phonetically by the LLM, so STT errors like "Von" for "Vaugh
 
 | Intent | Example phrases |
 |---|---|
-| Schedule | "Schedule a meeting with called 'sales meeting' for tomorrow at 3 PM" |
+| Schedule | "Schedule a meeting with 'sales meeting' for tomorrow at 3 PM" |
 | Reschedule | "Move the standup to 4 PM", "Reschedule test meeting to Friday" |
 | Delete | "Cancel the sales meeting tomorrow", "Delete the standup" |
 | List | "What's on my calendar tomorrow", "What do I have at 2 PM" |
