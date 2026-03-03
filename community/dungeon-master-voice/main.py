@@ -19,15 +19,7 @@ from src.agent.capability_worker import CapabilityWorker
 from dm_personalities import DM_REGISTRY
 
 # ─── Configuration ───────────────────────────────────────────────────────────
-_env_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
-if os.path.exists(_env_path):
-    with open(_env_path) as _f:
-        for _line in _f:
-            _line = _line.strip()
-            if _line and not _line.startswith("#") and "=" in _line:
-                _key, _val = _line.split("=", 1)
-                os.environ.setdefault(_key.strip(), _val.strip())
-
+# Set CODEX_URL env var to enable optional Narrator's Codex integration
 CODEX_URL = os.environ.get("CODEX_URL", "")
 
 EXIT_WORDS = ["done", "stop", "end session", "goodbye", "bye", "quit", "exit", "that's all"]
@@ -119,16 +111,7 @@ class DungeonMasterAbility(MatchingCapability):
     worker: AgentWorker = None
     capability_worker: CapabilityWorker = None
 
-    @classmethod
-    def register_capability(cls) -> "MatchingCapability":
-        with open(
-            os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.json")
-        ) as file:
-            data = json.load(file)
-        return cls(
-            unique_name=data["unique_name"],
-            matching_hotwords=data["matching_hotwords"],
-        )
+    # {{register_capability}}
 
     def call(self, worker: AgentWorker):
         self.worker = worker
@@ -320,9 +303,9 @@ class DungeonMasterAbility(MatchingCapability):
             # Parse JSON
             json_str = raw.strip()
             if json_str.startswith("```"):
-                lines = json_str.split("\n")
-                lines = [l for l in lines if not l.strip().startswith("```")]
-                json_str = "\n".join(lines).strip()
+                parts = json_str.split("\n")
+                parts = [p for p in parts if not p.strip().startswith("```")]
+                json_str = "\n".join(parts).strip()
 
             result = json.loads(json_str)
             dm_id = result.get("dm_id", "")
