@@ -1,30 +1,35 @@
-import json
-import re
+"""Local Event Explorer ability for OpenHome."""
+
 import asyncio
 import datetime
+import json
+import re
+from typing import Optional
+
 import httpx
 
-
-from typing import Dict, List, Optional, Tuple
 from src.agent.capability import MatchingCapability
 from src.agent.capability_worker import CapabilityWorker
 from src.main import AgentWorker
 
-# --- App Config ---
+_IDLE_WARN = 2
+_IDLE_MAX = 3
+_WORD_LIMIT_SHORT = 5
+_ORDINAL_LIMIT = 5
+
+
 class AppConfig:
-    # Hardcode your API keys here for easier setup.
-    # If these are empty, the ability will fall back to checking the preferences file.
-    # WARNING: DO NOT COMMIT REAL API KEYS TO GITHUB.
+    """Hardcoded API keys — override these for local development only."""
+
     TICKETMASTER_API_KEY = ""
     SEATGEEK_CLIENT_ID = ""
     SERPER_API_KEY = ""
-    # Google Calendar OAuth
     GOOGLE_CLIENT_ID = ""
     GOOGLE_CLIENT_SECRET = ""
     GOOGLE_ACCESS_TOKEN = ""
     GOOGLE_REFRESH_TOKEN = ""
 
-# --- Preferences & Constants ---
+
 PREFS_FILE = "event_explorer_prefs.json"
 DEFAULT_PREFS = {
     "home_city": None,
@@ -39,21 +44,18 @@ SERPER_URL = "https://google.serper.dev/search"
 CALENDAR_URL = "https://www.googleapis.com/calendar/v3/calendars/primary/events"
 TOKEN_REFRESH_URL = "https://oauth2.googleapis.com/token"
 
-# Words that trigger an immediate exit before hitting the LLM
 EXIT_WORDS = {
     "exit", "stop", "quit", "cancel", "bye", "goodbye",
     "done", "leave", "nothing", "close", "end",
     "thanks", "thank", "nope",
 }
 
-# Phrases that indicate a polite exit (checked as substrings, not split words)
 EXIT_PHRASES = {
     "no thanks", "no thank you", "that's all", "that's it",
     "never mind", "nevermind", "not now", "i'm good", "im good",
-    "no no", "no. no", "nope",
+    "nope",
 }
 
-# Generic/invalid city values that come from STT artifacts
 INVALID_CITY_TOKENS = {
     "nearby", "here", "close", "around", "local", "near",
     "location", "area", "city", "place", "somewhere",
@@ -61,7 +63,6 @@ INVALID_CITY_TOKENS = {
 
 VALID_MODES = {"search", "expand", "calendar", "city", "clarify", "exit"}
 
-# Common event categories — any of these words alone = search intent
 EVENT_KEYWORDS = {
     "jazz", "concert", "comedy", "festival", "sports", "music", "theatre", "theater",
     "opera", "ballet", "dance", "show", "gig", "band", "rock", "pop", "classical",
@@ -70,7 +71,6 @@ EVENT_KEYWORDS = {
     "event", "events", "tonight", "weekend", "tomorrow",
 }
 
-# --- Prompts ---
 INTENT_CLASSIFIER_PROMPT = """You are an intent classifier for a voice-activated local event explorer.
 The user wants to find concerts, sports, comedy, or festivals.
 
@@ -78,17 +78,20 @@ Given the user's input, classify their intent into exactly ONE mode.
 Return ONLY valid JSON on one line, with no code blocks or markdown fences.
 
 Modes:
-- "search": Look up events. Default to this mode whenever the user mentions ANY event type, category, or genre (e.g. "jazz", "comedy", "concert", "festival", "sports", "music"). Also use for phrases like "I'm looking for X", "find X", "any X events", "X event", "yes" (as confirmation to search). Even a single word like "Jazz" or "Comedy" is a search request.
+- "search": Look up events. Default to this mode whenever the user mentions ANY event type, category, or genre (e.g. "jazz", "comedy", "concert", "festival", "sports", "music"). Also use for phrases like "I'm looking for X", "find X", "any X events", "X event". Even a single word like "Jazz" or "Comedy" is a search request.
 - "expand": Get details about a SPECIFIC event from a list already shown to the user. Only use if the user says "the first one", "second one", "tell me more about [specific event name already listed]". Do NOT use for general discovery.
-- "calendar": Add an event to calendar. Phrases like "add that", "save it", "put it in my calendar".
+- "calendar": Add an event to calendar. Phrases like "add that", "save it", "put it in my calendar". Also use when the assistant just asked about adding to calendar and the user says "yes", "sure", "ok", "please", "yeah".
 - "city": Set default home city. Phrases like "I live in X", "my city is X", "change city to X".
 - "clarify": ONLY use this if the input is truly gibberish, completely off-topic (not about events), or has zero useful content. Do NOT use clarify if any event type or location is mentioned.
 - "exit": Stop/quit/cancel.
 
 RULE: When in doubt between "search" and "clarify", always choose "search".
+RULE: If the assistant's last question was about adding to calendar and the user says "yes"/"sure"/"ok"/"please"/"yeah", classify as "calendar".
+RULE: If the assistant's last question was about searching again and the user says "yes"/"sure"/"ok", classify as "search".
 
 User Input: "{user_input}"
 Has events been shown to user already: {has_events}
+Assistant's last question to the user: "{last_prompt}"
 
 Format expected:
 {{"mode": "search|expand|calendar|city|clarify|exit", "location": "city name or null", "category": "event type keyword or null", "time": "raw time phrase or null", "event_reference": "first|second|keyword or null"}}
@@ -124,8 +127,6 @@ Return ONLY valid JSON on one line:
 """
 
 
-# --- Helpers (module-level, no class needed) ---
-
 def _strip_llm_fences(text: str) -> str:
     """Remove markdown code fences from LLM output."""
     text = text.strip()
@@ -141,7 +142,21 @@ def _resolve_key(config_key: str, prefs_key: Optional[str]) -> str:
 
 def _is_invalid_city(city: str) -> bool:
     """Return True if the city string is a known STT artifact or generic token."""
-    return city.lower().strip() in INVALID_CITY_TOKENS
+    return _is_garbled_city(city) or city.lower().strip() in INVALID_CITY_TOKENS
+
+
+def _is_garbled_city(city: str) -> bool:
+    """Return True if the city name looks like an STT transcription artifact."""
+    if not city:
+        return False
+    if len(city.split()) > 4:
+        return True
+    if len(city) > 40:
+        return True
+    non_ascii = sum(1 for c in city if ord(c) > 127)
+    if non_ascii > 0 and (non_ascii / len(city)) > 0.3:
+        return True
+    return False
 
 
 def _url_encode(text: str) -> str:
@@ -162,7 +177,7 @@ def _url_encode(text: str) -> str:
 
 
 def _normalize_llm_str(val) -> Optional[str]:
-    """Coerce LLM output fields to None when the model returns the string 'null'/'none'/empty."""
+    """Coerce LLM output fields to None when the model returns 'null'/'none'/empty."""
     if val is None:
         return None
     s = str(val).strip().lower()
@@ -180,25 +195,22 @@ def _format_time(time_str: str) -> str:
         return time_str
 
 
-# --- Main Class ---
 class LocalEventExplorerAbility(MatchingCapability):
+    """Voice-activated local event explorer."""
+
     # {{register capability}}
 
     worker: AgentWorker = None
     capability_worker: CapabilityWorker = None
-    current_events: List[Dict] = None
+    current_events: list[dict] = None
     trigger_text: Optional[str] = None
 
     def call(self, worker: AgentWorker):
         self.worker = worker
         self.capability_worker = CapabilityWorker(self.worker)
         self.current_events = []
-
-        # Extract trigger context before the STT queue fills with new speech.
-        # This captures what the user said to launch the ability ("Nearby", "events", etc.)
-        # so we can consume it as the first intent rather than letting it bleed into
-        # subsequent transcriptions.
         self.trigger_text = None
+
         try:
             if worker.transcription and worker.transcription.strip():
                 self.trigger_text = worker.transcription.strip()
@@ -219,7 +231,6 @@ class LocalEventExplorerAbility(MatchingCapability):
 
         self.worker.session_tasks.create(self.run())
 
-    # --- Logging ---
     def _log(self, msg: str):
         try:
             self.worker.editor_logging_handler.info(f"[EventExplorer] {msg}")
@@ -232,7 +243,6 @@ class LocalEventExplorerAbility(MatchingCapability):
         except Exception:
             pass
 
-    # --- Core Loop ---
     async def run(self):
         try:
             self._log("Ability started")
@@ -246,8 +256,6 @@ class LocalEventExplorerAbility(MatchingCapability):
             current_prompt = "What kind of events are you looking for?"
             idle_count = 0
 
-            # Use trigger text as the very first input if it looks meaningful
-            # (not just the wake word / ability name)
             pending_input: Optional[str] = None
             if self.trigger_text and len(self.trigger_text.split()) > 1:
                 pending_input = self.trigger_text
@@ -256,15 +264,17 @@ class LocalEventExplorerAbility(MatchingCapability):
                 if pending_input is not None:
                     user_input = pending_input
                     pending_input = None
+                    spoken_prompt = ""
                 else:
+                    spoken_prompt = current_prompt
                     user_input = await self.capability_worker.run_io_loop(current_prompt)
 
                 if not user_input or not user_input.strip():
                     idle_count += 1
-                    if idle_count >= 3:
+                    if idle_count >= _IDLE_MAX:
                         await self.capability_worker.speak("No response detected. Goodbye!")
                         break
-                    if idle_count == 2:
+                    if idle_count == _IDLE_WARN:
                         current_prompt = "Still here if you need me. What would you like to search for?"
                     else:
                         current_prompt = "Are you still there? You can ask for concerts tonight, or say exit."
@@ -272,31 +282,24 @@ class LocalEventExplorerAbility(MatchingCapability):
 
                 idle_count = 0
 
-                # Keyword-first exit check — never let LLM misclassify a clear exit
                 _lower = user_input.lower()
-                # Strip punctuation from each word so "thanks." matches "thanks"
-                _clean_words = set(w.strip(".,!?;:'\"") for w in _lower.split())
-                _is_exit = (
-                    bool(_clean_words & EXIT_WORDS)
-                    or any(p in _lower for p in EXIT_PHRASES)
+                _clean_words = {w.strip(".,!?;:'\"") for w in _lower.split()}
+                _is_short = len(_lower.split()) <= _WORD_LIMIT_SHORT
+                _is_exit = bool(_clean_words & EXIT_WORDS) or (
+                    _is_short and any(p in _lower for p in EXIT_PHRASES)
                 )
                 if _is_exit:
                     await self.capability_worker.speak("Enjoy your events. Goodbye!")
                     break
 
-                # Detect nearby-intent before LLM classification
                 _nearby_words = {"nearby", "near me", "around me", "around here", "close by", "my location"}
                 _user_wants_nearby = any(p in _lower for p in _nearby_words)
 
-                # Keyword-first search check — if any event category word appears,
-                # pre-build a search intent without waiting for the LLM
                 _matched_kw = _clean_words & EVENT_KEYWORDS
                 if _matched_kw and not self.current_events:
-                    # Extract the matched keyword as category and let LLM fill in details
                     _kw = next(iter(_matched_kw))
-                    intent = await self._classify_intent(user_input)
+                    intent = await self._classify_intent(user_input, spoken_prompt)
                     if intent.get("mode") == "clarify":
-                        # LLM still returned clarify despite an event keyword — force search
                         intent = {
                             "mode": "search",
                             "location": intent.get("location"),
@@ -305,14 +308,11 @@ class LocalEventExplorerAbility(MatchingCapability):
                             "event_reference": None,
                         }
                 else:
-                    intent = await self._classify_intent(user_input)
+                    intent = await self._classify_intent(user_input, spoken_prompt)
 
-                # If LLM returned clarify but extracted a location, treat as search
-                # e.g. "how about Cairo?" or "what about Paris?"
                 if intent.get("mode") == "clarify" and intent.get("location"):
                     intent["mode"] = "search"
 
-                # Tag nearby intent so _handle_search can trigger IP geo
                 if _user_wants_nearby:
                     intent["_nearby_hint"] = True
 
@@ -326,14 +326,14 @@ class LocalEventExplorerAbility(MatchingCapability):
                 elif mode == "search":
                     found = await self._handle_search(intent, prefs)
                     if found:
-                        current_prompt = "Would you like more details on any of these, or search for something else?"
+                        current_prompt = "Want details on one, or search again?"
                     else:
                         current_prompt = "What else can I search for?"
 
                 elif mode == "expand":
                     expanded = await self._handle_expand(intent, prefs)
                     if expanded and self.current_events:
-                        current_prompt = "Would you like me to add it to your calendar? Or search for something else?"
+                        current_prompt = "Add it to your calendar, or search for something else?"
                     else:
                         current_prompt = await self._generate_followup(
                             user_input, "Expand could not find a matching event"
@@ -369,14 +369,12 @@ class LocalEventExplorerAbility(MatchingCapability):
             if self.capability_worker:
                 self.capability_worker.resume_normal_flow()
 
-    # --- Preferences & Geolocation ---
     async def _load_prefs(self) -> dict:
         exists = await self.capability_worker.check_if_file_exists(PREFS_FILE, False)
         if exists:
             try:
                 raw = await self.capability_worker.read_file(PREFS_FILE, False)
                 loaded = json.loads(raw)
-                # Clear any previously saved invalid city (e.g. STT artifact "Nearby")
                 saved_city = loaded.get("home_city") or ""
                 if saved_city and _is_invalid_city(saved_city):
                     self._log(f"Clearing invalid saved city: '{saved_city}'")
@@ -393,25 +391,24 @@ class LocalEventExplorerAbility(MatchingCapability):
         await self.capability_worker.write_file(PREFS_FILE, json.dumps(prefs), False)
 
     async def _handle_first_run(self, prefs: dict):
-        # Try IP geolocation first
         ip_city = await asyncio.to_thread(self._fetch_ip_city)
 
         if ip_city:
-            await self.capability_worker.speak(
+            _ip_prompt = (
                 f"It looks like you're in {ip_city}. "
                 "Should I search for events near you, or would you prefer a different city?"
             )
+            await self.capability_worker.speak(_ip_prompt)
             ans = await self.capability_worker.user_response()
             if ans:
                 ans_lower = ans.lower()
-                # Accept "yes", "nearby", "here", "that", "sure", etc.
                 if any(w in ans_lower for w in ("yes", "sure", "ok", "nearby", "here", "that", "yep", "yeah")):
-                    prefs["home_city"] = ip_city
-                    await self._save_prefs(prefs)
+                    if not _is_invalid_city(ip_city):
+                        prefs["home_city"] = ip_city
+                        await self._save_prefs(prefs)
                     await self.capability_worker.speak(f"Got it, I'll search near {ip_city}.")
                     return
-                # Otherwise treat the answer as a city name
-                intent = await self._classify_intent(ans)
+                intent = await self._classify_intent(ans, _ip_prompt)
                 loc = intent.get("location") or ans.strip()
                 if loc and not _is_invalid_city(loc):
                     prefs["home_city"] = loc
@@ -419,13 +416,11 @@ class LocalEventExplorerAbility(MatchingCapability):
                     await self.capability_worker.speak(f"Got it, I've saved {loc} as your city.")
                     return
 
-        # IP failed — ask directly
-        await self.capability_worker.speak(
-            "What city would you like to search for events in?"
-        )
+        _city_prompt = "What city would you like to search for events in?"
+        await self.capability_worker.speak(_city_prompt)
         resp = await self.capability_worker.user_response()
         if resp:
-            intent = await self._classify_intent(resp)
+            intent = await self._classify_intent(resp, _city_prompt)
             loc = intent.get("location") or resp.strip()
             if loc and not _is_invalid_city(loc):
                 prefs["home_city"] = loc
@@ -449,10 +444,9 @@ class LocalEventExplorerAbility(MatchingCapability):
                     if not any(c in isp for c in cloud_indicators):
                         return data.get("city")
         except Exception as e:
-            self._err(f"IP Geolocation failed: {e}")
+            self._err(f"IP geolocation failed: {e}")
         return None
 
-    # --- Google Token Refresh ---
     def _refresh_google_token(self) -> bool:
         try:
             with httpx.Client(timeout=10) as client:
@@ -475,10 +469,13 @@ class LocalEventExplorerAbility(MatchingCapability):
             self._err(f"Token refresh error: {e}")
             return False
 
-    # --- LLM: Intent Classification ---
-    async def _classify_intent(self, user_input: str) -> dict:
+    async def _classify_intent(self, user_input: str, last_prompt: str = "") -> dict:
         has_events = "yes" if self.current_events else "no"
-        prompt = INTENT_CLASSIFIER_PROMPT.format(user_input=user_input, has_events=has_events)
+        prompt = INTENT_CLASSIFIER_PROMPT.format(
+            user_input=user_input,
+            has_events=has_events,
+            last_prompt=last_prompt,
+        )
 
         for attempt in range(2):
             try:
@@ -489,7 +486,6 @@ class LocalEventExplorerAbility(MatchingCapability):
                 result = json.loads(clean)
                 mode = result.get("mode", "")
                 if mode in VALID_MODES:
-                    # Normalize string "null"/"none" values the LLM sometimes returns
                     result["location"] = _normalize_llm_str(result.get("location"))
                     result["category"] = _normalize_llm_str(result.get("category"))
                     result["time"] = _normalize_llm_str(result.get("time"))
@@ -499,9 +495,8 @@ class LocalEventExplorerAbility(MatchingCapability):
             except (json.JSONDecodeError, Exception) as e:
                 self._err(f"Intent parsing failed on attempt {attempt + 1}: {e}")
 
-        # Final fallback — keyword scan
         lower = user_input.lower()
-        lower_words = set(w.strip(".,!?;:'\"") for w in lower.split())
+        lower_words = {w.strip(".,!?;:'\"") for w in lower.split()}
         if lower_words & EXIT_WORDS:
             return {"mode": "exit"}
         if any(w in lower for w in ("add", "calendar", "save")):
@@ -510,7 +505,6 @@ class LocalEventExplorerAbility(MatchingCapability):
             return {"mode": "expand", "event_reference": None}
         return {"mode": "clarify", "location": None, "category": None, "time": None, "event_reference": None}
 
-    # --- LLM: Followup Generation (failure paths only) ---
     async def _generate_followup(self, user_input: str, outcome: str) -> str:
         if self.current_events:
             names = ", ".join(e["name"] for e in self.current_events[:3])
@@ -531,9 +525,8 @@ class LocalEventExplorerAbility(MatchingCapability):
         except Exception:
             return "What would you like to search for?"
 
-    # --- LLM: Date Parsing ---
-    async def _parse_time_context(self, time_string: Optional[str]) -> Tuple[Optional[str], Optional[str]]:
-        """Delegates natural language time phrases to the LLM for ISO-8601 conversion."""
+    async def _parse_time_context(self, time_string: Optional[str]) -> tuple[Optional[str], Optional[str]]:
+        """Convert a natural language time phrase to ISO-8601 start/end datetimes."""
         if not time_string:
             return None, None
 
@@ -552,18 +545,13 @@ class LocalEventExplorerAbility(MatchingCapability):
             self._err(f"Date parsing failed for '{time_string}': {e}")
             return None, None
 
-    # --- Event Reference Resolution ---
-    def _resolve_event_ref(self, ref: str) -> Optional[Dict]:
-        """
-        Resolve a spoken reference like 'first', 'second', or a keyword
-        to an event in current_events. Returns the event dict or None.
-        """
+    def _resolve_event_ref(self, ref: str) -> Optional[dict]:
+        """Resolve a spoken ordinal or keyword to an event in current_events."""
         if not self.current_events:
             return None
 
         ref = ref.lower().strip()
 
-        # Ordinal word → index
         word_to_idx = {"first": 0, "second": 1, "third": 2, "fourth": 3, "fifth": 4}
         for word, idx in word_to_idx.items():
             if word in ref:
@@ -571,18 +559,20 @@ class LocalEventExplorerAbility(MatchingCapability):
                     return self.current_events[idx]
                 return None
 
-        # Keyword substring match against event names
         for ev in self.current_events:
             if ref and ref in ev["name"].lower():
                 return ev
 
-        # Default to first
-        return self.current_events[0]
+        return None
 
-    # --- API Integrations (all async via httpx) ---
     async def _fetch_ticketmaster(
-        self, city: str, keyword: str, start_dt: Optional[str], end_dt: Optional[str], api_key: str
-    ) -> List[Dict]:
+        self,
+        city: str,
+        keyword: str,
+        start_dt: Optional[str],
+        end_dt: Optional[str],
+        api_key: str,
+    ) -> list[dict]:
         key = _resolve_key(AppConfig.TICKETMASTER_API_KEY, api_key)
         if not key:
             return []
@@ -624,12 +614,12 @@ class LocalEventExplorerAbility(MatchingCapability):
             self._err(f"Ticketmaster API error: {e}")
         return []
 
-    async def _fetch_seatgeek(self, city: str, keyword: str, client_id: str) -> List[Dict]:
+    async def _fetch_seatgeek(self, city: str, keyword: str, client_id: str) -> list[dict]:
         key = _resolve_key(AppConfig.SEATGEEK_CLIENT_ID, client_id)
         if not key:
             return []
 
-        params = {
+        params: dict = {
             "client_id": key,
             "venue.city": city,
             "per_page": 3,
@@ -660,7 +650,7 @@ class LocalEventExplorerAbility(MatchingCapability):
 
     async def _fetch_serper(
         self, city: str, keyword: str, time_context: str, api_key: str
-    ) -> List[Dict]:
+    ) -> list[dict]:
         key = _resolve_key(AppConfig.SERPER_API_KEY, api_key)
         if not key:
             return []
@@ -694,55 +684,51 @@ class LocalEventExplorerAbility(MatchingCapability):
             self._err(f"Serper API error: {e}")
         return []
 
-    # --- Handlers ---
     async def _handle_search(self, intent: dict, prefs: dict):
         raw_location = intent.get("location")
         nearby_words = {"nearby", "near", "here", "around", "local", "close", "me"}
 
-        # Check if the user explicitly asked for nearby/current location events
-        # by looking at the raw_input stored in intent (if present) or the location field
-        user_wants_nearby = (
-            raw_location and raw_location.lower() in nearby_words
-        )
+        user_wants_nearby = raw_location and raw_location.lower() in nearby_words
 
         if user_wants_nearby or (not raw_location and intent.get("_nearby_hint")):
-            # Try IP geo and ask user to confirm before falling back to saved city
             ip_city = await asyncio.to_thread(self._fetch_ip_city)
             if ip_city:
-                await self.capability_worker.speak(
+                _nearby_prompt = (
                     f"It looks like you're near {ip_city}. Should I search there, "
                     "or would you prefer your saved city?"
                 )
+                await self.capability_worker.speak(_nearby_prompt)
                 ans = await self.capability_worker.user_response()
-                if ans and any(w in ans.lower() for w in ("yes", "sure", "ok", "there", "that", "yep", "yeah", "nearby")):
+                if ans and any(
+                    w in ans.lower()
+                    for w in ("yes", "sure", "ok", "there", "that", "yep", "yeah", "nearby")
+                ):
                     city = ip_city
                 else:
-                    # Use whatever city name they said, or fall back to saved
-                    ans_intent = await self._classify_intent(ans or "")
+                    ans_intent = await self._classify_intent(ans or "", _nearby_prompt)
                     city = ans_intent.get("location") or (ans or "").strip() or prefs.get("home_city")
             else:
-                # IP geo unavailable — fall back to saved city
                 city = prefs.get("home_city")
                 if not city:
-                    await self.capability_worker.speak("What city would you like to search in?")
+                    _which_city_prompt = "What city would you like to search in?"
+                    await self.capability_worker.speak(_which_city_prompt)
                     resp = await self.capability_worker.user_response()
                     if resp:
-                        ex = await self._classify_intent(resp)
-                        city = ex.get("location") or resp.strip()
+                        ex = await self._classify_intent(resp, _which_city_prompt)
+                        city = ex.get("location") or (resp or "").strip()
         else:
             city = raw_location or prefs.get("home_city")
 
         if not city or _is_invalid_city(city):
-            await self.capability_worker.speak(
-                "I'm not sure which city to search in. What city would you like?"
-            )
+            _unsure_prompt = "I'm not sure which city to search in. What city would you like?"
+            await self.capability_worker.speak(_unsure_prompt)
             resp = await self.capability_worker.user_response()
             if resp:
-                extracted = await self._classify_intent(resp)
+                extracted = await self._classify_intent(resp, _unsure_prompt)
                 city = extracted.get("location") or resp.strip()
             if not city or _is_invalid_city(city):
                 await self.capability_worker.speak("I still couldn't get a valid city. Please try again.")
-                return
+                return False
 
         keyword = intent.get("category", "")
         time_context = intent.get("time", "")
@@ -754,7 +740,6 @@ class LocalEventExplorerAbility(MatchingCapability):
 
         start_dt, end_dt = await self._parse_time_context(time_context)
 
-        # Run Ticketmaster and Serper in parallel; SeatGeek is a fallback
         tm_task = self._fetch_ticketmaster(
             city=city,
             keyword=keyword,
@@ -770,16 +755,14 @@ class LocalEventExplorerAbility(MatchingCapability):
         )
         tm_events, serper_events = await asyncio.gather(tm_task, serper_task)
 
-        # SeatGeek fallback only if both primary sources returned nothing
         if not tm_events:
-            self._log("Ticketmaster returned 0 events. Trying SeatGeek fallback.")
+            self._log("Ticketmaster returned 0 events — trying SeatGeek.")
             tm_events = await self._fetch_seatgeek(
                 city=city,
                 keyword=keyword,
                 client_id=prefs.get("api_key_seatgeek", ""),
             )
 
-        # Combine: top 2 from structured APIs + top 2 from Serper, deduplicated
         combined = []
         if tm_events:
             combined.extend(tm_events[:2])
@@ -787,7 +770,7 @@ class LocalEventExplorerAbility(MatchingCapability):
             combined.extend(serper_events[:2])
 
         seen: set = set()
-        final_events: List[Dict] = []
+        final_events: list[dict] = []
         for e in combined:
             title_lower = e["name"].lower().strip()
             if title_lower not in seen:
@@ -826,7 +809,6 @@ class LocalEventExplorerAbility(MatchingCapability):
         return True
 
     async def _handle_expand(self, intent: dict, prefs: dict = None):
-        # If no events are loaded yet, the user is really doing a search — auto-convert.
         if not self.current_events:
             await self.capability_worker.speak(
                 "I don't have any events loaded yet. Let me search for those now."
@@ -839,7 +821,7 @@ class LocalEventExplorerAbility(MatchingCapability):
                 "event_reference": None,
             }
             await self._handle_search(search_intent, prefs or {})
-            return True  # search ran; followup comes from search result
+            return True
 
         ref = intent.get("event_reference") or "first"
         ev = self._resolve_event_ref(ref)
@@ -868,7 +850,6 @@ class LocalEventExplorerAbility(MatchingCapability):
                 await self.capability_worker.speak("I didn't find that event in the last search.")
             return False
 
-        # Try Google Calendar API directly if tokens are configured
         if AppConfig.GOOGLE_ACCESS_TOKEN or AppConfig.GOOGLE_REFRESH_TOKEN:
             try:
                 start_dt_str, end_dt_str = self._build_calendar_datetimes(ev)
@@ -902,7 +883,6 @@ class LocalEventExplorerAbility(MatchingCapability):
             except Exception as e:
                 self._err(f"Calendar exception: {e}")
 
-        # Fallback: generate a Google Calendar template link
         title = _url_encode(ev["name"])
         location = _url_encode(ev["venue"])
         details = _url_encode(f"Found via OpenHome Local Event Explorer. Link: {ev['url']}")
@@ -927,7 +907,7 @@ class LocalEventExplorerAbility(MatchingCapability):
         )
         return True
 
-    def _build_calendar_datetimes(self, ev: Dict) -> Tuple[str, str]:
+    def _build_calendar_datetimes(self, ev: dict) -> tuple[str, str]:
         """Build ISO-8601 start/end strings for the Calendar API payload."""
         try:
             if ev.get("date"):
