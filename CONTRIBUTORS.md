@@ -40,3 +40,4 @@ Format: - **@username** — ability-name ([ability-name](community/ability-name/
 - **[@code-guru1](https://github.com/code-guru1)** — todoist-voice-tasks ([todoist-voice-tasks](community/todoist-voice-tasks/))
 - **[@saifrehman100](https://github.com/saifrehman100)** — github-voice-manager ([github-voice-manager](community/github-voice-manager/))
 - **[@melodygui](https://github.com/melodygui)** — restaurant-recommendation ([restaurant-recommendation](community/restaurant-recommendation/))
+- **[@FHLiang221](https://github.com/FHLiang221)** — quiet-company ([quiet-company](community/quiet-company/))

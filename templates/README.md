@@ -17,8 +17,7 @@ OpenHome is a jailbroken smart speaker that runs AI agents capable of triggering
 - Send data off-platform, fire emails, set alarms
 - Run 24/7 — **no wake word required**
 
-Gone are the days of “wake words” and dumb speakers.
-This is AGI-like smart intelligence: background processing, cloud connectivity, desktop
+Gone are the days of “wake words” and dumb speakers. This is AGI-like smart intelligence: background processing, cloud connectivity, desktop
 control, filesystem access, hybrid local-and-cloud LLMs. And local, all running on a device that
 sits on your desk
 
