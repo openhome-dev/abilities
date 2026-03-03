@@ -41,3 +41,4 @@ Format: - **@username** — ability-name ([ability-name](community/ability-name/
 - **[@saifrehman100](https://github.com/saifrehman100)** — github-voice-manager ([github-voice-manager](community/github-voice-manager/))
 - **[@melodygui](https://github.com/melodygui)** — restaurant-recommendation ([restaurant-recommendation](community/restaurant-recommendation/))
 - **[@FHLiang221](https://github.com/FHLiang221)** — quiet-company ([quiet-company](community/quiet-company/))
+- **[@harmsolo13](https://github.com/harmsolo13)** — dungeon-master-voice ([dungeon-master-voice](community/dungeon-master-voice/))
