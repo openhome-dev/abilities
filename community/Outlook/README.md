@@ -89,7 +89,7 @@ You can add or remove hotwords to match however your users naturally trigger it.
 
 - Zip the folder containing `main.py` and `config.json`
 - Upload the zip in the OpenHome Live Editor or Ability Manager
-- Assign it to a Personality
+- Assign it to an Agent
 
 ---
 
