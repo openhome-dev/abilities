@@ -1,6 +1,5 @@
 import asyncio
 import json
-import os
 import re
 
 import requests
@@ -146,16 +145,8 @@ class XNewsFeedCapability(MatchingCapability):
     first_visit: bool = True
     trigger_phrase: str = ""
 
-    @classmethod
-    def register_capability(cls) -> "MatchingCapability":
-        with open(
-                os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.json")
-        ) as file:
-            data = json.load(file)
-        return cls(
-            unique_name=data["unique_name"],
-            matching_hotwords=data["matching_hotwords"],
-        )
+    # Do not change following tag of register capability
+    #{{register capability}}
 
     def call(self, worker: AgentWorker):
         self.worker = worker
