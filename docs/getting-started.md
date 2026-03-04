@@ -81,7 +81,7 @@ After uploading, click **Live Editor** on your Ability. Here you can:
 
 ## Step 5: Trigger It
 
-Start a conversation with any Personality. Say one of your trigger phrases, and your Ability will activate.
+Start a conversation with any Agent. Say one of your trigger phrases, and your Ability will activate.
 
 ---
 
