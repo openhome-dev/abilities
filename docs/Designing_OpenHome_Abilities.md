@@ -261,25 +261,25 @@ Regardless of which category you select in the dashboard, every ability is built
 | Type | Files | Description |
 |---|---|---|
 | **Standard Interactive** | `main.py` only | User triggers with hotwords, runs, exits with `resume_normal_flow()`. The original pattern. |
-| **Standalone Background Daemon** | `watcher.py` only | Starts automatically on session start. Runs in background for monitoring, logging, note-taking. Works even when Personality is in sleep mode. |
-| **Interactive Combined** | `main.py` + `watcher.py` | Interactive handles user requests. Background daemon runs alongside. They coordinate through shared file storage. |
+| **Standalone Background Daemon** | `background.py` only | Starts automatically on session start. Runs in background for monitoring, logging, note-taking. Works even when Personality is in sleep mode. |
+| **Interactive Combined** | `main.py` + `background.py` | Interactive handles user requests. Background daemon runs alongside. They coordinate through shared file storage. |
 
 **Example — Interactive Combined (Alarm Ability):**
 ```
 AlarmAbility/
 ├── main.py        # Interactive — set an alarm
-├── watcher.py     # Background — fire the alarm
+├── background.py     # Background — fire the alarm
 ├── config.json    # Required
 └── alarm.mp3      # Supporting files
 ```
 
-> ⚠️ The background file **must** be named exactly `watcher.py`. No other filename will be detected by the platform.
+> ⚠️ The background file **must** be named exactly `background.py`. No other filename will be detected by the platform.
 
-### Critical Differences: main.py vs watcher.py
+### Critical Differences: main.py vs background.py
 
 These are the most common sources of bugs when writing background daemons. Pay close attention.
 
-| Aspect | `main.py` | `watcher.py` |
+| Aspect | `main.py` | `background.py` |
 |---|---|---|
 | `call()` signature | `call(self, worker)` | `call(self, worker, background_daemon_mode)` |
 | `CapabilityWorker` init | `CapabilityWorker(self)` | `CapabilityWorker(self)` |
@@ -309,9 +309,9 @@ await self.capability_worker.send_interrupt_signal()
 await self.capability_worker.speak("Your alarm is going off!")
 ```
 
-### Watcher Code Template
+### background Code Template
 
-Copy this as your starting point for any `watcher.py`. Note the `call()` signature has an extra `background_daemon_mode` parameter, but the `CapabilityWorker` constructor is the same as `main.py`.
+Copy this as your starting point for any `background.py`. Note the `call()` signature has an extra `background_daemon_mode` parameter, but the `CapabilityWorker` constructor is the same as `main.py`.
 
 ```python
 import json
@@ -320,21 +320,21 @@ from src.main import AgentWorker
 from src.agent.capability_worker import CapabilityWorker
 from time import time
 
-class YourWatcherCapability(MatchingCapability):
+class YourCapabilityBackground(MatchingCapability):
     worker: AgentWorker = None
     capability_worker: CapabilityWorker = None
     background_daemon_mode: bool = False
 
     #{{register capability}}
 
-    async def watcher_loop(self):
+    async def background_loop(self):
         self.worker.editor_logging_handler.info(
-            "%s: Watcher started" % time()
+            "%s: background started" % time()
         )
         while True:
             # --- your background logic here ---
             self.worker.editor_logging_handler.info(
-                "%s: Watcher cycle" % time()
+                "%s: background cycle" % time()
             )
             await self.worker.session_tasks.sleep(20.0)
 
@@ -342,7 +342,7 @@ class YourWatcherCapability(MatchingCapability):
         self.worker = worker
         self.background_daemon_mode = background_daemon_mode
         self.capability_worker = CapabilityWorker(self)
-        self.worker.session_tasks.create(self.watcher_loop())
+        self.worker.session_tasks.create(self.background_loop())
 ```
 
 ### How the Main Flow Works
@@ -382,7 +382,7 @@ Classify at trigger time — the user's phrasing tells you which experience they
 - Dashboard updates in real-time — user can see it thinking
 
 **The Ambient Profiler Pattern** *(Background Daemon)*
-- Watcher ability silently builds and updates `user.md` every day
+- background ability silently builds and updates `user.md` every day
 - `user.md` appended to Main Flow personality prompt
 - Main Flow always knows what's happening in your life without you telling it
 - Speaker diarization enables per-speaker memory in multi-person households
@@ -393,7 +393,7 @@ Classify at trigger time — the user's phrasing tells you which experience they
 - `"Set an alarm for 7 AM"` → Skill writes alarm time, Background Daemon polls and fires
 - Same for: reminders, daily briefings, scheduled check-ins, recurring reports
 
-**Coordination Pattern: main.py + watcher.py**
+**Coordination Pattern: main.py + background.py**
 
 The primary way the interactive and background components communicate is through shared persistent file storage. Both files read and write to the same user-scoped files.
 
@@ -402,10 +402,10 @@ The primary way the interactive and background components communicate is through
 | 1 | User | Says *"set an alarm for 3pm Thursday"* |
 | 2 | `main.py` | LLM parses time, writes alarm to `alarms.json` |
 | 3 | `main.py` | Confirms to user, calls `resume_normal_flow()` |
-| 4 | `watcher.py` | Polls `alarms.json` every ~15 seconds (running since session start) |
-| 5 | `watcher.py` | Target time hits → `send_interrupt_signal()` |
-| 6 | `watcher.py` | Plays `alarm.mp3`, speaks notification |
-| 7 | `watcher.py` | Updates alarm status to `"triggered"` in `alarms.json` |
+| 4 | `background.py` | Polls `alarms.json` every ~15 seconds (running since session start) |
+| 5 | `background.py` | Target time hits → `send_interrupt_signal()` |
+| 6 | `background.py` | Plays `alarm.mp3`, speaks notification |
+| 7 | `background.py` | Updates alarm status to `"triggered"` in `alarms.json` |
 
 **Sample `alarms.json`:**
 ```json
@@ -447,7 +447,7 @@ description: >
 | Building Great Abilities (updated) | `Building_Great_OpenHome_Abilities` in project docs |
 | Questions / Support | `#dev-help` on Discord |
 
-> The alarm template is the best reference for the Interactive Combined pattern. Study both `main.py` and `watcher.py` to understand how they coordinate.
+> The alarm template is the best reference for the Interactive Combined pattern. Study both `main.py` and `background.py` to understand how they coordinate.
 
 ---
 
@@ -744,7 +744,7 @@ Run through this before shipping any ability:
 - [ ] Tested against real conversation samples the ability should and should not catch
 
 **Background Daemon only**
-- [ ] `watcher.py` is named exactly `watcher.py` — no other filename is detected by the platform
+- [ ] `background.py` is named exactly `background.py` — no other filename is detected by the platform
 - [ ] `call()` signature includes the `background_daemon_mode` parameter
 - [ ] `session_tasks.sleep()` used for poll interval — **never** `asyncio.sleep()`
 - [ ] Poll interval is 10–30 seconds (15–30 seconds for alarms)
@@ -754,7 +754,7 @@ Run through this before shipping any ability:
 - [ ] JSON writes use delete-then-write, **never** append
 - [ ] Missing JSON files handled gracefully with `check_if_file_exists()` before reading
 - [ ] Logging is generous — `editor_logging_handler` is your only window into silent daemons
-- [ ] Tested that the watcher survives Personality sleep mode
+- [ ] Tested that the background survives Personality sleep mode
 
 ---
 
