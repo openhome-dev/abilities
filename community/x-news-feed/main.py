@@ -37,7 +37,7 @@ FULL_MODE_TRIGGERS = [
     "catch me up", "all trends", "full briefing", "everything",
     "run through", "brief me", "all of them", "the full list",
     "full list", "all five", "read all", "read them all",
-    "dive in", "deep dive", "explore", "tell me everything",'all tweets'
+    "dive in", "deep dive", "explore", "tell me everything", 'all tweets'
 ]
 
 MORE_WORDS = [
@@ -379,8 +379,8 @@ class XNewsFeedCapability(MatchingCapability):
                 )
                 return None
             self.worker.editor_logging_handler.warning(
-                    f"[{topic}] API returned {resp.json()}."
-                )
+                f"[{topic}] API returned {resp.json()}."
+            )
 
             tweets = resp.json().get("data", [])
             if not tweets:
