@@ -241,7 +241,111 @@ When your ability fires, the user was mid-conversation. Read that history to cla
 
 ## 6. The Ability Lifecycle
 
-### How It Actually Works
+### Ability Categories
+
+When creating an ability in the OpenHome dashboard, you select a **Category** that tells the platform how the ability should behave:
+
+| Category | Behavior |
+|---|---|
+| **Skill** | Standard ability where the user directly interacts with it in normal conversation. Triggered by hotwords, runs a flow, exits. This is the original ability pattern. |
+| **Brain Skill** | The Personality's brain decides to trigger it in the background. Used when the brain can't fully respond to a user's question and needs more information, or when the brain needs to delegate an action. Examples: fetching weather for a location, running smart home actions. |
+| **Background Daemon** | Background thread that starts automatically when the call begins and runs continuously for the entire session. Used for monitoring, polling, alarms, note-taking, and ambient intelligence. Works even when the Personality is in sleep mode. |
+| **Local** | High-level Python packages written to run directly on Raspberry Pi hardware, allowing many restricted modules since they execute on the device itself. *Under development — not yet released.* |
+
+> **Note:** Brain Skills templates are still being finalized. Brain Skills are triggered automatically by the Personality's brain when it needs to fill a knowledge gap or delegate an action the user requested.
+
+### Ability File Structure
+
+Regardless of which category you select in the dashboard, every ability is built from one or two files:
+
+| Type | Files | Description |
+|---|---|---|
+| **Standard Interactive** | `main.py` only | User triggers with hotwords, runs, exits with `resume_normal_flow()`. The original pattern. |
+| **Standalone Background Daemon** | `watcher.py` only | Starts automatically on session start. Runs in background for monitoring, logging, note-taking. Works even when Personality is in sleep mode. |
+| **Interactive Combined** | `main.py` + `watcher.py` | Interactive handles user requests. Background daemon runs alongside. They coordinate through shared file storage. |
+
+**Example — Interactive Combined (Alarm Ability):**
+```
+AlarmAbility/
+├── main.py        # Interactive — set an alarm
+├── watcher.py     # Background — fire the alarm
+├── config.json    # Required
+└── alarm.mp3      # Supporting files
+```
+
+> ⚠️ The background file **must** be named exactly `watcher.py`. No other filename will be detected by the platform.
+
+### Critical Differences: main.py vs watcher.py
+
+These are the most common sources of bugs when writing background daemons. Pay close attention.
+
+| Aspect | `main.py` | `watcher.py` |
+|---|---|---|
+| `call()` signature | `call(self, worker)` | `call(self, worker, background_daemon_mode)` |
+| `CapabilityWorker` init | `CapabilityWorker(self)` | `CapabilityWorker(self)` |
+| Triggered by | User hotwords | Automatically on session start |
+| Lifecycle | Runs once, then exits | Continuous `while True` loop |
+| `resume_normal_flow()` | **REQUIRED** on every exit path | **NOT needed** (independent thread) |
+| Works in sleep mode | No — requires active session | **Yes** — runs even when Personality is asleep |
+| Multiple instances | One at a time | Multiple daemons supported |
+
+### New SDK Methods
+
+| Method | Returns | Async | Description |
+|---|---|---|---|
+| `get_timezone()` | `str` | No | User's timezone (e.g. `"America/Chicago"`). Use for alarms, calendars, time-aware logic. |
+| `get_full_message_history()` | `list` | No | Full conversation transcript. Background daemons use this to monitor the live conversation. |
+| `send_interrupt_signal()` | — | Yes | Stops current Personality output. Call before `speak()` or `play_audio()` from a background daemon. |
+
+```python
+# Get user timezone (synchronous)
+tz = self.capability_worker.get_timezone()
+
+# Get conversation history (synchronous)
+history = self.capability_worker.get_full_message_history()
+
+# Interrupt before speaking from a background daemon (async)
+await self.capability_worker.send_interrupt_signal()
+await self.capability_worker.speak("Your alarm is going off!")
+```
+
+### Watcher Code Template
+
+Copy this as your starting point for any `watcher.py`. Note the `call()` signature has an extra `background_daemon_mode` parameter, but the `CapabilityWorker` constructor is the same as `main.py`.
+
+```python
+import json
+from src.agent.capability import MatchingCapability
+from src.main import AgentWorker
+from src.agent.capability_worker import CapabilityWorker
+from time import time
+
+class YourWatcherCapability(MatchingCapability):
+    worker: AgentWorker = None
+    capability_worker: CapabilityWorker = None
+    background_daemon_mode: bool = False
+
+    #{{register capability}}
+
+    async def watcher_loop(self):
+        self.worker.editor_logging_handler.info(
+            "%s: Watcher started" % time()
+        )
+        while True:
+            # --- your background logic here ---
+            self.worker.editor_logging_handler.info(
+                "%s: Watcher cycle" % time()
+            )
+            await self.worker.session_tasks.sleep(20.0)
+
+    def call(self, worker: AgentWorker, background_daemon_mode: bool):
+        self.worker = worker
+        self.background_daemon_mode = background_daemon_mode
+        self.capability_worker = CapabilityWorker(self)
+        self.worker.session_tasks.create(self.watcher_loop())
+```
+
+### How the Main Flow Works
 
 1. User is in **Main Flow** having a normal conversation
 2. User says something matching a trigger word
@@ -268,15 +372,6 @@ When your ability fires, the user was mid-conversation. Read that history to cla
 
 Classify at trigger time — the user's phrasing tells you which experience they expect.
 
-### The Four Ability Modes
-
-| Mode | Type | Trigger | Behavior | Examples |
-|---|---|---|---|---|
-| **Interactive** | Skill | User voice trigger | Takes over conversation, hands back when done | Weather, calendar, recipe walkthrough |
-| **Autonomous** | Brain Skill | Brain-triggered | No user initiation. System decides when to fire. | Proactive weather alert, smart reminder |
-| **Smart** | Brain Skill | Brain-triggered | Works silently, surfaces questions only when needed | Email draft needing approval, purchase confirmation |
-| **Watcher** | Background Daemon | Always running | Continuous. No user input ever. Monitors everything. | Meeting notetaker, life logger, alarm system |
-
 ### Background Ability Patterns
 
 **The Life Logger Pattern** *(Background Daemon)*
@@ -298,6 +393,35 @@ Classify at trigger time — the user's phrasing tells you which experience they
 - `"Set an alarm for 7 AM"` → Skill writes alarm time, Background Daemon polls and fires
 - Same for: reminders, daily briefings, scheduled check-ins, recurring reports
 
+**Coordination Pattern: main.py + watcher.py**
+
+The primary way the interactive and background components communicate is through shared persistent file storage. Both files read and write to the same user-scoped files.
+
+| Step | Component | Action |
+|---|---|---|
+| 1 | User | Says *"set an alarm for 3pm Thursday"* |
+| 2 | `main.py` | LLM parses time, writes alarm to `alarms.json` |
+| 3 | `main.py` | Confirms to user, calls `resume_normal_flow()` |
+| 4 | `watcher.py` | Polls `alarms.json` every ~15 seconds (running since session start) |
+| 5 | `watcher.py` | Target time hits → `send_interrupt_signal()` |
+| 6 | `watcher.py` | Plays `alarm.mp3`, speaks notification |
+| 7 | `watcher.py` | Updates alarm status to `"triggered"` in `alarms.json` |
+
+**Sample `alarms.json`:**
+```json
+[
+  {
+    "id": "alarm_1772046000778",
+    "created_at_epoch": 1772046000,
+    "timezone": "America/Los_Angeles",
+    "target_iso": "2026-02-26T00:06:00-08:00",
+    "human_time": "12:01 AM on Thursday, Feb 26, 2026",
+    "source_text": "Can you set an alarm for me?",
+    "status": "scheduled"
+  }
+]
+```
+
 ### The ability.md Pattern
 Every Brain Skill ships with an `ability.md` file containing YAML frontmatter (`name` + `description`) and markdown instructions. The `description` field is the **only** field the system reads to decide when to trigger.
 
@@ -312,6 +436,18 @@ description: >
 ```
 
 > **Bad description = never triggers or triggers incorrectly.** This is the single most important field for Brain Skill abilities.
+
+### Templates and Resources
+
+| Resource | Location |
+|---|---|
+| Alarm Ability (Interactive Combined) | https://github.com/openhome-dev/abilities/tree/dev/templates/Alarm |
+| Standalone Background Daemon | https://github.com/openhome-dev/abilities/tree/dev/templates/Watcher |
+| SDK Reference (updated) | `OpenHome_SDK_Reference` in project docs |
+| Building Great Abilities (updated) | `Building_Great_OpenHome_Abilities` in project docs |
+| Questions / Support | `#dev-help` on Discord |
+
+> The alarm template is the best reference for the Interactive Combined pattern. Study both `main.py` and `watcher.py` to understand how they coordinate.
 
 ---
 
@@ -608,10 +744,17 @@ Run through this before shipping any ability:
 - [ ] Tested against real conversation samples the ability should and should not catch
 
 **Background Daemon only**
-- [ ] `session_tasks.sleep()` used — never `asyncio.sleep()`
+- [ ] `watcher.py` is named exactly `watcher.py` — no other filename is detected by the platform
+- [ ] `call()` signature includes the `background_daemon_mode` parameter
+- [ ] `session_tasks.sleep()` used for poll interval — **never** `asyncio.sleep()`
+- [ ] Poll interval is 10–30 seconds (15–30 seconds for alarms)
+- [ ] Main loop is a `while True` — required for sleep mode support
 - [ ] No `resume_normal_flow()` anywhere in the daemon
-- [ ] `send_interrupt_signal()` called before any `speak()` from the daemon
-- [ ] JSON writes use delete-then-write, never append
+- [ ] `send_interrupt_signal()` called before any `speak()` or `play_audio()` from the daemon
+- [ ] JSON writes use delete-then-write, **never** append
+- [ ] Missing JSON files handled gracefully with `check_if_file_exists()` before reading
+- [ ] Logging is generous — `editor_logging_handler` is your only window into silent daemons
+- [ ] Tested that the watcher survives Personality sleep mode
 
 ---
 
