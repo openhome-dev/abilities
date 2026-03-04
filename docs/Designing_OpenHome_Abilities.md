@@ -865,7 +865,7 @@ Run through this before shipping any ability:
 | Remix My Day | Bedroom | Background Daemon | Producer | Transcript of your day → generates lo-fi ambient track from it |
 | Mood Playlist | Living Room | Brain Skill | Anyone | Detects mood from voice, generates Spotify playlist to match |
 
-### Watcher / Always-On
+### Background / Always-On
 
 | Ability | Location | Type | User | Description |
 |---|---|---|---|---|
