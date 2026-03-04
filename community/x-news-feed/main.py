@@ -11,7 +11,18 @@ from src.main import AgentWorker
 # ============================================================================
 # API CONFIGURATION
 # ============================================================================
-X_API_BEARER_TOKEN = "REPLACE_WITH_YOUR_KEY"
+X_API_BEARER_TOKEN = "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+
+# ============================================================================
+# TOPIC SEEDS — one API call per topic, best tweet selected per topic
+# ============================================================================
+TOPIC_SEEDS = [
+    "Artificial Intelligence",
+    "Crypto",
+    "Climate",
+    "Tech Innovation",
+    "Global Markets",
+]
 
 # ============================================================================
 # CONSTANTS
@@ -26,7 +37,7 @@ FULL_MODE_TRIGGERS = [
     "catch me up", "all trends", "full briefing", "everything",
     "run through", "brief me", "all of them", "the full list",
     "full list", "all five", "read all", "read them all",
-    "dive in", "deep dive", "explore", "tell me everything"
+    "dive in", "deep dive", "explore", "tell me everything",'all tweets'
 ]
 
 MORE_WORDS = [
@@ -36,21 +47,81 @@ MORE_WORDS = [
 
 FILLER_PHRASES = [
     "One sec, checking what's hot on X.",
-    "Give me a moment, pulling the latest trends.",
+    "Give me a moment, pulling the latest tweets.",
     "Standby, grabbing the top topics from X.",
     "Let me see what's trending right now.",
     "Hang on, fetching the latest from X."
 ]
 
+FILLER_INTRO_TEMPLATES = [
+    "Let me fetch the top tweets on {topics} — just a moment.",
+    "Pulling the most popular tweets on {topics} right now.",
+    "Give me a second, grabbing the top tweets on {topics}.",
+    "One moment — fetching top tweets on {topics}.",
+    "Looking up the best tweets on {topics} for you.",
+]
+
+# Demo data — one entry per TOPIC_SEED, mirrors live structure {name, top_tweet, score, summary}
 DEMO_TRENDS = [
-    {"name": "Artificial Intelligence", "tweet_count": 125000},
-    {"name": "Climate Summit 2026", "tweet_count": 98000},
-    {"name": "Mars Mission Update", "tweet_count": 87000},
-    {"name": "Tech Innovation Awards", "tweet_count": 76000},
-    {"name": "Global Markets Rally", "tweet_count": 65000}
+    {
+        "name": "Artificial Intelligence",
+        "top_tweet": "2026 is the year of AI. But we use it differently at junior, mid, senior levels. Build foundations, collab with agents, orchestrate teams.",
+        "score": 42,
+        "summary": "Developers are debating how AI changes workflows across every seniority level, from building basics to orchestrating full agent teams."
+    },
+    {
+        "name": "Crypto",
+        "top_tweet": "I'm Sergey Polonsky, the developer behind Moscow City. My new legacy is a global network of 12 luxury eco-hubs combined with the $OAZIS token.",
+        "score": 12,
+        "summary": "Real-world asset tokenisation is gaining momentum, with developers blending physical infrastructure and digital tokens into new hybrid ecosystems."
+    },
+    {
+        "name": "Climate",
+        "top_tweet": "The Climate Summit 2026 concluded with 47 nations signing binding emissions targets, the most ambitious global agreement since Paris.",
+        "score": 98,
+        "summary": "Climate Summit 2026 has produced a landmark multi-nation commitment on emissions, reigniting optimism about coordinated global climate action."
+    },
+    {
+        "name": "Tech Innovation",
+        "top_tweet": "Ready to put your GPU to work? YOM Official is bridging the gap between high-end rendering and everyday devices for developers and gamers alike.",
+        "score": 35,
+        "summary": "Distributed GPU rendering is turning heads, with new platforms promising to make high-end graphics accessible on everyday consumer hardware."
+    },
+    {
+        "name": "Global Markets",
+        "top_tweet": "Global markets rallied sharply today as inflation data came in below forecast, boosting investor confidence across equities and crypto alike.",
+        "score": 65,
+        "summary": "Better-than-expected inflation figures have sparked a broad market rally, lifting both traditional equities and digital assets simultaneously."
+    },
 ]
 
 PREFERENCES_FILE = "x_news_prefs.json"
+
+# Recent Search API — fetches 10 tweets per query
+RECENT_SEARCH_URL = (
+    "https://api.twitter.com/2/tweets/search/recent"
+    "?query={query} -is:retweet -is:reply lang:en"
+    "&tweet.fields=text,public_metrics"
+    "&max_results=10"
+)
+
+
+# ============================================================================
+# SCORING HELPER
+# ============================================================================
+def score_tweet(public_metrics: dict) -> int:
+    """
+    Compute a weighted engagement score from public_metrics.
+    Weights:  likes x3  |  retweets x2  |  quotes x2  |  replies x1  |  bookmarks x1
+    Impression count excluded — it reflects reach, not engagement quality.
+    """
+    return (
+        public_metrics.get("like_count", 0) * 3
+        + public_metrics.get("retweet_count", 0) * 2
+        + public_metrics.get("quote_count", 0) * 2
+        + public_metrics.get("reply_count", 0) * 1
+        + public_metrics.get("bookmark_count", 0) * 1
+    )
 
 
 # ============================================================================
@@ -58,7 +129,11 @@ PREFERENCES_FILE = "x_news_prefs.json"
 # ============================================================================
 class XNewsFeedCapability(MatchingCapability):
     """
-    X News Feed Ability - fetches and reads aloud trending topics from X.
+    X News Feed Ability — for each topic in TOPIC_SEEDS:
+      1. Fetch 10 recent tweets via Recent Search API
+      2. Score each tweet with weighted public_metrics engagement
+      3. Keep the highest-scoring tweet as the topic representative
+      4. Send all 5 top tweets to the LLM for trend-style summaries
     Quick Mode: top 3, offer more.
     Full Mode: all 5, then interactive Q&A.
     """
@@ -92,15 +167,12 @@ class XNewsFeedCapability(MatchingCapability):
     # ========================================================================
     async def main_flow(self):
         try:
-            # CRITICAL FIX: Wait for and capture the user's input FIRST
             await self.capture_user_input()
 
-            # Now load preferences and detect mode
             await self.load_user_preferences()
             self.mode = self.detect_mode_from_trigger()
             self.worker.editor_logging_handler.info(f"Mode detected: {self.mode}")
 
-            # Fetch trending topics
             await self.fetch_trending_topics_with_filler()
 
             if not self.trending_topics:
@@ -110,7 +182,6 @@ class XNewsFeedCapability(MatchingCapability):
                 self.capability_worker.resume_normal_flow()
                 return
 
-            # Personalize greeting based on first visit
             if self.first_visit:
                 await self.capability_worker.speak(
                     f"Hey {self.user_name}, welcome to X News! "
@@ -119,7 +190,6 @@ class XNewsFeedCapability(MatchingCapability):
                 self.first_visit = False
                 await self.save_user_preferences()
 
-            # Run appropriate mode
             if self.mode == "full":
                 await self.full_mode()
             else:
@@ -133,37 +203,22 @@ class XNewsFeedCapability(MatchingCapability):
             self.capability_worker.resume_normal_flow()
 
     # ========================================================================
-    # CAPTURE USER INPUT - THE CRITICAL FIX
+    # CAPTURE USER INPUT
     # ========================================================================
     async def capture_user_input(self):
-        """
-        CRITICAL: Wait for and capture the user's input that triggered this ability.
-        This must run before anything else.
-        """
         try:
             self.worker.editor_logging_handler.info("Waiting for user input...")
 
-            # Method 1: Use wait_for_complete_transcription() to ensure we get the full utterance
-            # This waits until the user has completely finished speaking
             user_input = await self.capability_worker.wait_for_complete_transcription()
-
             if user_input and user_input.strip():
                 self.trigger_phrase = user_input.strip().lower()
-                self.worker.editor_logging_handler.info(
-                    f"Captured user input: '{self.trigger_phrase}'"
-                )
                 return
 
-            # Method 2: Fallback to regular user_response if wait_for_complete_transcription fails
             user_input = await self.capability_worker.user_response()
             if user_input and user_input.strip():
                 self.trigger_phrase = user_input.strip().lower()
-                self.worker.editor_logging_handler.info(
-                    f"Captured user input (fallback): '{self.trigger_phrase}'"
-                )
                 return
 
-            # Method 3: Try to get from history as last resort
             await self.worker.session_tasks.sleep(0.5)
             history = self.worker.agent_memory.full_message_history
             if history:
@@ -178,10 +233,6 @@ class XNewsFeedCapability(MatchingCapability):
                 except Exception:
                     pass
 
-            self.worker.editor_logging_handler.info(
-                f"Final trigger phrase: '{self.trigger_phrase}'"
-            )
-
         except Exception as e:
             self.worker.editor_logging_handler.error(f"Error capturing user input: {e}")
             self.trigger_phrase = ""
@@ -190,33 +241,24 @@ class XNewsFeedCapability(MatchingCapability):
     # MODE DETECTION
     # ========================================================================
     def detect_mode_from_trigger(self) -> str:
-        """Detect quick vs full mode by checking the captured trigger phrase."""
         if not self.trigger_phrase:
-            self.worker.editor_logging_handler.info("No trigger phrase, defaulting to quick")
             return "quick"
-
         for phrase in FULL_MODE_TRIGGERS:
             if phrase in self.trigger_phrase:
                 self.worker.editor_logging_handler.info(f"Full mode triggered by: '{phrase}'")
                 return "full"
-
-        self.worker.editor_logging_handler.info(
-            f"Quick mode (trigger: '{self.trigger_phrase[:50]}')"
-        )
         return "quick"
 
     # ========================================================================
     # FILE PERSISTENCE
     # ========================================================================
     async def load_user_preferences(self):
-        """Load user preferences from persistent storage."""
         try:
             if await self.capability_worker.check_if_file_exists(PREFERENCES_FILE, False):
                 raw = await self.capability_worker.read_file(PREFERENCES_FILE, False)
                 prefs = json.loads(raw)
                 self.user_name = prefs.get("name", "there")
                 self.first_visit = prefs.get("first_visit", False)
-                self.worker.editor_logging_handler.info(f"Loaded preferences for {self.user_name}")
             else:
                 self.first_visit = True
                 self.user_name = "there"
@@ -227,36 +269,21 @@ class XNewsFeedCapability(MatchingCapability):
             self.user_name = "there"
 
     async def save_user_preferences(self):
-        """Save user preferences to persistent storage."""
         try:
-            prefs = {
-                "name": self.user_name,
-                "first_visit": self.first_visit,
-                "last_used": "x_news_feed"
-            }
+            prefs = {"name": self.user_name, "first_visit": self.first_visit, "last_used": "x_news_feed"}
             await self.capability_worker.delete_file(PREFERENCES_FILE, False)
             await self.capability_worker.write_file(PREFERENCES_FILE, json.dumps(prefs), False)
-            self.worker.editor_logging_handler.info("Saved preferences")
         except Exception as e:
             self.worker.editor_logging_handler.warning(f"Couldn't save preferences: {e}")
 
     # ========================================================================
     # PATIENT INPUT HELPER
     # ========================================================================
-    async def wait_for_input(
-            self,
-            max_attempts: int = 5,
-            wait_seconds: float = 3.0,
-            context: str = ""
-    ) -> str:
-        """Poll for user input patiently. Returns first non-empty response or empty string."""
+    async def wait_for_input(self, max_attempts: int = 5, wait_seconds: float = 3.0, context: str = "") -> str:
         for attempt in range(max_attempts):
             await self.worker.session_tasks.sleep(wait_seconds)
             user_input = await self.capability_worker.user_response()
             if user_input and user_input.strip():
-                self.worker.editor_logging_handler.info(
-                    f"Got input on attempt {attempt + 1}: {user_input[:60]}"
-                )
                 return user_input.strip()
             self.worker.editor_logging_handler.info(
                 f"Empty on attempt {attempt + 1}/{max_attempts}, retrying..."
@@ -274,58 +301,183 @@ class XNewsFeedCapability(MatchingCapability):
         return ""
 
     # ========================================================================
-    # DATA FETCHING
+    # DATA FETCHING — per-topic, scored, top-tweet selection
     # ========================================================================
     async def fetch_trending_topics_with_filler(self):
         import random
-        filler = random.choice(FILLER_PHRASES)
-        await self.capability_worker.speak(filler)
+
+        # Build a natural-language list of the topic seeds
+        # e.g. "Artificial Intelligence, Crypto, Climate, Tech Innovation, and Global Markets"
+        if len(TOPIC_SEEDS) > 1:
+            topics_spoken = ", ".join(TOPIC_SEEDS[:-1]) + ", and " + TOPIC_SEEDS[-1]
+        else:
+            topics_spoken = TOPIC_SEEDS[0]
+
+        template = random.choice(FILLER_INTRO_TEMPLATES)
+        filler_message = template.format(topics=topics_spoken)
+
+        await self.capability_worker.speak(filler_message)
         await self.fetch_trending_topics()
 
     async def fetch_trending_topics(self):
+        """
+        For each topic in TOPIC_SEEDS:
+          1. Fetch up to 10 recent tweets (no retweets, no replies, English only)
+          2. Score every tweet using weighted public_metrics
+          3. Select the highest-scoring tweet as the topic representative
+        Then pass all 5 top tweets to the LLM for trend-style summaries.
+        Falls back to DEMO_TRENDS if the API key is missing or all topic calls fail.
+        """
+        if X_API_BEARER_TOKEN in ("xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx", "REPLACE_WITH_YOUR_KEY", "", None):
+            self.worker.editor_logging_handler.info("Demo mode — API key not configured.")
+            self.trending_topics = DEMO_TRENDS.copy()
+            return
+
+        # Fetch best tweet per topic concurrently
+        tasks = [self._fetch_top_tweet_for_topic(topic) for topic in TOPIC_SEEDS]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+
+        top_tweets = []  # [{name, top_tweet, score}, ...]
+        for topic, result in zip(TOPIC_SEEDS, results):
+            if isinstance(result, Exception) or result is None:
+                self.worker.editor_logging_handler.warning(
+                    f"No result for topic '{topic}', skipping."
+                )
+                continue
+            top_tweets.append(result)
+
+        if not top_tweets:
+            self.worker.editor_logging_handler.warning("All topic fetches failed — using demo data.")
+            self.trending_topics = DEMO_TRENDS.copy()
+            return
+
+        self.worker.editor_logging_handler.info(
+            f"Collected top tweets for {len(top_tweets)} / {len(TOPIC_SEEDS)} topics. "
+            "Sending to LLM for summarisation."
+        )
+        self.trending_topics = await self._summarise_top_tweets_with_llm(top_tweets)
+
+    async def _fetch_top_tweet_for_topic(self, topic: str) -> dict | None:
+        """
+        Fetch 10 recent tweets for `topic`, score each one with public_metrics,
+        and return the best as {name, top_tweet, score}.  Returns None on failure.
+
+        Scoring formula (see score_tweet):
+            likes x3  |  retweets x2  |  quotes x2  |  replies x1  |  bookmarks x1
+        """
         try:
-            self.worker.editor_logging_handler.info("Fetching trending topics from X...")
-
-            if X_API_BEARER_TOKEN in ("REPLACE_WITH_YOUR_KEY", "", None):
-                self.worker.editor_logging_handler.info("Demo mode - API key not configured.")
-                self.trending_topics = DEMO_TRENDS.copy()
-                return
-
+            url = RECENT_SEARCH_URL.format(query=requests.utils.quote(topic))
             headers = {"Authorization": f"Bearer {X_API_BEARER_TOKEN}"}
-            url = "https://api.twitter.com/1.1/trends/place.json"
-            params = {"id": 1}
 
             resp = await asyncio.to_thread(
-                requests.get, url, headers=headers, params=params, timeout=10
+                requests.get, url, headers=headers, timeout=10
             )
 
-            if resp.status_code == 200:
-                data = resp.json()
-                if data and "trends" in data[0]:
-                    self.trending_topics = [
-                        {
-                            "name": t.get("name", "Unknown"),
-                            "tweet_count": t.get("tweet_volume") or 0
-                        }
-                        for t in data[0]["trends"][:5]
-                    ]
-                    self.worker.editor_logging_handler.info(
-                        f"Fetched {len(self.trending_topics)} live trends."
-                    )
-                    return
+            if resp.status_code != 200:
+                self.worker.editor_logging_handler.warning(
+                    f"[{topic}] API returned {resp.status_code}."
+                )
+                return None
+            self.worker.editor_logging_handler.warning(
+                    f"[{topic}] API returned {resp.json()}."
+                )
 
-            self.worker.editor_logging_handler.warning(f"API {resp.status_code} - using demo data.")
-            self.trending_topics = DEMO_TRENDS.copy()
+            tweets = resp.json().get("data", [])
+            if not tweets:
+                self.worker.editor_logging_handler.warning(
+                    f"[{topic}] No tweets in response."
+                )
+                return None
+
+            # Log all scores for debugging
+            for t in tweets:
+                s = score_tweet(t.get("public_metrics", {}))
+                self.worker.editor_logging_handler.info(
+                    f"  [{topic}] score={s:>4}  {t.get('text', '')[:60]}"
+                )
+
+            # Pick the winner
+            best_tweet = max(
+                tweets,
+                key=lambda t: score_tweet(t.get("public_metrics", {}))
+            )
+            best_score = score_tweet(best_tweet.get("public_metrics", {}))
+
+            self.worker.editor_logging_handler.info(
+                f"[{topic}] WINNER score={best_score} | {best_tweet.get('text', '')[:80]}"
+            )
+
+            return {
+                "name": topic,
+                "top_tweet": best_tweet.get("text", "").strip(),
+                "score": best_score,
+            }
 
         except Exception as e:
-            self.worker.editor_logging_handler.error(f"Fetch error: {e} - using demo data.")
-            self.trending_topics = DEMO_TRENDS.copy()
+            self.worker.editor_logging_handler.error(f"[{topic}] Fetch error: {e}")
+            return None
+
+    async def _summarise_top_tweets_with_llm(self, top_tweets: list) -> list:
+        """
+        Send the best tweet per topic to the LLM and ask for trend-style summaries.
+        Returns a list of {name, top_tweet, score, summary} dicts.
+        Falls back to DEMO_TRENDS on any parsing error.
+        """
+        try:
+            tweet_block = "\n".join(
+                f"{i + 1}. Topic: {item['name']}\n   Top Tweet: {item['top_tweet']}"
+                for i, item in enumerate(top_tweets)
+            )
+
+            prompt = (
+                "You are a news analyst. Below are the highest-engagement tweets for each topic.\n"
+                "For each topic write a short, conversational 1-2 sentence summary that captures "
+                "the key theme or sentiment from that tweet.\n"
+                "Return ONLY a valid JSON array — no markdown, no explanation — in this exact format:\n"
+                '[{"name": "<Topic Name>", "summary": "<Short summary sentence.>"}, ...]\n\n'
+                f"Topics and their top tweets:\n{tweet_block}"
+            )
+
+            raw_response = self.capability_worker.text_to_text_response(prompt)
+
+            # Strip accidental markdown fences
+            clean = raw_response.strip()
+            if clean.startswith("```"):
+                clean = re.sub(r"```[a-z]*\n?", "", clean).strip("` \n")
+
+            parsed = json.loads(clean)
+            if not isinstance(parsed, list) or not parsed:
+                raise ValueError("LLM returned unexpected structure.")
+
+            # Index summaries by topic name for easy lookup
+            summaries_by_name = {item["name"]: item.get("summary", "") for item in parsed}
+
+            # Merge LLM summaries back with original top-tweet data
+            enriched = []
+            for item in top_tweets:
+                enriched.append({
+                    "name": item["name"],
+                    "top_tweet": item["top_tweet"],
+                    "score": item["score"],
+                    "summary": summaries_by_name.get(item["name"], ""),
+                })
+
+            self.worker.editor_logging_handler.info(
+                f"LLM produced summaries for {len(enriched)} topics."
+            )
+            return enriched
+
+        except Exception as e:
+            self.worker.editor_logging_handler.error(
+                f"LLM summarisation failed: {e} — using demo data."
+            )
+            return DEMO_TRENDS.copy()
 
     # ========================================================================
     # QUICK MODE
     # ========================================================================
     async def quick_mode(self):
-        """Top 3, offer more, patient wait for response."""
+        """Top 3 summaries, offer more, patient wait for response."""
         await self.capability_worker.speak(
             f"Hey {self.user_name}, here are the top 3 trending topics right now:"
         )
@@ -352,7 +504,7 @@ class XNewsFeedCapability(MatchingCapability):
             return
 
         if self.is_more_request(user_input_lower):
-            await self.capability_worker.speak("Here are the remaining trends:")
+            await self.capability_worker.speak("Here are the remaining topics:")
             await self.worker.session_tasks.sleep(0.3)
             for i, topic in enumerate(self.trending_topics[3:], 4):
                 await self.speak_single_trend(i, topic)
@@ -374,7 +526,7 @@ class XNewsFeedCapability(MatchingCapability):
     # FULL MODE
     # ========================================================================
     async def full_mode(self):
-        """Read all 5, then open interactive Q&A loop."""
+        """Read all 5 summaries, then open interactive Q&A loop."""
         await self.capability_worker.speak(
             f"Hey {self.user_name}, here's your full rundown of the top 5 trending topics on X:"
         )
@@ -423,9 +575,7 @@ class XNewsFeedCapability(MatchingCapability):
                 await self.capability_worker.speak("Anything else?")
                 continue
 
-            if any(w in user_input_lower for w in [
-                "number", "topic", "tell me about", "more about"
-            ]):
+            if any(w in user_input_lower for w in ["number", "topic", "tell me about", "more about"]):
                 await self.handle_topic_question(user_input_lower)
                 continue
 
@@ -438,8 +588,7 @@ class XNewsFeedCapability(MatchingCapability):
     # ========================================================================
     def is_exit_command(self, text: str) -> bool:
         for word in EXIT_WORDS:
-            pattern = r'\b' + re.escape(word) + r'\b'
-            if re.search(pattern, text):
+            if re.search(r'\b' + re.escape(word) + r'\b', text):
                 return True
         return False
 
@@ -447,25 +596,11 @@ class XNewsFeedCapability(MatchingCapability):
         return any(word in text for word in MORE_WORDS)
 
     async def speak_single_trend(self, number: int, topic: dict):
-        name = topic["name"]
-        count = topic.get("tweet_count", 0)
-
+        """Speak one trend. Reads the LLM summary; falls back to topic name only."""
+        name = topic.get("name", "Unknown")
+        summary = topic.get("summary", "")
         clean_name = re.sub(r'#', 'hashtag ', name)
-
-        if count >= 1_000_000:
-            count_text = f"{count / 1_000_000:.1f} million posts"
-        elif count >= 1_000:
-            count_text = f"{int(count / 1_000)} thousand posts"
-        elif count > 0:
-            count_text = f"{count} posts"
-        else:
-            count_text = None
-
-        if count_text:
-            msg = f"Number {number}: {clean_name}, with {count_text}."
-        else:
-            msg = f"Number {number}: {clean_name}."
-
+        msg = f"Number {number}: {clean_name}. {summary}" if summary else f"Number {number}: {clean_name}."
         await self.capability_worker.speak(msg)
 
     async def handle_topic_question(self, user_input: str):
@@ -476,14 +611,20 @@ class XNewsFeedCapability(MatchingCapability):
                 break
 
         if topic_number and topic_number <= len(self.trending_topics):
-            name = self.trending_topics[topic_number - 1]["name"]
+            topic = self.trending_topics[topic_number - 1]
+            name = topic.get("name", "Unknown")
+            existing_summary = topic.get("summary", "")
+            top_tweet = topic.get("top_tweet", "")
+
             prompt = (
-                f"The topic '{name}' is trending on X. "
-                f"Give a 2-sentence conversational explanation of why. "
-                f"Be concise. Under 30 words. No markdown."
+                f"Topic: '{name}' is trending on X.\n"
+                f"Top tweet: \"{top_tweet}\"\n"
+                f"Existing summary: {existing_summary}\n"
+                f"Give an additional 1-2 sentence conversational insight about why this matters. "
+                f"Be concise. Under 40 words. No markdown."
             )
             analysis = self.capability_worker.text_to_text_response(prompt)
-            await self.capability_worker.speak(f"About {name}: {analysis}")
+            await self.capability_worker.speak(f"More on {name}: {analysis}")
             await self.worker.session_tasks.sleep(0.3)
             await self.capability_worker.speak("What else would you like to know?")
         else:
@@ -492,9 +633,11 @@ class XNewsFeedCapability(MatchingCapability):
             )
 
     async def handle_general_question(self, user_input: str):
-        topics_context = ", ".join([t["name"] for t in self.trending_topics])
+        topics_context = "; ".join(
+            [f"{t['name']}: {t.get('summary', '')}" for t in self.trending_topics]
+        )
         prompt = (
-            f"You are a helpful X news assistant. Current trending topics: {topics_context}.\n"
+            f"You are a helpful X news assistant. Current trending topics and summaries: {topics_context}.\n"
             f"User: {user_input}\n"
             f"Reply in 2 sentences max. Conversational. No markdown."
         )
