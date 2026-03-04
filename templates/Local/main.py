@@ -1,14 +1,14 @@
-import json
 from src.agent.capability import MatchingCapability
 from src.main import AgentWorker
 from src.agent.capability_worker import CapabilityWorker
 
+
 class LocalCapability(MatchingCapability):
     worker: AgentWorker = None
     capability_worker: CapabilityWorker = None
-    
+
     # Do not change following tag of register capability
-    #{{register capability}}
+    # {{register capability}}
 
     def get_system_prompt(self):
         system_prompt = """
@@ -48,11 +48,11 @@ class LocalCapability(MatchingCapability):
             system_prompt,
         )
         self.worker.editor_logging_handler.info(terminal_command)
-        
+
         # Clean up the response (remove any extra whitespace or newlines)
         terminal_command = terminal_command.strip()
         self.worker.editor_logging_handler.info(terminal_command)
-        
+
         history.append(
             {
                 "role": "user",
@@ -75,7 +75,7 @@ class LocalCapability(MatchingCapability):
             command earlier based on user input now tell if that was successful or not in easier terms that can be directly 
             spoken to the user for his understanding but if user wanted to get the information that's in the response return that response too."""
         result = self.capability_worker.text_to_text_response(
-            "check if the command successfully ran? response is: %s"%response,
+            "check if the command successfully ran? response is: %s" % response,
             history,
             check_response_system_prompt,
         )

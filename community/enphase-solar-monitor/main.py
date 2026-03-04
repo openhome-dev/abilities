@@ -44,7 +44,7 @@ ERROR_RESPONSES = {
 class EnphaseSolarMonitorCapability(MatchingCapability):
     """Voice-activated Enphase solar monitoring capability."""
 
-    #{{register_capability}}
+    # {{register_capability}}
     worker: AgentWorker = None
     capability_worker: CapabilityWorker = None
 

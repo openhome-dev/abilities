@@ -14,7 +14,7 @@ class BackgroundCapabilityBackground(MatchingCapability):
     background_daemon_mode: bool = False
 
     # Do not change following tag of register capability
-    #{{register capability}}
+    # {{register capability}}
 
     async def _read_alarms_safe(self):
         """
