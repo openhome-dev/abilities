@@ -1,4 +1,4 @@
-# Watcher Template — Background Monitoring Ability
+# Background Monitoring Ability Template
 ![Community](https://img.shields.io/badge/OpenHome-Community-orange?style=flat-square)
 ![Template](https://img.shields.io/badge/Type-Template-blue?style=flat-square)
 ![Advanced](https://img.shields.io/badge/Level-Advanced-red?style=flat-square)
