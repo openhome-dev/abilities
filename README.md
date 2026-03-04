@@ -33,11 +33,11 @@
 
 ## What Are Abilities?
 
-Abilities are **modular voice AI plugins** that extend what OpenHome Personalities can do. They're triggered by spoken phrases and can do anything — call APIs, play audio, run quizzes, control devices, have multi-turn conversations.
+Abilities are **modular voice AI plugins** that extend what OpenHome Agents can do. They're triggered by spoken phrases and can do anything — call APIs, play audio, run quizzes, control devices, have multi-turn conversations.
 
 Each Ability is just **one file**: `main.py` — your Python logic.
 
-Write your code, zip it, upload it to OpenHome, set your trigger words in the dashboard, and your Personality can do something new.
+Write your code, zip it, upload it to OpenHome, set your trigger words in the dashboard, and your Agent can do something new.
 
 ---
 
@@ -54,36 +54,25 @@ cp -r abilities/templates/basic-template my-first-ability
 
 ```python
 import json
-import os
 from src.agent.capability import MatchingCapability
 from src.main import AgentWorker
 from src.agent.capability_worker import CapabilityWorker
-
 
 class MyFirstCapability(MatchingCapability):
     worker: AgentWorker = None
     capability_worker: CapabilityWorker = None
 
-    @classmethod
-    def register_capability(cls) -> "MatchingCapability":
-        with open(
-            os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.json")
-        ) as file:
-            data = json.load(file)
-        return cls(
-            unique_name=data["unique_name"],
-            matching_hotwords=data["matching_hotwords"],
-        )
+    # Do not change following tag of register capability
+    #{{register capability}}
 
     def call(self, worker: AgentWorker):
         self.worker = worker
-        self.capability_worker = CapabilityWorker(self.worker)
+        self.capability_worker = CapabilityWorker(self)
         self.worker.session_tasks.create(self.run())
 
     async def run(self):
         await self.capability_worker.speak("Hi! Tell me what's on your mind.")
         user_input = await self.capability_worker.user_response()
-
         response = self.capability_worker.text_to_text_response(
             f"Give a short, helpful response to: {user_input}"
         )
@@ -91,7 +80,7 @@ class MyFirstCapability(MatchingCapability):
         self.capability_worker.resume_normal_flow()
 ```
 
-> **Note:** The `register_capability` method is required boilerplate — copy it exactly. The platform handles `config.json` automatically; you never need to create or edit it.
+> **Note:** The `#{{register_capability}}` This line is required boilerplate — copy it exactly. The platform handles `config.json` automatically; you never need to create or edit it.
 
 **3. Upload to OpenHome**
 
@@ -113,11 +102,14 @@ Maintained by the OpenHome team. Tested, stable, and supported.
 
 | Ability | Description | Example Triggers | API Required | Docs |
 |---------|-------------|------------------|--------------|------|
+| [Audius Music DJ](official/audius-music-dj/) | Stream & DJ music from Audius | "play something on audius", "dj mode" | Audius | [README](official/audius-music-dj/README.md) |
 | [Basic Advisor](official/basic-advisor/) | Daily life advice | "give me advice", "help me" | None | [README](official/basic-advisor/README.md) |
+| [Date and Time](official/date-and-time/) | Current date & time info | "what time is it", "what's today's date" | None | [README](official/date-and-time/README.md) |
+| [Music Player](official/music-player/) | Play music from URL or file | "play music", "play a song" | None | [README](official/music-player/README.md) |
+| [Perplexity Web Search](official/perplexity-web-search/) | AI-powered web search | "search the web", "look this up" | Perplexity | [README](official/perplexity-web-search/README.md) |
 | [Quiz Game](official/quiz-game/) | AI-generated trivia | "start a quiz", "quiz me" | None | [README](official/quiz-game/README.md) |
 | [Sound Generator](official/sound-generator/) | AI sound effects | "make a sound", "create a sound" | ElevenLabs | [README](official/sound-generator/README.md) |
 | [Weather](official/weather/) | Current weather by location | "what's the weather" | None | [README](official/weather/README.md) |
-| [Music Player](official/music-player/) | Play music from URL or file | "play music", "play a song" | None | [README](official/music-player/README.md) |
 
 > **Trigger words** are configured in the OpenHome dashboard when you install an Ability, not in the code.
 
@@ -141,9 +133,15 @@ Don't start from scratch — grab a template:
 
 | Template | Best For | Pattern |
 |----------|----------|---------|
-| [basic-template](templates/basic-template/) | First-timers | Speak → Listen → Respond → Exit |
-| [api-template](templates/api-template/) | API integrations | Speak → Call API → Speak result → Exit |
-| [loop-template](templates/loop-template/) | Interactive apps | Loop with listen → process → respond → exit command |
+| [Basic](templates/basic-template) | First-timers | Speak → Listen → Respond → Exit |
+| [API](templates/api-template) | API integrations | Speak → Call API → Speak result → Exit |
+| [Loop](templates/loop-template) | Interactive apps | Loop with listen → process → respond → exit command |
+| [Openclaw](templates/OpenClaw) | OpenClaw integrations | OpenClaw-based ability scaffold |
+| [OpenHome Local](templates/Local) | Local development | Run & test abilities locally |
+| [ReadWriteFile](templates/ReadWriteFile) | File operations | Read from / write to files on device |
+| [SendEmail](templates/SendEmail) | Email notifications | Compose & send emails programmatically |
+| [Alarm](templates/Alarm) | Timers & alarms | Background mode: continuous monitoring loop |
+| [Background](templates/Background) | Background monitoring | Auto-start → Monitor → Act → Sleep → Repeat (endless) |
 
 ---
 
