@@ -442,7 +442,7 @@ description: >
 | Resource | Location |
 |---|---|
 | Alarm Ability (Interactive Combined) | https://github.com/openhome-dev/abilities/tree/dev/templates/Alarm |
-| Standalone Background Daemon | https://github.com/openhome-dev/abilities/tree/dev/templates/Watcher |
+| Standalone Background Daemon | https://github.com/openhome-dev/abilities/tree/dev/templates/Background |
 | SDK Reference (updated) | `OpenHome_SDK_Reference` in project docs |
 | Building Great Abilities (updated) | `Building_Great_OpenHome_Abilities` in project docs |
 | Questions / Support | `#dev-help` on Discord |
