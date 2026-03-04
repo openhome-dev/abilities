@@ -23,7 +23,7 @@ CACHE_TTL = 900  # 15 minutes
 EXIT_WORDS = ["stop", "quit", "exit", "done", "cancel"]
 PREFS_FILE = "enphase_solar_prefs.json"
 
-# Hardcoded from config.json - OpenHome forbids open() in register_capability
+# Hardcoded from config.json - file access forbidden at registration time
 UNIQUE_NAME = "enphase_solar_monitor"
 MATCHING_HOTWORDS = [
     "solar", "solar status", "solar production", "how's my solar",
@@ -44,6 +44,7 @@ ERROR_RESPONSES = {
 class EnphaseSolarMonitorCapability(MatchingCapability):
     """Voice-activated Enphase solar monitoring capability."""
 
+    #{{register_capability}}
     worker: AgentWorker = None
     capability_worker: CapabilityWorker = None
 
