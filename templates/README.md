@@ -53,10 +53,10 @@ templates/
 ├── loop-template/         ← Long-running looped Skill (ambient observer).
 │
 ├── SendEmail/             ← Fire-and-forget SDK method call.
-├── Local/        ← LLM as translator; execute on local machine.
-├── OpenClaw/     ← Escape the sandbox via OpenClaw.
+├── Local/                 ← LLM as translator; execute on local machine.
+├── OpenClaw/              ← Escape the sandbox via OpenClaw.
 │
-├── Background/               ← Standalone background daemon.
+├── Background/            ← Standalone background daemon.
 ├── Alarm/                 ← Combined Skill + Daemon (main.py + background.py).
 │
 └── ReadWriteFile/         ← Shared file storage / IPC between Skill & Daemon.
