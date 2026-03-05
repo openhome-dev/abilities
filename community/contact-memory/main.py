@@ -1,14 +1,13 @@
 
-from datetime import date, datetime, timedelta
 import json
-import os
-import re
-from typing import ClassVar, Dict, List, Optional, Tuple
-from pydantic import Field
-
 from src.agent.capability import MatchingCapability
 from src.main import AgentWorker
 from src.agent.capability_worker import CapabilityWorker
+from datetime import date, datetime, timedelta
+import json
+import re
+from typing import ClassVar, Dict, List, Optional, Tuple
+from pydantic import Field
 
 EXIT_WORDS = {"stop", "exit", "quit", "done", "cancel", "bye", "goodbye", "leave", "that's all"}
 CONTACT_FILE = "contacts.json"
@@ -73,11 +72,11 @@ class ContactMemoryCapability(MatchingCapability):
         "Use summary for 'what do I know' style asks. User: {user_input}"
     )
 
-    @classmethod
-    def register_capability(cls) -> "MatchingCapability":
-        with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.json")) as file:
-            data = json.load(file)
-        return cls(unique_name=data["unique_name"], matching_hotwords=data["matching_hotwords"])
+    # Do not change following tag of register capability
+    #{{register capability}}
+
+    
+    
 
     def call(self, worker: AgentWorker):
         self.worker = worker
