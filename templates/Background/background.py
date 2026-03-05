@@ -4,7 +4,7 @@ from src.main import AgentWorker
 from src.agent.capability_worker import CapabilityWorker
 from time import time
 
-class WatcherCapabilityWatcher(MatchingCapability):
+class BackgroundCapabilityBackground(MatchingCapability):
     worker: AgentWorker = None
     capability_worker: CapabilityWorker = None
     background_daemon_mode: bool = False
@@ -13,9 +13,9 @@ class WatcherCapabilityWatcher(MatchingCapability):
     #{{register capability}}
 
     async def first_function(self):
-        self.worker.editor_logging_handler.info("%s: Watcher Called"%time())
+        self.worker.editor_logging_handler.info("%s: Background Called"%time())
         while True:
-            self.worker.editor_logging_handler.info("%s: watcher watching"%time())
+            self.worker.editor_logging_handler.info("%s: background watching"%time())
             
             message_history = self.capability_worker.get_full_message_history()[-10:]
             for message in message_history:
