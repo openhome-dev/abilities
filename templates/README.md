@@ -32,12 +32,12 @@ Every ability you build falls into one of three categories:
 | Type | Trigger | Lifecycle | Entry File |
 |---|---|---|---|
 | **Skill** | User hotword or brain routing | Runs once, exits | `main.py` |
-| **Background Daemon** | Automatic on session start | Runs continuously in a loop | `background.py` |
+| **Background Daemon** | Automatic on session start | Runs continuously in a loop | `watcher.py` |
 | **Local** | User or system | Runs on-device hardware | DevKit SDK |
 
 **Skill** is the workhorse. A user says a hotword (or the brain's routing LLM invokes it), the ability runs, does its thing, and hands control back via `resume_normal_flow()`.
 
-**Background Daemon** starts automatically when a user connects and runs in a `while True` loop for the entire session. No hotword needed. It can monitor conversations, poll APIs, watch for time-based events, and interrupt the main flow when something fires. Daemons can be standalone (`background.py` only) or combined with a Skill (`main.py` + `background.py`) coordinating through shared file storage.
+**Background Daemon** starts automatically when a user connects and runs in a `while True` loop for the entire session. No hotword needed. It can monitor conversations, poll APIs, watch for time-based events, and interrupt the main flow when something fires. Daemons can be standalone (`watcher.py` only) or combined with a Skill (`main.py` + `watcher.py`) coordinating through shared file storage.
 
 **Local** abilities run directly on Raspberry Pi hardware, bypassing the cloud sandbox entirely. They can use unrestricted Python packages, GPIO pins, and local models. *(Currently under active development.)*
 
@@ -53,11 +53,11 @@ templates/
 ├── loop-template/         ← Long-running looped Skill (ambient observer).
 │
 ├── SendEmail/             ← Fire-and-forget SDK method call.
-├── Local/        ← LLM as translator; execute on local machine.
-├── OpenClaw/     ← Escape the sandbox via OpenClaw.
+├── OpenHome-local/        ← LLM as translator; execute on local machine.
+├── openclaw-template/     ← Escape the sandbox via OpenClaw.
 │
-├── Background/               ← Standalone background daemon.
-├── Alarm/                 ← Combined Skill + Daemon (main.py + background.py).
+├── Watcher/               ← Standalone background daemon.
+├── Alarm/                 ← Combined Skill + Daemon (main.py + watcher.py).
 │
 └── ReadWriteFile/         ← Shared file storage / IPC between Skill & Daemon.
 ```
@@ -110,7 +110,7 @@ Every Skill **must** call this when done. It hands control back to the agent's n
 
 ---
 
-#### [`Local`](./templates/Local) — LLM as Translator (Mac Terminal)
+#### [`OpenHome-local`](./templates/OpenHome-local) — LLM as Translator (Mac Terminal)
 **Type:** Skill · **Pattern:** LLM-as-translator · **Complexity:** Medium
 
 You say `"list all my Python files"` and the speaker translates that into a real terminal command (`find . -name "*.py"`), runs it on your local machine, and reads back the result in plain English. Two LLM calls bookend the local execution — one translates speech → command, another translates raw output → human speech.
@@ -126,7 +126,7 @@ Abilities run in OpenHome's cloud sandbox, not on your local machine. `exec_loca
 
 ---
 
-#### [`OpenClaw`](./templates/OpenClaw) — Sandbox Escape
+#### [`openclaw-template`](./templates/openclaw-template) — Sandbox Escape
 **Type:** Skill · **Pattern:** Sandbox escape · **Complexity:** Minimal
 
 Forwards the user's raw speech directly to OpenClaw — a desktop AI agent with 2,800+ community skills. OpenClaw processes it on your local machine and returns the result. The speaker becomes a voice interface for your entire desktop.
@@ -149,12 +149,12 @@ self.capability_worker.resume_normal_flow()
 
 ---
 
-#### [`Background`](./templates/Background) + [`Alarm`](./templates/Alarm) — Background Daemon
+#### [`Watcher`](./templates/Watcher) + [`Alarm`](./templates/Alarm) — Background Daemon
 **Type:** Background Daemon · **Pattern:** Poll loop · **Complexity:** Medium
 
-**`Background`** is the standalone daemon template. It starts automatically when a user connects and runs in an infinite loop — in this template, reading conversation history and logging it every 20 seconds. This is the most architecturally significant pattern in the system: before daemons, every ability was reactive. Now they can be proactive.
+**`Watcher`** is the standalone daemon template. It starts automatically when a user connects and runs in an infinite loop — in this template, reading conversation history and logging it every 20 seconds. This is the most architecturally significant pattern in the system: before daemons, every ability was reactive. Now they can be proactive.
 
-**`Alarm`** is the combined template: `main.py` (Skill) + `background.py` (Daemon) working together. The Skill parses `"set an alarm for 3pm"` and writes to `alarms.json`. The Daemon polls that file every 15 seconds and fires `send_interrupt_signal()` + `play_from_audio_file("alarm.mp3")` when the target time hits. They coordinate through shared files, not direct function calls.
+**`Alarm`** is the combined template: `main.py` (Skill) + `watcher.py` (Daemon) working together. The Skill parses `"set an alarm for 3pm"` and writes to `alarms.json`. The Daemon polls that file every 15 seconds and fires `send_interrupt_signal()` + `play_from_audio_file("alarm.mp3")` when the target time hits. They coordinate through shared files, not direct function calls.
 
 **Key SDK methods:** `get_full_message_history()`, `send_interrupt_signal()`, `session_tasks.sleep()`, `play_from_audio_file()`
 
@@ -198,7 +198,7 @@ Demonstrates nearly every advanced SDK pattern: raw audio recording, external AP
 #### [`ReadWriteFile`](./templates/ReadWriteFile) — Shared File Storage / IPC
 **Type:** Skill · **Complexity:** Minimal
 
-Demonstrates how Skills and Daemons coordinate through shared file storage — the primary IPC mechanism between `main.py` and `background.py`. Used by the `Alarm` template.
+Demonstrates how Skills and Daemons coordinate through shared file storage — the primary IPC mechanism between `main.py` and `watcher.py`. Used by the `Alarm` template.
 
 **Critical rule:** Always **delete** the file before writing a JSON object. `write_file()` appends — calling it twice will corrupt your JSON.
 
@@ -217,9 +217,9 @@ self.capability_worker.write_file("state.json", json.dumps(data))
 | `basic-template` | Skill | `speak()`, `resume_normal_flow()` |
 | `api-template` | Skill | `text_to_text_response()`, `resume_normal_flow()` |
 | `SendEmail` | Skill | `send_email()`, `speak()`, `resume_normal_flow()` |
-| `Local` | Skill | `text_to_text_response()`, `exec_local_command()` |
-| `OpenClaw` | Skill | `exec_local_command()`, `speak()` |
-| `Background` | Background Daemon | `get_full_message_history()`, `session_tasks.sleep()` |
+| `OpenHome-local` | Skill | `text_to_text_response()`, `exec_local_command()` |
+| `openclaw-template` | Skill | `exec_local_command()`, `speak()` |
+| `Watcher` | Background Daemon | `get_full_message_history()`, `session_tasks.sleep()` |
 | `Alarm` | Skill + Daemon | `send_interrupt_signal()`, `play_from_audio_file()`, `session_tasks.sleep()` |
 | `loop-template` | Skill (long-running) | `start_audio_recording()`, `get_audio_recording()`, `text_to_text_response()` |
 | `ReadWriteFile` | Utility / IPC | `read_file()`, `delete_file()`, `write_file()` |
@@ -232,7 +232,7 @@ self.capability_worker.write_file("state.json", json.dumps(data))
 2. **Copy the folder** and rename it to your ability name.
 3. **Replace hardcoded values** — API keys, emails, URLs — with user-collected input or environment config.
 4. **Add guardrails** — error handling, confirmation steps, and safety checks appropriate for your use case.
-5. **Coordinating a Skill + Daemon?** Use the `ReadWriteFile` pattern to pass state between `main.py` and `background.py` via shared JSON files.
+5. **Coordinating a Skill + Daemon?** Use the `ReadWriteFile` pattern to pass state between `main.py` and `watcher.py` via shared JSON files.
 
 For full SDK documentation, see the [OpenHome Developer Docs](./docs).
 
