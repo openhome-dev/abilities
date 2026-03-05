@@ -1,0 +1,20 @@
+{
+  "unique_name": "alarm_timer",
+  "matching_hotwords": [
+    "set an alarm",
+    "set a timer",
+    "wake me up",
+    "remind me in",
+    "timer for",
+    "alarm for",
+    "set alarm",
+    "countdown timer",
+    "what alarms do i have",
+    "list my alarms",
+    "cancel my alarm",
+    "cancel alarm",
+    "cancel timer",
+    "how long until my alarm",
+    "do i have any alarms"
+  ]
+}
