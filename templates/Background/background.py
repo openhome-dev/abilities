@@ -4,18 +4,18 @@ from src.main import AgentWorker
 from src.agent.capability_worker import CapabilityWorker
 from time import time
 
-class WatchertestCapabilityWatcher(MatchingCapability):
+class BackgroundCapabilityBackground(MatchingCapability):
     worker: AgentWorker = None
     capability_worker: CapabilityWorker = None
-    watcher_mode: bool = False
+    background_daemon_mode: bool = False
     
     # Do not change following tag of register capability
     #{{register capability}}
 
     async def first_function(self):
-        self.worker.editor_logging_handler.info("%s: Watcher Called"%time())
+        self.worker.editor_logging_handler.info("%s: Background Called"%time())
         while True:
-            self.worker.editor_logging_handler.info("%s: watcher watching"%time())
+            self.worker.editor_logging_handler.info("%s: background watching"%time())
             
             message_history = self.capability_worker.get_full_message_history()[-10:]
             for message in message_history:
@@ -28,10 +28,10 @@ class WatchertestCapabilityWatcher(MatchingCapability):
         # Resume the normal workflow
         self.capability_worker.resume_normal_flow()
 
-    def call(self, worker: AgentWorker, watcher_mode: bool):
+    def call(self, worker: AgentWorker, background_daemon_mode: bool):
         # Initialize the worker and capability worker
         self.worker = worker
-        self.watcher_mode = watcher_mode
+        self.background_daemon_mode = background_daemon_mode
         self.capability_worker = CapabilityWorker(self.worker)
 
         self.worker.session_tasks.create(self.first_function())
