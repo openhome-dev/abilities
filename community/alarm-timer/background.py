@@ -19,7 +19,7 @@ class AlarmTimerWatcher(MatchingCapability):
     background_daemon_mode: bool = False
 
     # Do not change following tag of register capability
-    #{{register capability}}
+    # {{register capability}}
 
     async def save_json(self, data: dict):
         """Delete + write pattern for oh_alarms.json."""

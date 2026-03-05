@@ -20,7 +20,7 @@ class AlarmTimerCapability(MatchingCapability):
     user_timezone: str = None
 
     # Do not change following tag of register capability
-    #{{register capability}}
+    # {{register capability}}
 
     def detect_timezone(self) -> str:
         """Detect timezone. Priority: get_timezone() > UTC."""
