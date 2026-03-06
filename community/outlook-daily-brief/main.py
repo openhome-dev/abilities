@@ -27,6 +27,25 @@ PREFS_FILE = "outlook_daily_brief_prefs.json"
 API_TIMEOUT = 5
 PARALLEL_TIMEOUT = 6
 
+# Weather & geo (ip-api.com + Open-Meteo, user IP based)
+CLOUD_INDICATORS = [
+    "amazon", "aws", "google", "microsoft", "azure",
+    "digitalocean", "linode", "vultr", "hetzner", "ovh",
+    "oracle", "cloudflare", "rackspace", "ibm cloud",
+]
+WEATHER_DESCRIPTIONS = {
+    0: "clear skies", 1: "mostly clear", 2: "partly cloudy", 3: "overcast",
+    45: "foggy", 48: "foggy with frost",
+    51: "light drizzle", 53: "drizzle", 55: "heavy drizzle",
+    61: "light rain", 63: "rain", 65: "heavy rain",
+    71: "light snow", 73: "snow", 75: "heavy snow", 77: "snow grains",
+    80: "light rain showers", 81: "rain showers", 82: "heavy rain showers",
+    85: "light snow showers", 86: "heavy snow showers",
+    95: "thunderstorm", 96: "thunderstorm with light hail",
+    99: "thunderstorm with heavy hail",
+}
+IMPERIAL_COUNTRIES = ["US"]
+
 # Idle timeouts before sign-off; high count so follow-ups are still in scope
 FOLLOW_UP_IDLE_TIMEOUT_SEC = 20.0
 FOLLOW_UP_IDLE_COUNT_BEFORE_SIGNOFF = 5
@@ -374,9 +393,12 @@ class OutlookBriefCapability(MatchingCapability):
             return None
 
     def _fetch_weather_sync(self) -> Optional[Dict]:
-        lat, lon, city = self._resolve_weather_location_sync()
+        lat, lon, city, country = self._resolve_weather_location_sync()
         if lat is None or lon is None:
             return None
+        use_fahrenheit = country in IMPERIAL_COUNTRIES
+        temp_unit = "fahrenheit" if use_fahrenheit else "celsius"
+        speed_unit = "mph" if use_fahrenheit else "kmh"
         try:
             url = (
                 "https://api.open-meteo.com/v1/forecast"
@@ -384,6 +406,8 @@ class OutlookBriefCapability(MatchingCapability):
                 "&current=temperature_2m,weather_code,wind_speed_10m,relative_humidity_2m"
                 "&daily=temperature_2m_max,temperature_2m_min,precipitation_probability_max,weather_code"
                 "&timezone=auto"
+                f"&temperature_unit={temp_unit}"
+                f"&wind_speed_unit={speed_unit}"
             )
             r = requests.get(url, timeout=API_TIMEOUT)
             if r.status_code != 200:
@@ -397,10 +421,14 @@ class OutlookBriefCapability(MatchingCapability):
             today_max = daily_max[0] if daily_max else cur.get("temperature_2m")
             today_min = daily_min[0] if daily_min else None
             pop_today = daily_pop[0] if daily_pop else None
+            weather_code = cur.get("weather_code", 0)
             return {
                 "location": city or f"{lat:.1f}, {lon:.1f}",
                 "current_temp": cur.get("temperature_2m"),
-                "weather_code": cur.get("weather_code"),
+                "weather_code": weather_code,
+                "condition": WEATHER_DESCRIPTIONS.get(
+                    weather_code, "unclear conditions"
+                ),
                 "wind_speed": cur.get("wind_speed_10m"),
                 "humidity": cur.get("relative_humidity_2m"),
                 "today_high": today_max,
@@ -412,17 +440,25 @@ class OutlookBriefCapability(MatchingCapability):
             return None
 
     def _resolve_weather_location_sync(self) -> tuple:
+        """Return (lat, lon, city, country). Uses prefs location or user IP geo."""
         location = self.prefs.get("location")
         if location and isinstance(location, str) and location.strip():
-            lat, lon = self._geocode_city_sync(location.strip())
+            lat, lon, country = self._geocode_city_sync(location.strip())
             if lat is not None and lon is not None:
-                return (lat, lon, location.strip())
-        lat, lon, city = self._ip_geo_sync()
-        if lat is not None and lon is not None and city:
-            self.prefs["location"] = city
-        return (lat, lon, city or (self.prefs.get("location") or "your area"))
+                return (lat, lon, location.strip(), country or "US")
+        geo = self._fetch_ip_geo_sync()
+        if geo and geo.get("status") == "success" and not self._is_cloud_ip(geo):
+            city = geo.get("city") or ""
+            lat = geo.get("lat", 0)
+            lon = geo.get("lon", 0)
+            country = geo.get("countryCode", "US")
+            if city:
+                self.prefs["location"] = city
+            return (lat, lon, city or "your area", country)
+        return (40.71, -74.01, "New York", "US")
 
     def _geocode_city_sync(self, city: str) -> tuple:
+        """Return (lat, lon, country_code) or (None, None, None)."""
         try:
             r = requests.get(
                 "https://geocoding-api.open-meteo.com/v1/search",
@@ -430,32 +466,47 @@ class OutlookBriefCapability(MatchingCapability):
                 timeout=API_TIMEOUT,
             )
             if r.status_code != 200:
-                return (None, None)
+                return (None, None, None)
             data = r.json()
             results = data.get("results", [])
             if not results:
-                return (None, None)
-            first = results[0]
-            return (first.get("latitude"), first.get("longitude"))
-        except Exception:
-            return (None, None)
-
-    def _ip_geo_sync(self) -> tuple:
-        try:
-            r = requests.get(
-                "http://ip-api.com/json/?fields=lat,lon,city",
-                timeout=API_TIMEOUT,
-            )
-            if r.status_code != 200:
                 return (None, None, None)
-            data = r.json()
+            first = results[0]
             return (
-                data.get("lat"),
-                data.get("lon"),
-                data.get("city") or None,
+                first.get("latitude"),
+                first.get("longitude"),
+                first.get("country_code") or "US",
             )
         except Exception:
             return (None, None, None)
+
+    def _fetch_ip_geo_sync(self) -> dict:
+        """Fetch geolocation from user's IP (per OpenHome SDK)."""
+        try:
+            user_ip = self.worker.user_socket.client.host
+            self.log(f"User IP: {user_ip}")
+            r = requests.get(
+                f"http://ip-api.com/json/{user_ip}",
+                timeout=API_TIMEOUT,
+            )
+            if r.status_code != 200:
+                return {}
+            data = r.json()
+            self.log(f"Geo response: {json.dumps(data)[:200]}")
+            return data
+        except Exception as e:
+            self.log_err(f"IP geo failed: {e}")
+            return {}
+
+    def _is_cloud_ip(self, geo_data: dict) -> bool:
+        """Check if IP belongs to a cloud provider."""
+        isp = (geo_data.get("isp") or "").lower()
+        org = (geo_data.get("org") or "").lower()
+        combined = isp + " " + org
+        for indicator in CLOUD_INDICATORS:
+            if indicator in combined:
+                return True
+        return False
 
     def _refresh_access_token(self) -> tuple:
         url = f"https://login.microsoftonline.com/{TENANT_ID}/oauth2/v2.0/token"
