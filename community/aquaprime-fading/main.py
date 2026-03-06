@@ -137,8 +137,8 @@ ENCOUNTERS = [
     },
     {
         "type": "social", "name": "Faction Recruiter",
-        "desc": "Join the Thieves Guild. They believe in wealth "
-                "redistribution and creative subversion.",
+        "desc": "Join the Thieves Guild. They believe in sharing "
+                "the wealth and creative subversion.",
         "difficulty": 2,
     },
     {
