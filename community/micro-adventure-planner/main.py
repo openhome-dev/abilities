@@ -42,7 +42,6 @@ VALID_MODES = {
 }
 VALID_FOCUS = {"activities", "lodging", "transport", "food", "sights", "mixed"}
 
-_WORD_LIMIT_SHORT = 6
 _IDLE_WARN = 2
 _IDLE_MAX = 3
 
@@ -148,6 +147,8 @@ NOTION_VERSION = "2022-06-28"
 DEFAULT_PREFS = {
     "home_city": None,
     "home_country_code": "",  # ISO 3166-1 alpha-2 (e.g. 'EG', 'US') -- set during IP detection
+    "home_country_name": "",  # Full country name (e.g. 'Saudi Arabia') -- set during IP detection
+    "home_region_name": "",  # Region/governorate (e.g. 'Cairo') -- set during IP detection
     "api_key_serper": SERPER_API_KEY,
     "api_key_ticketmaster": TICKETMASTER_API_KEY,
     "default_budget": "medium",
@@ -158,19 +159,24 @@ DEFAULT_PREFS = {
 }
 
 _INTENT_TEMPLATE = """You classify voice input for a micro-adventure planning assistant.
+The input comes from speech-to-text and MAY CONTAIN garbled/misspelled words.
+Look past the noise and infer the user's real intent.
 Return ONLY valid JSON on one line.
 
 Modes:
 - plan: user asks to create/find/suggest activities, food, sights, or plans
-- refine: user asks to change previous options (cheaper, indoor, closer, quieter, etc.)
-- city: user sets/changes default city
-- calendar: user asks to add selected plan to calendar
-- save: user wants to save/bookmark current plans for later
-- history: user asks about past trips or saved itineraries
-- tips: user asks for travel tips, packing advice, currency, or language info
-- notion: user wants to post or share the plan to Notion
-- clarify: unclear input
-- exit: user wants to stop
+- refine: user asks to change previous options (cheaper, indoor, outdoor, closer, quieter, more active, etc.)
+- city: user sets/changes their default/home city (e.g. "city is Cairo", "set city to Paris", "I live in London")
+- calendar: user asks to add a plan/event to their calendar
+- save: user wants to save/bookmark/keep current plans for later
+- history: user asks about past trips, saved itineraries, or what they've done before
+- tips: user asks for travel tips, packing advice, currency info, language help, or "what to pack"
+- notion: user wants to post, share, send, add, or save the plan to Notion.
+  STT often garbles "Notion" into "no shin", "no sjenn", "no chen", "noshon", "motion", "ocean".
+  If you see an action word (post/save/send/share/put/add) combined with anything that sounds
+  like "notion" (even badly mangled), choose mode=notion.
+- clarify: genuinely unclear input that you cannot classify
+- exit: user wants to stop, leave, quit, or says goodbye
 
 trip_type rules (IMPORTANT - apply these before deciding city):
 - Set trip_type to "outing" when the user wants ANY short local activity with NO named travel destination:
@@ -182,6 +188,15 @@ trip_type rules (IMPORTANT - apply these before deciding city):
   For outing: set city=null (rely on stored home city), time_context="today"
 - Set trip_type to "travel" when the user clearly wants to go somewhere away (city named, or overnight/multi-day trip)
 - Set trip_type to null when unclear
+
+duration / time_context extraction:
+- Extract the user's stated duration as-is into time_context. Examples:
+  "one week in Rome" → time_context="one week"
+  "weekend trip to Paris" → time_context="weekend"
+  "I wanna go to Tokyo for 3 days" → time_context="3 days"
+  "a month in Bali" → time_context="one month"
+  "today" / "tonight" → time_context="today"
+- If no duration is stated, set time_context=null
 
 User input: "{user_input}"
 Last prompt: "{last_prompt}"
@@ -207,6 +222,7 @@ _FOLLOWUP_TEMPLATE = (
 
 
 SEARCH_URL = "https://google.serper.dev/search"
+SERPER_PLACES_URL = "https://google.serper.dev/places"
 TICKETMASTER_URL = "https://app.ticketmaster.com/discovery/v2/events.json"
 IP_GEO_URL = "http://ip-api.com/json"
 GEOCODE_URL = "https://geocoding-api.open-meteo.com/v1/search"
@@ -237,6 +253,7 @@ class MicroAdventurePlannerAbility(MatchingCapability):
         self.capability_worker = CapabilityWorker(self)
         self.current_plans = []
         self._last_plan_context: dict = {}
+        self._last_narrative: str = ""  # last LLM-generated plan narrative for Notion
         self._ip_country_code: str = ""  # populated by _fetch_ip_city
         self.worker.session_tasks.create(self.run())
 
@@ -262,6 +279,24 @@ class MicroAdventurePlannerAbility(MatchingCapability):
 
             if not prefs.get("home_city"):
                 await self._first_run_city_setup(prefs)
+            elif not prefs.get("home_country_name"):
+                # Backfill country/region for users who saved city before these fields existed
+                ip_result = await self._fetch_ip_city()
+                if ip_result and ip_result[1]:
+                    prefs["home_country_name"] = ip_result[1]
+                    if ip_result[2]:
+                        prefs["home_region_name"] = ip_result[2]
+                    if not prefs.get("home_country_code") and self._ip_country_code:
+                        prefs["home_country_code"] = self._ip_country_code
+                    await self._save_prefs(prefs)
+                else:
+                    geo = await self._geocode_city(
+                        prefs["home_city"],
+                        country_code=prefs.get("home_country_code", ""),
+                    )
+                    if geo and geo[2]:
+                        prefs["home_country_name"] = geo[2]
+                        await self._save_prefs(prefs)
 
             prompt = "So, where do you want to go? Or just tell me the vibe -- relaxing, exploring, food, whatever."
             idle_count = 0
@@ -357,6 +392,13 @@ class MicroAdventurePlannerAbility(MatchingCapability):
                     )
                     continue
 
+                if mode == "clarify":
+                    await self.capability_worker.speak(
+                        "Sorry, I didn't catch that. Could you say that again?"
+                    )
+                    prompt = "What would you like to do? I can plan a trip, find restaurants, or give travel tips."
+                    continue
+
                 found = await self._handle_plan(intent, prefs)
                 prompt = (
                     "Want to save these, post to Notion, hear travel tips, or refine options?"
@@ -390,16 +432,28 @@ class MicroAdventurePlannerAbility(MatchingCapability):
         await self.capability_worker.write_file(PREFS_FILE, json.dumps(prefs), False)
 
     async def _first_run_city_setup(self, prefs: dict):
-        city = await self._fetch_ip_city()
+        ip_result = await self._fetch_ip_city()
+        city = ip_result[0] if ip_result else None
+        ip_country = ip_result[1] if ip_result else ""
+        ip_region = ip_result[2] if ip_result else ""
         if city:
+            # Build display: "Badr, Cairo, Egypt" or "Badr, Egypt"
+            _parts = [city]
+            if ip_region:
+                _parts.append(ip_region)
+            if ip_country:
+                _parts.append(ip_country)
+            location_label = ", ".join(_parts)
             ans = await self.capability_worker.run_io_loop(
-                f"Looks like you're in {city} -- want me to use that as your home base?"
+                f"Looks like you're in {location_label} -- want me to use that as your home base?"
             )
             if ans and any(
                 x in ans.lower() for x in ("yes", "sure", "ok", "yep", "yeah")
             ):
                 prefs["home_city"] = city
                 prefs["home_country_code"] = self._ip_country_code
+                prefs["home_country_name"] = ip_country
+                prefs["home_region_name"] = ip_region
                 await self._save_prefs(prefs)
                 return
             # User may have said something like "Use Cairo instead" -- try to extract city
@@ -424,7 +478,8 @@ class MicroAdventurePlannerAbility(MatchingCapability):
                 f"Got it -- I'll remember {city_to_save} for you."
             )
 
-    async def _fetch_ip_city(self) -> Optional[str]:
+    async def _fetch_ip_city(self) -> Optional[tuple[str, str, str]]:
+        """Return (city, country, region) tuple from IP geolocation, or None on failure."""
         try:
             ip = self.worker.user_socket.client.host
             async with httpx.AsyncClient(timeout=5) as client:
@@ -432,7 +487,15 @@ class MicroAdventurePlannerAbility(MatchingCapability):
             if resp.status_code == 200 and resp.json().get("status") == "success":
                 data = resp.json()
                 self._ip_country_code = data.get("countryCode", "")
-                return data.get("city")
+                city = data.get("city") or ""
+                country = data.get("country") or ""
+                # Extract short region name: "Cairo Governorate" → "Cairo"
+                raw_region = data.get("regionName") or ""
+                region = raw_region.replace(" Governorate", "").replace(" Province", "").replace(" Region", "").strip()
+                # Don't store region if it's the same as the city
+                if region.lower() == city.lower():
+                    region = ""
+                return (city, country, region) if city else None
         except Exception as exc:
             self._err(f"IP lookup failed: {exc}")
         return None
@@ -440,164 +503,13 @@ class MicroAdventurePlannerAbility(MatchingCapability):
     async def _classify_intent(self, user_input: str, last_prompt: str) -> dict:
         lower = user_input.lower()
         detected_focus = self._detect_focus(lower)
+
+        # ── Fast-path 1: city set (unambiguous, never garbled) ────────────
         if any(x in lower for x in ("city is", "set city", "change city", "i live in")):
             city_guess = self._extract_city_from_text(user_input)
             return {"mode": "city", "city": city_guess}
-        if any(x in lower for x in ("add to calendar", "calendar")):
-            return {"mode": "calendar", "reference": "first"}
-        if any(
-            x in lower
-            for x in (
-                "save this",
-                "save plan",
-                "bookmark",
-                "save itinerary",
-                "keep this",
-            )
-        ):
-            return {"mode": "save", "reference": "first"}
-        if any(
-            x in lower
-            for x in (
-                "trip history",
-                "past trips",
-                "saved plans",
-                "my itineraries",
-                "what have i",
-            )
-        ):
-            return {"mode": "history"}
-        if any(
-            x in lower
-            for x in (
-                "travel tips",
-                "packing",
-                "currency",
-                "language",
-                "what to pack",
-                "travel advice",
-            )
-        ):
-            city_guess = self._extract_city_from_text(user_input)
-            return {"mode": "tips", "city": city_guess}
-        if any(
-            x in lower
-            for x in (
-                "post to notion",
-                "share to notion",
-                "send to notion",
-                "add to notion",
-                "notion",
-            )
-        ):
-            return {"mode": "notion"}
-        if any(
-            x in lower
-            for x in (
-                "cheaper",
-                "indoor",
-                "outdoor",
-                "closer",
-                "quieter",
-                "more active",
-            )
-        ):
-            return {"mode": "refine", "budget": "low" if "cheap" in lower else None}
-        # ── Local outing fast-path ────────────────────────────────────────
-        # If user says "restaurant today" / "cafe tonight" with no clear
-        # multi-day destination, treat it as a local outing near home city.
-        LOCAL_TIME_WORDS = ("today", "tonight", "now", "this evening", "right now")
-        is_local_time = any(w in lower for w in LOCAL_TIME_WORDS)
-        LOCAL_FOCUSES = ("food", "sights", "activities")
-        if is_local_time and detected_focus in LOCAL_FOCUSES:
-            return {
-                "mode": "plan",
-                "city": None,  # use home_city
-                "focus": detected_focus,
-                "trip_type": "outing",
-                "time_context": "today",
-                "vibe": self._parse_vibe_text(user_input),
-                "budget": self._parse_budget_text(user_input)
-                if any(c.isdigit() for c in user_input)
-                else None,
-                "raw_input": user_input,
-            }
 
-        travel_markers = ("travel to", "go to", "trip to", "in ", "at ")
-        if any(x in lower for x in travel_markers):
-            city_guess = self._extract_city_from_text(user_input)
-            # Reject STT noise where the "city" is actually a common English verb/noun
-            _NOT_A_CITY = {
-                "eat",
-                "drink",
-                "play",
-                "have",
-                "get",
-                "see",
-                "do",
-                "go",
-                "find",
-                "look",
-                "try",
-                "make",
-                "take",
-                "come",
-                "know",
-                "work",
-                "run",
-                "walk",
-                "swim",
-                "hike",
-                "dance",
-                "sleep",
-                "food",
-                "lunch",
-                "dinner",
-                "breakfast",
-                "brunch",
-                "meal",
-                "fun",
-                "heat",
-                "beat",
-                "meet",
-                "gym",
-                "park",
-                "cafe",
-                "restaurant",
-                "shop",
-                "mall",
-                "beach",
-                "home",
-            }
-            # Only trust the fast-path if it looks like a real city name (<=3 words, not a verb)
-            if (
-                city_guess
-                and len(city_guess.split()) <= 3
-                and city_guess.lower() not in _NOT_A_CITY
-            ):
-                # Decide trip type from duration hints
-                is_week = any(w in lower for w in ("week", "7 day", "7day"))
-                is_weekend = any(w in lower for w in ("weekend", "2 day", "2day"))
-                trip_type = (
-                    "travel" if is_week else ("weekend" if is_weekend else "travel")
-                )
-                return {
-                    "mode": "plan",
-                    "city": city_guess,
-                    "focus": detected_focus,
-                    "trip_type": trip_type,
-                    "vibe": self._parse_vibe_text(user_input),
-                    "budget": self._parse_budget_text(user_input)
-                    if any(c.isdigit() for c in user_input)
-                    else None,
-                    "time_context": "today" if "today" in lower else None,
-                    "raw_input": user_input,
-                }
-        if len(lower.split()) <= _WORD_LIMIT_SHORT and any(
-            x in lower for x in ("plan", "ideas", "suggest")
-        ):
-            return {"mode": "plan", "focus": detected_focus, "raw_input": user_input}
-
+        # ── Everything else: let LLM classify ─────────────────────────────
         prompt = _INTENT_TEMPLATE.format(
             user_input=user_input,
             last_prompt=last_prompt,
@@ -607,20 +519,23 @@ class MicroAdventurePlannerAbility(MatchingCapability):
             raw = self.capability_worker.text_to_text_response(prompt)
             data = json.loads(self._strip_fences(raw))
             if data.get("mode") in VALID_MODES:
-                # Reject a 'plan' decision from LLM if there's no city in the intent
-                # and no valid home city is stored -- avoids single noise words triggering plans
+                # Guard: reject 'plan' from LLM if no city and input is very short
+                # (avoids single noise words triggering plans)
                 if (
                     data.get("mode") == "plan"
                     and not data.get("city")
                     and len(lower.split()) <= 2
                 ):
                     return {"mode": "clarify", "raw_input": user_input}
+
+                # Normalize focus through the keyword detector if LLM gave junk
                 focus = (data.get("focus") or "").lower().strip()
                 if focus not in VALID_FOCUS:
                     data["focus"] = detected_focus
-                # If LLM returned a plan with no city and no outing flag, it may have been
-                # confused by STT noise ("Travel Dravel"). Ask LLM directly rather than
-                # relying on hardcoded keyword lists.
+
+                # If LLM returned a plan with no city and no outing flag, ask a
+                # follow-up LLM call to decide if it's a local outing (handles STT
+                # noise like "Travel Dravel go eat").
                 if (
                     data.get("mode") == "plan"
                     and not data.get("city")
@@ -637,13 +552,19 @@ class MicroAdventurePlannerAbility(MatchingCapability):
                         data["trip_type"] = "outing"
                         data["city"] = None
                         data["time_context"] = data.get("time_context") or "today"
-                data["raw_input"] = (
-                    user_input  # always attach so _gather_trip_details can read it
-                )
+
+                data["raw_input"] = user_input
                 return data
         except Exception as exc:
-            self._err(f"Intent classify fallback: {exc}")
-        return {"mode": "plan", "focus": detected_focus, "raw_input": user_input}
+            self._err(f"Intent classify LLM error: {exc}")
+
+        # ── Fallback: fuzzy Notion detection for badly garbled STT ────────
+        # If LLM failed or returned 'clarify', check phonetic Notion match
+        # as a safety net (e.g. "Past to no sjenn").
+        if self._looks_like_notion(lower):
+            return {"mode": "notion"}
+
+        return {"mode": "clarify", "raw_input": user_input}
 
     def _detect_focus(self, lower_text: str) -> str:
         has_lodging = any(word in lower_text for word in LODGING_WORDS)
@@ -755,8 +676,12 @@ class MicroAdventurePlannerAbility(MatchingCapability):
                 # User asked for a city suggestion upfront -- skip local-or-away, go straight
                 ans_lower = raw_input_lower
             else:
+                _home_country = (prefs.get("home_country_name") or "").strip()
+                _city_label = (
+                    f"{city_from_prefs}, {_home_country}" if _home_country else city_from_prefs
+                )
                 ans = await self.capability_worker.run_io_loop(
-                    f"Are you looking to explore somewhere near {city_from_prefs}, "
+                    f"Are you looking to explore somewhere near {_city_label}, "
                     "or do you have a new destination in mind?"
                 )
                 ans_lower = (ans or "").lower()
@@ -854,6 +779,11 @@ class MicroAdventurePlannerAbility(MatchingCapability):
                     dest_ans = await self.capability_worker.run_io_loop(
                         "Where would you like to go instead?"
                     )
+                    if self._is_correction(dest_ans or ""):
+                        await self.capability_worker.speak(
+                            "No problem -- just let me know what you'd like to do."
+                        )
+                        return False
                     city = (
                         self._extract_city_from_text(dest_ans or "")
                         or (dest_ans or "").strip()
@@ -876,6 +806,11 @@ class MicroAdventurePlannerAbility(MatchingCapability):
                     dest_ans = await self.capability_worker.run_io_loop(
                         "Where do you want to go?"
                     )
+                    if self._is_correction(dest_ans or ""):
+                        await self.capability_worker.speak(
+                            "No problem -- just let me know what you'd like to do."
+                        )
+                        return False
                     new_dest = (
                         self._extract_city_from_text(dest_ans or "")
                         or (dest_ans or "").strip()
@@ -889,12 +824,19 @@ class MicroAdventurePlannerAbility(MatchingCapability):
                         )
                         return False
 
-        # Only show origin when it's genuinely different from the destination
-        origin_city = (
-            city_from_prefs
-            if city_from_prefs and city_from_prefs.lower() != city.lower()
-            else ""
-        )
+        # Only show origin when it's genuinely different from the destination.
+        # Build full origin label: "Badr, Cairo, Egypt" using stored prefs.
+        if city_from_prefs and city_from_prefs.lower() != city.lower():
+            _origin_parts = [city_from_prefs]
+            _region = (prefs.get("home_region_name") or "").strip()
+            _country = (prefs.get("home_country_name") or "").strip()
+            if _region:
+                _origin_parts.append(_region)
+            if _country:
+                _origin_parts.append(_country)
+            origin_city = ", ".join(_origin_parts)
+        else:
+            origin_city = ""
 
         # Parse budget from any dollar amounts in the raw intent before asking questions
         raw_budget = intent.get("budget") or ""
@@ -1040,6 +982,7 @@ class MicroAdventurePlannerAbility(MatchingCapability):
         # Store context so _speak_refined can reuse it without losing trip details
         self._last_plan_context = {
             "city": city,
+            "origin_city": origin_city,  # full label e.g. "Badr, Cairo, Egypt"
             "budget": budget,
             "vibe": vibe,
             "indoor": indoor,
@@ -1048,31 +991,63 @@ class MicroAdventurePlannerAbility(MatchingCapability):
             "focus": focus,
             "duration": dur,
             "trip_type": ttype,
+            "events": events,  # Ticketmaster events for narrative context
         }
 
-        # Speak a short summary first, then let the user decide if they want the full plan
-        await self._speak_plans_brief(
-            city=city, focus=focus, duration=dur, trip_type=ttype
-        )
-        wants_full = await self.capability_worker.run_io_loop(
-            "Want me to walk you through the full day-by-day plan, or is this a good start?"
-        )
-        if wants_full and any(
-            x in (wants_full or "").lower()
-            for x in (
-                "yes",
-                "sure",
-                "full",
-                "detail",
-                "yeah",
-                "yep",
-                "tell",
-                "go",
-                "more",
-                "please",
-                "walk",
+        # For local outings: speak the 3-option brief then ask.
+        # For travel trips: skip the robotic venue-name list and go straight to the full-plan offer.
+        if ttype == "outing":
+            await self._speak_plans_brief(
+                city=city, focus=focus, duration=dur, trip_type=ttype
             )
-        ):
+            detail_prompt = "Want more details on any of these spots, or is that enough?"
+        else:
+            await self.capability_worker.speak(
+                f"I've found some great spots for your {dur or 'trip'} in {city}. "
+                "Want me to walk you through the full day-by-day plan?"
+            )
+            detail_prompt = "Ready for the full plan?"
+        wants_full = await self.capability_worker.run_io_loop(detail_prompt)
+        wf_lower = (wants_full or "").lower()
+
+        # ── Detect Notion / save shortcut at this prompt ──────────────────
+        # User may say "just post to Notion" or "waste direkt to notion" (STT garble)
+        # instead of confirming the full plan.  Detect it and short-circuit.
+        if self._looks_like_notion(wf_lower):
+            ok = await self._post_to_notion(prefs)
+            return ok
+        if any(w in wf_lower for w in ("save", "bookmark", "keep")):
+            ok = await self._save_itinerary(intent, prefs)
+            return ok
+
+        # ── Use LLM to interpret the user's response ─────────────────────
+        # Instead of fragile keyword matching, ask the LLM to parse the response.
+        # It handles: "yes", "sure, but make it one week", "nah", STT garble, etc.
+        _confirm_prompt = (
+            f'The user was asked: "{detail_prompt}"\n'
+            f'They replied (via speech-to-text, may be garbled): "{wants_full}"\n\n'
+            "Determine:\n"
+            "1. wants_plan: does the user want to proceed with the full plan? (true/false)\n"
+            "2. duration_correction: if they mentioned a different duration (e.g. 'one week', "
+            "'3 days', 'a month'), extract it. Otherwise null.\n\n"
+            "Reply ONLY with JSON: {\"wants_plan\": true/false, \"duration_correction\": \"...\" or null}"
+        )
+        wants = False
+        try:
+            _cr = self.capability_worker.text_to_text_response(_confirm_prompt)
+            _cd = json.loads(self._strip_fences(_cr or "{}"))
+            wants = bool(_cd.get("wants_plan", False))
+            _dur_fix = (_cd.get("duration_correction") or "").strip()
+            if _dur_fix:
+                dur = _dur_fix
+                self._last_plan_context["duration"] = _dur_fix
+        except Exception as _exc:
+            self._err(f"Plan-confirm LLM parse error: {_exc}")
+            # Fallback: treat any non-empty non-negative response as "yes"
+            _neg = ("no", "nope", "nah", "don't", "not now", "skip", "stop")
+            wants = bool(wf_lower) and not any(n in wf_lower for n in _neg)
+
+        if wants:
             await self._speak_plans(
                 city=city,
                 budget=budget,
@@ -1083,6 +1058,7 @@ class MicroAdventurePlannerAbility(MatchingCapability):
                 focus=focus,
                 duration=dur,
                 trip_type=ttype,
+                events=events,
             )
         self._log_plan_links(self.current_plans)
         return True
@@ -1119,6 +1095,20 @@ class MicroAdventurePlannerAbility(MatchingCapability):
                 intent["duration"] = tc
 
         # --- Budget ---
+        # Only trust LLM-guessed budget if the user actually said a budget word in their input.
+        # Otherwise LLM fills in "medium" by default and the question gets silently skipped.
+        raw_input = (intent.get("raw_input") or "").lower()
+        BUDGET_KEYWORDS = (
+            "low", "cheap", "budget", "medium", "moderate",
+            "expensive", "high", "luxury", "$", "dollar", "euro",
+            "pound", "thousand", "hundred",
+        )
+        budget_in_input = (
+            any(w in raw_input for w in BUDGET_KEYWORDS)
+            or any(c.isdigit() for c in raw_input)
+        )
+        if not budget_in_input:
+            intent.pop("budget", None)  # discard LLM guess, ask the user
         if not intent.get("budget"):
             ans = await self.capability_worker.run_io_loop(
                 "And what's your rough budget? Could be low, medium, high -- or just say an amount like 2000 dollars."
@@ -1146,11 +1136,10 @@ class MicroAdventurePlannerAbility(MatchingCapability):
             "cozy",
             "fun",
         )
-        raw_input = (intent.get("raw_input") or "").lower()
         vibe_in_input = any(w in raw_input for w in VIBE_KEYWORDS)
-        if not vibe_in_input and (
-            not intent.get("vibe") or intent.get("vibe") == "balanced"
-        ):
+        if not vibe_in_input:
+            intent.pop("vibe", None)  # discard LLM guess, ask the user
+        if not intent.get("vibe"):
             ans = await self.capability_worker.run_io_loop(
                 "Last one -- what's the mood? Like relaxing, adventurous, cultural, romantic, or something else?"
             )
@@ -1290,6 +1279,7 @@ class MicroAdventurePlannerAbility(MatchingCapability):
             focus=ctx.get("focus"),
             duration=ctx.get("duration"),
             trip_type=ctx.get("trip_type"),
+            events=ctx.get("events"),
             refined=True,
         )
 
@@ -1465,67 +1455,116 @@ class MicroAdventurePlannerAbility(MatchingCapability):
             f"within {radius_km} km of {city_q}" if radius_km else f"in {city_q}"
         )
         try:
-            queries: list[tuple[str, str]] = []
+            # Places queries (food / sights / activities) → real venue names
+            places_queries: list[tuple[str, str]] = []
+            if focus in ("food", "mixed"):
+                places_queries.append((f"restaurants {city_q}", "food"))
+            if focus in ("sights", "mixed"):
+                places_queries.append((f"tourist attractions {city_q}", "sights"))
             if focus in ("activities", "mixed"):
-                queries.append(
-                    (f"things to do {location_q} {time_context}".strip(), "activity")
-                )
+                places_queries.append((f"things to do {city_q}", "activity"))
+
+            # Organic search queries (lodging / transport only)
+            organic_queries: list[tuple[str, str]] = []
             if focus in ("lodging", "mixed"):
-                queries.append(
+                organic_queries.append(
                     (f"best hotels and motels {location_q}".strip(), "lodging")
                 )
             if focus in ("transport", "mixed"):
-                queries.append(
+                organic_queries.append(
                     (
                         f"local transportation options {location_q} {time_context}".strip(),
                         "transport",
                     )
                 )
-            if focus in ("food", "mixed"):
-                queries.append(
-                    (f"best restaurants and street food {location_q}".strip(), "food")
-                )
-            if focus in ("sights", "mixed"):
-                queries.append(
-                    (f"top attractions and landmarks {location_q}".strip(), "sights")
-                )
 
-            if not queries:
-                queries.append(
-                    (f"things to do in {city} {time_context}".strip(), "activity")
-                )
+            # Fallback: if focus is purely activities/food/sights with no other query, keep at least one
+            if not places_queries and not organic_queries:
+                places_queries.append((f"things to do {city_q}", "activity"))
+
+            headers = {"X-API-KEY": key, "Content-Type": "application/json"}
 
             async with httpx.AsyncClient(timeout=10) as client:
-                tasks = [
-                    client.post(
-                        SEARCH_URL,
-                        headers={"X-API-KEY": key, "Content-Type": "application/json"},
-                        json={"q": q},
-                    )
-                    for q, _ in queries
+                places_tasks = [
+                    client.post(SERPER_PLACES_URL, headers=headers, json={"q": q})
+                    for q, _ in places_queries
                 ]
-                responses = list(await asyncio.gather(*tasks))
+                organic_tasks = [
+                    client.post(SEARCH_URL, headers=headers, json={"q": q})
+                    for q, _ in organic_queries
+                ]
+                all_responses = list(
+                    await asyncio.gather(*places_tasks, *organic_tasks)
+                )
+
+            places_responses = all_responses[: len(places_tasks)]
+            organic_responses = all_responses[len(places_tasks):]
 
             collected: list[dict] = []
-            for idx, resp in enumerate(responses):
-                result_type = queries[idx][1]
+
+            # Parse Places results -- these are real business names
+            _ARTICLE_SIGNALS = (
+                "itinerary", " guide", "days in", "week in", "things to do",
+                "best places", "first time", "first-tim", "tips for",
+                "what to do", "perfect trip", "must see", "must-see",
+            )
+
+            for idx, resp in enumerate(places_responses):
+                result_type = places_queries[idx][1]
+                if resp.status_code != 200:
+                    continue
+                for row in resp.json().get("places", [])[:5]:  # fetch more, filter down
+                    title = (row.get("title") or "").strip()
+                    if not title:
+                        continue
+                    if any(sig in title.lower() for sig in _ARTICLE_SIGNALS):
+                        continue
+                    # Skip results whose title IS just the city or country name
+                    title_clean = title.lower().strip(" .,")
+                    if title_clean in (city.lower(), country_name.lower()):
+                        continue
+                    address = (row.get("address") or city).strip()
+                    location_str = address if address else city
+                    collected.append(
+                        {
+                            "title": title,
+                            "location": location_str,
+                            "url": row.get("website") or row.get("link") or "",
+                            "type": result_type,
+                        }
+                    )
+
+            # Parse organic results (lodging / transport) with SEO-noise stripping
+            for idx, resp in enumerate(organic_responses):
+                result_type = organic_queries[idx][1]
                 if resp.status_code != 200:
                     continue
                 organic = resp.json().get("organic", [])[:3]
                 for row in organic:
                     raw_title = row.get("title", "Local option")
-                    # Strip SEO noise: site names, year tags, "THE N BEST" prefixes
                     clean = re.sub(
-                        r"\s*[-|]\s*(Tripadvisor|TripAdvisor|Yelp|Booking\.com|Expedia|Google Maps)[^\n]*$",
+                        r"\s*[-|:]\s*(Tripadvisor|TripAdvisor|Yelp|Booking\.com|Expedia"
+                        r"|Google Maps|TasteAtlas|Evendo|Zomato|Foursquare|TimeOut"
+                        r"|Time Out|Eater|OpenTable|Zagat|Lonely Planet|Viator"
+                        r"|GetYourGuide|Culture Trip|Egypt Travel)[^\n]*$",
                         "",
                         raw_title,
                         flags=re.IGNORECASE,
                     )
                     clean = re.sub(r"\s*\([Uu]pdated\s+\d{4}\)", "", clean).strip()
                     clean = re.sub(
-                        r"^(?:THE\s+)?\d+\s+BEST\s+", "", clean, flags=re.IGNORECASE
+                        r"^(?:THE\s+)?(?:\d+\s+)?(?:BEST|TOP|MUST[- ]?(?:TRY|SEE|VISIT))\s+",
+                        "",
+                        clean,
+                        flags=re.IGNORECASE,
                     ).strip()
                     clean = clean or raw_title
+                    _ARTICLE_PREFIXES = (
+                        "hotels in", "motels in", "transport in", "transportation in",
+                        "buses in", "trains in",
+                    )
+                    if any(clean.lower().startswith(p) for p in _ARTICLE_PREFIXES):
+                        continue
                     collected.append(
                         {
                             "title": clean,
@@ -1858,6 +1897,7 @@ class MicroAdventurePlannerAbility(MatchingCapability):
         refined: bool = False,
         duration: Optional[str] = None,
         trip_type: Optional[str] = None,
+        events: Optional[list] = None,
     ):
         rain = float((weather or {}).get("precipitation", 0) or 0)
         aqi_val = float((aqi or {}).get("us_aqi", 0) or 0)
@@ -1865,6 +1905,19 @@ class MicroAdventurePlannerAbility(MatchingCapability):
             f"- {p['title']} ({p.get('type', 'activity')}, {p.get('location', city)}) URL: {p.get('url', '')}"
             for p in self.current_plans[:3]
         )
+        # Build events context line (Ticketmaster events not already in the top-3 options)
+        top_titles = {p["title"].lower() for p in self.current_plans[:3]}
+        extra_events = [
+            e for e in (events or [])
+            if e.get("title", "").lower() not in top_titles
+        ]
+        events_line = ""
+        if extra_events:
+            ev_text = ", ".join(
+                f"{e['title']} at {e.get('location', city)}"
+                for e in extra_events[:3]
+            )
+            events_line = f"- Upcoming events in the city: {ev_text}\n"
         base = (
             f"You are a fun, knowledgeable travel buddy chatting with a friend.\n"
             f"Keep it warm, casual, and exciting.\n\n"
@@ -1875,6 +1928,7 @@ class MicroAdventurePlannerAbility(MatchingCapability):
             f"- Vibe: {vibe or 'balanced'}\n"
             f"- Focus: {focus or 'activities'}\n"
             f"- Weather: rain={rain:.1f}mm, AQI={aqi_val:.0f}\n"
+            f"{events_line}"
             f"- Options:\n{options_text}\n\n"
         )
 
@@ -1937,6 +1991,7 @@ class MicroAdventurePlannerAbility(MatchingCapability):
                 if refined
                 else "Great news! Here is your plan. "
             ) + " ".join(parts)
+        self._last_narrative = summary  # store for Notion posting
         await self.capability_worker.speak(summary)
 
         # Speak place links so user can find them easily
@@ -1956,6 +2011,34 @@ class MicroAdventurePlannerAbility(MatchingCapability):
                 self._log(f"Option {idx} map: {plan['map_url']}")
             if plan.get("route_url"):
                 self._log(f"Option {idx} route: {plan['route_url']}")
+
+    def _looks_like_notion(self, lower_text: str) -> bool:
+        """Return True when lower_text looks like the user wants to post to Notion,
+        even through heavy STT garbling.
+
+        Handles patterns like:
+        - "post to notion" / "save to notion" / "into notion"  (clean)
+        - "waste direkt to notion"  (garbled 'post directly to notion')
+        - "past to no sjenn"  (garbled 'post to Notion')
+        - "it to notion please"  (partial capture)
+
+        Strategy: the word "notion" is distinctive and rarely appears by accident.
+        If we see it, the intent is almost certainly Notion.  For badly garbled
+        input where STT didn't produce "notion", look for phonetic near-misses:
+        "no" + consonant cluster that isn't a plain English word.
+        """
+        # Direct match: "notion" anywhere
+        if "notion" in lower_text:
+            return True
+        # Phonetic near-miss: "nosion", "notio", "nocion", "notin" etc.
+        if re.search(r"\bno[tscz]+i[oa]n?\b", lower_text):
+            return True
+        # STT sometimes splits: "no shin" / "no tion" / "no shen" / "no sjenn"
+        _ACTION_WORDS = ("save", "post", "send", "share", "put", "add", "past", "waste", "push")
+        has_action = any(w in lower_text for w in _ACTION_WORDS)
+        if has_action and re.search(r"\bno\s*[stzj]\w{1,4}\b", lower_text):
+            return True
+        return False
 
     def _reason_text(
         self, item: dict, budget: str, indoor: str, rainy: bool, aqi_value: float
@@ -2027,7 +2110,10 @@ class MicroAdventurePlannerAbility(MatchingCapability):
             return False
 
         api_key = (prefs.get("notion_api_key") or NOTION_API_KEY or "").strip()
-        db_id = (prefs.get("notion_database_id") or NOTION_DATABASE_ID or "").strip()
+        raw_db = (prefs.get("notion_database_id") or NOTION_DATABASE_ID or "").strip()
+        # Strip view parameter that Notion appends when copying from browser URL:
+        # e.g. "abc123?v=xyz456" → "abc123"
+        db_id = raw_db.split("?")[0].strip()
 
         if not api_key:
             await self.capability_worker.speak(
@@ -2040,7 +2126,12 @@ class MicroAdventurePlannerAbility(MatchingCapability):
             )
             return False
 
-        city = self.current_plans[0].get("location", "Unknown City")
+        # Use the planned city from context, not the first option's street address
+        city = (
+            self._last_plan_context.get("city")
+            or self.current_plans[0].get("location", "Unknown City")
+        )
+        origin_label = (self._last_plan_context.get("origin_city") or "").strip()
         now = datetime.datetime.now(datetime.timezone.utc)
         date_str = now.strftime("%B %d, %Y")
         time_str = now.strftime("%H:%M UTC")
@@ -2051,8 +2142,15 @@ class MicroAdventurePlannerAbility(MatchingCapability):
         MAP = "\U0001f5fa\ufe0f"  # world map
         PIN = "\U0001f4cc"  # pushpin
         STAR = "\u2728"  # sparkles
+        PLANE = "\u2708\ufe0f"  # airplane
+        MONEY = "\U0001f4b0"  # money bag
 
-        # Header callout -- plan summary
+        # Header callout -- plan summary with origin → destination
+        header_title = (
+            f"Adventure Plan: {origin_label} \u2192 {city}"
+            if origin_label
+            else f"Adventure Plan for {city}"
+        )
         blocks.append(
             {
                 "object": "block",
@@ -2062,7 +2160,7 @@ class MicroAdventurePlannerAbility(MatchingCapability):
                         {
                             "type": "text",
                             "text": {
-                                "content": f"Adventure Plan for {city}  \u00b7  {date_str}  \u00b7  {time_str}"
+                                "content": f"{header_title}  \u00b7  {date_str}  \u00b7  {time_str}"
                             },
                             "annotations": {"bold": True},
                         }
@@ -2072,6 +2170,260 @@ class MicroAdventurePlannerAbility(MatchingCapability):
                 },
             }
         )
+
+        blocks.append({"object": "block", "type": "divider", "divider": {}})
+
+        # Trip overview -- show the key parameters at a glance
+        ctx = self._last_plan_context
+        SUITCASE = "\U0001f9f3"
+        overview_items = []
+        if origin_label:
+            overview_items.append(f"From: {origin_label}")
+        overview_items.append(f"To: {city}")
+        if ctx.get("duration"):
+            overview_items.append(f"Duration: {ctx['duration']}")
+        if ctx.get("budget"):
+            budget_display = {"low": "Low ($)", "medium": "Medium ($$)", "high": "High ($$$)"}.get(
+                ctx["budget"], ctx["budget"].capitalize()
+            )
+            overview_items.append(f"Budget: {budget_display}")
+        if ctx.get("vibe"):
+            overview_items.append(f"Vibe: {ctx['vibe'].capitalize()}")
+        if ctx.get("focus"):
+            overview_items.append(f"Focus: {ctx['focus'].capitalize()}")
+        if overview_items:
+            blocks.append(
+                {
+                    "object": "block",
+                    "type": "callout",
+                    "callout": {
+                        "rich_text": [
+                            {
+                                "type": "text",
+                                "text": {"content": "  ·  ".join(overview_items)},
+                            }
+                        ],
+                        "icon": {"type": "emoji", "emoji": SUITCASE},
+                        "color": "gray_background",
+                    },
+                }
+            )
+            blocks.append({"object": "block", "type": "divider", "divider": {}})
+
+        # Auto-generate narrative if the user's "yes" was garbled by STT and
+        # _speak_plans was never called -- ensures Notion always has the full plan.
+        if not self._last_narrative and self._last_plan_context and self.current_plans:
+            await self.capability_worker.speak(
+                "Let me put together the full plan for your Notion page..."
+            )
+            ctx = self._last_plan_context
+            _rain = float((ctx.get("weather") or {}).get("precipitation", 0) or 0)
+            _aqi_val = float((ctx.get("aqi") or {}).get("us_aqi", 0) or 0)
+            _options = "\n".join(
+                f"- {p['title']} ({p.get('type', 'activity')}, {p.get('location', city)}) URL: {p.get('url', '')}"
+                for p in self.current_plans[:3]
+            )
+            _ttype = ctx.get("trip_type", "travel")
+            _ctx_events = ctx.get("events") or []
+            _top_titles = {p["title"].lower() for p in self.current_plans[:3]}
+            _extra_events = [e for e in _ctx_events if e.get("title", "").lower() not in _top_titles]
+            _events_line = ""
+            if _extra_events:
+                _ev_text = ", ".join(
+                    f"{e['title']} at {e.get('location', city)}"
+                    for e in _extra_events[:3]
+                )
+                _events_line = f"- Upcoming events in the city: {_ev_text}\n"
+            _base = (
+                f"You are a fun, knowledgeable travel buddy chatting with a friend.\n"
+                f"Keep it warm, casual, and exciting.\n\n"
+                f"Details:\n"
+                f"- City: {city}\n"
+                f"- Duration: {ctx.get('duration', 'weekend')}\n"
+                f"- Budget: {ctx.get('budget', 'medium')}\n"
+                f"- Vibe: {ctx.get('vibe', 'balanced')}\n"
+                f"- Focus: {ctx.get('focus', 'activities')}\n"
+                f"- Weather: rain={_rain:.1f}mm, AQI={_aqi_val:.0f}\n"
+                f"{_events_line}"
+                f"- Options:\n{_options}\n\n"
+            )
+            if _ttype == "outing":
+                _prompt = _base + (
+                    "This is a LOCAL OUTING. Write 3-4 casual spoken sentences covering: "
+                    "which place, what to do/order, how to get there, rough cost. No markdown."
+                )
+            elif _ttype == "weekend":
+                _prompt = _base + (
+                    "This is a WEEKEND TRIP (2-3 days). Write 5-7 casual sentences covering: "
+                    "Day 1 and Day 2 highlights, one food spot per day, transport, rough daily budget. No markdown."
+                )
+            else:
+                _prompt = _base + (
+                    "This is a MULTI-DAY TRAVEL TRIP. Write 7-10 casual sentences covering: "
+                    "day-by-day plan, food spots, transport (flights/trains), rough daily budget. No markdown."
+                )
+            try:
+                self._last_narrative = (
+                    self.capability_worker.text_to_text_response(_prompt) or ""
+                )
+            except Exception as _exc:
+                self._err(f"Auto-narrative generation failed: {_exc}")
+
+        # Full plan narrative (if generated via _speak_plans or auto-generated above)
+        if self._last_narrative:
+            blocks.append(
+                {
+                    "object": "block",
+                    "type": "heading_2",
+                    "heading_2": {
+                        "rich_text": [
+                            {
+                                "type": "text",
+                                "text": {"content": f"{MAP}  Your Plan"},
+                            }
+                        ],
+                        "color": "default",
+                    },
+                }
+            )
+            # Notion paragraph blocks have a 2000-char limit; chunk the narrative
+            narrative_text = self._last_narrative
+            chunk_size = 1900
+            for i in range(0, len(narrative_text), chunk_size):
+                chunk = narrative_text[i : i + chunk_size]
+                blocks.append(
+                    {
+                        "object": "block",
+                        "type": "paragraph",
+                        "paragraph": {
+                            "rich_text": [{"type": "text", "text": {"content": chunk}}]
+                        },
+                    }
+                )
+            blocks.append({"object": "block", "type": "divider", "divider": {}})
+
+        # ── Budget breakdown section ──────────────────────────────────────
+        _budget = (ctx.get("budget") or "medium").lower()
+        _dur = ctx.get("duration") or "weekend"
+        _budget_ranges = {
+            "low": ("$30 – 60 / day", "Budget hostels, street food, public transit"),
+            "medium": ("$60 – 150 / day", "Mid-range hotels, casual restaurants, mix of transit"),
+            "high": ("$150+ / day", "Boutique hotels, fine dining, private transfers"),
+        }
+        _range_text, _range_hint = _budget_ranges.get(_budget, _budget_ranges["medium"])
+        _budget_bullets = [
+            f"Budget level: {_budget.capitalize()}",
+            f"Estimated range: {_range_text}",
+            f"Typical spend: {_range_hint}",
+            f"Duration: {_dur}",
+        ]
+        blocks.append(
+            {
+                "object": "block",
+                "type": "heading_2",
+                "heading_2": {
+                    "rich_text": [
+                        {"type": "text", "text": {"content": f"{MONEY}  Budget Summary"}}
+                    ],
+                    "color": "default",
+                },
+            }
+        )
+        for _b in _budget_bullets:
+            blocks.append(
+                {
+                    "object": "block",
+                    "type": "bulleted_list_item",
+                    "bulleted_list_item": {
+                        "rich_text": [{"type": "text", "text": {"content": _b}}],
+                        "color": "default",
+                    },
+                }
+            )
+
+        # ── Getting There (transport) section ─────────────────────────────
+        if origin_label:
+            blocks.append(
+                {
+                    "object": "block",
+                    "type": "heading_2",
+                    "heading_2": {
+                        "rich_text": [
+                            {"type": "text", "text": {"content": f"{PLANE}  Getting There"}}
+                        ],
+                        "color": "default",
+                    },
+                }
+            )
+            _transport_bullets = [
+                f"From: {origin_label}",
+                f"To: {city}",
+            ]
+            # Add Google Flights search link for travel trips
+            _ttype = ctx.get("trip_type") or "travel"
+            if _ttype != "outing":
+                _flights_url = (
+                    f"https://www.google.com/travel/flights?q=flights+from+"
+                    f"{origin_label.split(',')[0].strip().replace(' ', '+')}+to+{city.replace(' ', '+')}"
+                )
+                _transport_bullets.append("Search flights on Google Flights")
+                # Also add a Rome2Rio link for multi-modal options
+                _r2r_origin = origin_label.split(",")[0].strip().replace(" ", "-")
+                _r2r_dest = city.replace(" ", "-")
+                _transport_bullets.append("Compare all routes on Rome2Rio")
+            else:
+                _flights_url = ""
+                _r2r_origin = ""
+                _r2r_dest = ""
+
+            for _idx_t, _t in enumerate(_transport_bullets):
+                # Make the flight / rome2rio items clickable links
+                if _t.startswith("Search flights") and _flights_url:
+                    blocks.append(
+                        {
+                            "object": "block",
+                            "type": "bulleted_list_item",
+                            "bulleted_list_item": {
+                                "rich_text": [
+                                    {
+                                        "type": "text",
+                                        "text": {"content": _t, "link": {"url": _flights_url}},
+                                        "annotations": {"color": "blue", "underline": True},
+                                    }
+                                ],
+                                "color": "default",
+                            },
+                        }
+                    )
+                elif _t.startswith("Compare all") and _r2r_origin:
+                    _r2r_url = f"https://www.rome2rio.com/s/{_r2r_origin}/{_r2r_dest}"
+                    blocks.append(
+                        {
+                            "object": "block",
+                            "type": "bulleted_list_item",
+                            "bulleted_list_item": {
+                                "rich_text": [
+                                    {
+                                        "type": "text",
+                                        "text": {"content": _t, "link": {"url": _r2r_url}},
+                                        "annotations": {"color": "blue", "underline": True},
+                                    }
+                                ],
+                                "color": "default",
+                            },
+                        }
+                    )
+                else:
+                    blocks.append(
+                        {
+                            "object": "block",
+                            "type": "bulleted_list_item",
+                            "bulleted_list_item": {
+                                "rich_text": [{"type": "text", "text": {"content": _t}}],
+                                "color": "default",
+                            },
+                        }
+                    )
 
         blocks.append({"object": "block", "type": "divider", "divider": {}})
 
@@ -2302,7 +2654,7 @@ class MicroAdventurePlannerAbility(MatchingCapability):
         itineraries = await self._load_json(ITINERARY_FILE, default=[])
         entry = {
             "saved_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
-            "city": self.current_plans[0].get("location", "unknown"),
+            "city": self._last_plan_context.get("city") or self.current_plans[0].get("location", "unknown"),
             "plans": [
                 {
                     "title": p.get("title", ""),
