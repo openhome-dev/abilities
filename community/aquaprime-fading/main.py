@@ -177,6 +177,22 @@ def sync_game_state(device_id: str, hp: int, sand_dollars: int, stance: str,
     })
 
 
+def write_memory(device_id: str, pos_x: int, pos_y: int,
+                 narration: str, memory_title: str = None) -> dict | None:
+    """Write narration to node story slots and player memory slots.
+    Returns {'must_erase': bool, 'slots_remaining': int} or None."""
+    payload = {
+        "device_id": device_id,
+        "pos_x": pos_x,
+        "pos_y": pos_y,
+        "narration": narration,
+        "memory_type": "lore",
+    }
+    if memory_title:
+        payload["memory_title"] = memory_title
+    return api_post("/api/voice/memory-write", payload)
+
+
 def set_offline(device_id: str) -> None:
     """Mark session as offline when game ends."""
     api_post("/api/voice/game-update", {
@@ -397,6 +413,39 @@ class AquaprimeFadingCapability(MatchingCapability):
             )
             await self.capability_worker.speak(narration)
             narrative_history.append({"role": "gm", "text": narration})
+
+            # Write this moment to node story and player memory
+            mem_result = write_memory(
+                device_id, pos_x, pos_y, narration,
+                memory_title=f"Turn {turn}: {action_text[:40]}"
+            )
+
+            # If all 5 memory slots are full, player must erase one to continue
+            if mem_result and mem_result.get("must_erase"):
+                # Ask player which memory to sacrifice
+                await self.capability_worker.speak(
+                    "Your memory is full. Five moments locked in. "
+                    "Say the number of the memory you want to erase: "
+                    "one, two, three, four, or five. "
+                    "Choose carefully — that moment is gone forever."
+                )
+                # Load current memories to read back
+                erase_input = await self.capability_worker.user_response()
+                erase_map = {"one": 1, "two": 2, "three": 3, "four": 4, "five": 5,
+                             "1": 1, "2": 2, "3": 3, "4": 4, "5": 5}
+                slot_to_erase = erase_map.get((erase_input or "").lower().strip())
+                if slot_to_erase:
+                    api_post("/api/voice/memory-erase", {
+                        "device_id": device_id,
+                        "slot_number": slot_to_erase,
+                    })
+                    await self.capability_worker.speak(
+                        f"Memory slot {slot_to_erase} fades. The Fading takes it. "
+                        f"You continue."
+                    )
+                    # Retry the memory write now that a slot is free
+                    write_memory(device_id, pos_x, pos_y, narration,
+                                 memory_title=f"Turn {turn}: {action_text[:40]}")
 
             if hp <= 0:
                 await self.capability_worker.speak(
