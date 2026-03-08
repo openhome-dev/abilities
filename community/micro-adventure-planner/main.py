@@ -1254,7 +1254,7 @@ class MicroAdventurePlannerAbility(MatchingCapability):
         if m:
             try:
                 amount = int(m.group(1).replace(",", ""))
-                if "k" in lower[m.end() - 1 : m.end() + 1]:
+                if "k" in lower[m.end() - 1: m.end() + 1]:
                     amount *= 1000
                 if amount >= 5000:
                     return "high"
@@ -1533,7 +1533,7 @@ class MicroAdventurePlannerAbility(MatchingCapability):
                 )
 
             places_responses = all_responses[: len(places_tasks)]
-            organic_responses = all_responses[len(places_tasks) :]
+            organic_responses = all_responses[len(places_tasks):]
 
             collected: list[dict] = []
 
@@ -2397,7 +2397,7 @@ class MicroAdventurePlannerAbility(MatchingCapability):
             narrative_text = self._last_narrative
             chunk_size = 1900
             for i in range(0, len(narrative_text), chunk_size):
-                chunk = narrative_text[i : i + chunk_size]
+                chunk = narrative_text[i: i + chunk_size]
                 blocks.append(
                     {
                         "object": "block",
