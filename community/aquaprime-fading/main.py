@@ -21,6 +21,12 @@ from src.main import AgentWorker
 # Game state persists to platypuspassions.com — your ship shows on the live map.
 # Get your room code at session start and visit aquaprime.gg/AQUA-XXXX on screen.
 #
+# Memory Model (TYOV-inspired):
+#   - fading_memories = container (5 slots, themed, e.g. "The Rug Serpent")
+#   - fading_experiences = 1 evocative sentence per turn (up to 3 per container)
+#   - A slot is only consumed when a NEW memory container is created
+#   - Skills = memories with grants_ability set; lost on critical fail
+#
 # Pattern: Loop (narrate → listen → resolve → narrate) with D20 mechanics
 # =============================================================================
 
@@ -164,7 +170,7 @@ def register_session(device_id: str, display_name: str = "Pilot") -> str | None:
 
 
 def fetch_memories(device_id: str) -> list[dict]:
-    """Fetch active memory slots for this device. Returns list of memory dicts."""
+    """Fetch active memory containers with experiences for this device."""
     url = f"{BASE_URL}/api/voice/memories?device_id={device_id}"
     req = urllib.request.Request(url, method="GET")
     try:
@@ -176,17 +182,46 @@ def fetch_memories(device_id: str) -> list[dict]:
 
 
 def build_memory_context(memories: list[dict]) -> str:
-    """Build the memory context string injected into the system prompt."""
+    """Build TYOV-style memory context injected into the system prompt.
+
+    Format:
+        MEMORY 1 — The Rug Serpent Encounter [lore]
+          • I fought the Rug Serpent at the Liquidity Spires and lost two fingers.
+          • I traded the fingers for safe passage through Moloch's Vortex.
+        SKILL: Astral Navigation (from Memory 2)
+    """
     if not memories:
         return ""
+
     lines = ["PLAYER MEMORY (what they still carry from previous sessions):"]
+    skill_lines = []
+
     for m in memories:
-        title = m.get("memory_title", "")
-        desc = m.get("memory_description", "")
-        lines.append(f"  - {title}" + (f": {desc[:120]}" if desc else ""))
+        slot = m.get("slot_number", "?")
+        title = m.get("memory_title", "Unknown Memory")
+        mtype = m.get("memory_type", "lore")
+        experiences = m.get("experiences", [])
+        grants = m.get("grants_ability")
+
+        lines.append(f"  MEMORY {slot} — {title} [{mtype}]")
+        if experiences:
+            for exp in experiences:
+                lines.append(f"    • {exp}")
+        else:
+            lines.append(f"    • (no experiences recorded yet)")
+
+        if grants:
+            skill_lines.append(f"  SKILL: {grants} (from Memory {slot})")
+
+    if skill_lines:
+        lines.append("")
+        lines.append("ACTIVE SKILLS:")
+        lines.extend(skill_lines)
+
+    lines.append("")
     lines.append(
         "Reference these memories naturally in narration. "
-        "Memories that are NOT listed here have been erased — never mention them."
+        "Memories and skills NOT listed here have been erased — never mention them."
     )
     return "\n".join(lines)
 
@@ -206,18 +241,28 @@ def sync_game_state(device_id: str, hp: int, sand_dollars: int, stance: str,
 
 
 def write_memory(device_id: str, pos_x: int, pos_y: int,
-                 narration: str, memory_title: str = None) -> dict | None:
-    """Write narration to node story slots and player memory slots.
-    Returns {'must_erase': bool, 'slots_remaining': int} or None."""
+                 narration: str, experience_text: str,
+                 memory_type: str = "lore", memory_theme: str = None,
+                 grants_ability: str = None) -> dict | None:
+    """Write narration to node story slots and player memory containers.
+
+    narration → node_memories (full text, location-bound story)
+    experience_text → fading_experiences (single evocative sentence inside a memory container)
+
+    Returns {'must_erase': bool, 'slots_remaining': int, ...} or None.
+    """
     payload = {
         "device_id": device_id,
         "pos_x": pos_x,
         "pos_y": pos_y,
         "narration": narration,
-        "memory_type": "lore",
+        "experience_text": experience_text,
+        "memory_type": memory_type,
     }
-    if memory_title:
-        payload["memory_title"] = memory_title
+    if memory_theme:
+        payload["memory_theme"] = memory_theme
+    if grants_ability:
+        payload["grants_ability"] = grants_ability
     return api_post("/api/voice/memory-write", payload)
 
 
@@ -269,6 +314,22 @@ def detect_stance(text: str) -> tuple[str, float]:
     if any(w in lower for w in explore):
         return "explore", 0.9
     return "neutral", 1.0
+
+
+def get_memory_type_for_encounter(encounter: dict | None, success: bool) -> tuple[str, str | None]:
+    """Return (memory_type, grants_ability) based on encounter outcome."""
+    if not encounter:
+        return "lore", None
+    enc_type = encounter.get("type", "")
+    if enc_type == "creature":
+        return "lore", ("Combat Instinct" if success else None)
+    if enc_type == "social":
+        return "relationship", ("Persuasion" if success else None)
+    if enc_type == "discovery":
+        return "resource", ("Keen Eye" if success else None)
+    if enc_type == "mystery":
+        return "secret", ("Signal Reading" if success else None)
+    return "lore", None
 
 
 # ── Ability Class ────────────────────────────────────────────────────
@@ -345,10 +406,18 @@ class AquaprimeFadingCapability(MatchingCapability):
 
         # "Previously on The Fading" recap if returning player
         if memories:
+            # Build a readable summary of memory titles + first experience
+            memory_summary = []
+            for m in memories:
+                title = m.get("memory_title", "")
+                exps = m.get("experiences", [])
+                first_exp = exps[0] if exps else ""
+                memory_summary.append(f"{title}: {first_exp}" if first_exp else title)
+
             recap = self.capability_worker.text_to_text_response(
                 f"Do a brief 'previously on The Fading' recap for a returning player. "
-                f"Their active memories: {[m.get('memory_title') for m in memories]}. "
-                f"2-3 sentences max, voice-ready, evocative. "
+                f"Their active memories (title: first experience): {memory_summary}. "
+                f"2-3 sentences max, voice-ready, evocative, first person. "
                 f"Then transition: their airship now drifts toward {region['name']}.",
                 system_prompt=session_prompt,
             )
@@ -399,6 +468,8 @@ class AquaprimeFadingCapability(MatchingCapability):
             stance_name, stance_mult = detect_stance(action_text)
             encounter_result = ""
             loot_gained = None
+            success = False
+            crit_fail = d20 <= 3
 
             if encounter:
                 score = round(d20 * stance_mult)
@@ -445,6 +516,11 @@ class AquaprimeFadingCapability(MatchingCapability):
             recent = narrative_history[-4:] if len(narrative_history) > 4 else narrative_history
             context_str = " | ".join(f"{n['role']}: {n['text'][:80]}" for n in recent)
 
+            # Determine memory type and potential skill grant based on encounter
+            mem_type, grants_ability = get_memory_type_for_encounter(
+                encounter, success
+            ) if encounter else ("lore", None)
+
             narration_prompt = (
                 f"Game state: Region: {region['name']}. HP: {hp}/100. Sand Dollars: {sand_dollars}. "
                 f"Inventory: {', '.join(i['name'] for i in inventory) if inventory else 'empty'}. "
@@ -463,22 +539,63 @@ class AquaprimeFadingCapability(MatchingCapability):
             await self.capability_worker.speak(narration)
             narrative_history.append({"role": "gm", "text": narration})
 
+            # Extract single evocative experience sentence from the narration
+            experience_text = self.capability_worker.text_to_text_response(
+                f"Extract ONE evocative first-person sentence (max 15 words) that captures "
+                f"the core moment of this narration. No preamble, just the sentence: {narration}",
+                system_prompt="You extract the single most memorable sentence from game narration. First person, present tense, evocative, max 15 words.",
+            ).strip().strip('"').strip("'")
+
+            # Build memory theme from encounter or region
+            if encounter:
+                memory_theme = f"{encounter['name']} at {region['name']}"
+            else:
+                memory_theme = f"The {region['name']}"
+
             # Write this moment to node story and player memory
             mem_result = write_memory(
-                device_id, pos_x, pos_y, narration,
-                memory_title=f"Turn {turn}: {action_text[:40]}"
+                device_id, pos_x, pos_y,
+                narration=narration,
+                experience_text=experience_text,
+                memory_type=mem_type,
+                memory_theme=memory_theme,
+                grants_ability=grants_ability,
             )
 
+            # Critical fail — if player has skills, one is at risk
+            if crit_fail and mem_result:
+                skill_memories = [m for m in memories if m.get("grants_ability")]
+                if skill_memories:
+                    lost = skill_memories[0]
+                    await self.capability_worker.speak(
+                        f"Critical fail. Your skill — {lost['grants_ability']} — fractures. "
+                        f"That memory dissolves. The Fading takes it."
+                    )
+                    api_post("/api/voice/memory-erase", {
+                        "device_id": device_id,
+                        "slot_number": lost["slot_number"],
+                    })
+                    # Rebuild memories and session prompt
+                    memories = fetch_memories(device_id)
+                    memory_context = build_memory_context(memories)
+                    session_prompt = GM_SYSTEM_PROMPT
+                    if memory_context:
+                        session_prompt = GM_SYSTEM_PROMPT + "\n\n" + memory_context
+
             # If all 5 memory slots are full, player must erase one to continue
-            if mem_result and mem_result.get("must_erase"):
-                # Ask player which memory to sacrifice
+            elif mem_result and mem_result.get("must_erase"):
+                # Read back current memory titles so player knows what they have
+                current_mems = fetch_memories(device_id)
+                mem_list = " ".join(
+                    f"Slot {m['slot_number']}: {m['memory_title']}."
+                    for m in current_mems
+                )
                 await self.capability_worker.speak(
-                    "Your memory is full. Five moments locked in. "
+                    f"Your memory is full. Five containers locked. {mem_list} "
                     "Say the number of the memory you want to erase: "
                     "one, two, three, four, or five. "
-                    "Choose carefully — that moment is gone forever."
+                    "That moment is gone forever."
                 )
-                # Load current memories to read back
                 erase_input = await self.capability_worker.user_response()
                 erase_map = {"one": 1, "two": 2, "three": 3, "four": 4, "five": 5,
                              "1": 1, "2": 2, "3": 3, "4": 4, "5": 5}
@@ -499,8 +616,21 @@ class AquaprimeFadingCapability(MatchingCapability):
                     if memory_context:
                         session_prompt = GM_SYSTEM_PROMPT + "\n\n" + memory_context
                     # Retry the memory write now that a slot is free
-                    write_memory(device_id, pos_x, pos_y, narration,
-                                 memory_title=f"Turn {turn}: {action_text[:40]}")
+                    write_memory(
+                        device_id, pos_x, pos_y,
+                        narration=narration,
+                        experience_text=experience_text,
+                        memory_type=mem_type,
+                        memory_theme=memory_theme,
+                        grants_ability=grants_ability,
+                    )
+            else:
+                # Update local memories list after successful write
+                memories = fetch_memories(device_id)
+                memory_context = build_memory_context(memories)
+                session_prompt = GM_SYSTEM_PROMPT
+                if memory_context:
+                    session_prompt = GM_SYSTEM_PROMPT + "\n\n" + memory_context
 
             if hp <= 0:
                 await self.capability_worker.speak(
