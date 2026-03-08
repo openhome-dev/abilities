@@ -491,7 +491,12 @@ class MicroAdventurePlannerAbility(MatchingCapability):
                 country = data.get("country") or ""
                 # Extract short region name: "Cairo Governorate" → "Cairo"
                 raw_region = data.get("regionName") or ""
-                region = raw_region.replace(" Governorate", "").replace(" Province", "").replace(" Region", "").strip()
+                region = (
+                    raw_region.replace(" Governorate", "")
+                    .replace(" Province", "")
+                    .replace(" Region", "")
+                    .strip()
+                )
                 # Don't store region if it's the same as the city
                 if region.lower() == city.lower():
                     region = ""
@@ -678,7 +683,9 @@ class MicroAdventurePlannerAbility(MatchingCapability):
             else:
                 _home_country = (prefs.get("home_country_name") or "").strip()
                 _city_label = (
-                    f"{city_from_prefs}, {_home_country}" if _home_country else city_from_prefs
+                    f"{city_from_prefs}, {_home_country}"
+                    if _home_country
+                    else city_from_prefs
                 )
                 ans = await self.capability_worker.run_io_loop(
                     f"Are you looking to explore somewhere near {_city_label}, "
@@ -950,13 +957,16 @@ class MicroAdventurePlannerAbility(MatchingCapability):
         event_task = self._fetch_ticketmaster(
             city, time_context, prefs.get("api_key_ticketmaster", "")
         )
+
         # Fetch flight price snippets (only for travel trips with an origin)
         async def _noop_flight():
             return []
 
         flight_task = (
             self._fetch_flight_prices(
-                origin=origin_city, destination=city, api_key=prefs.get("api_key_serper", "")
+                origin=origin_city,
+                destination=city,
+                api_key=prefs.get("api_key_serper", ""),
             )
             if origin_city and intent.get("trip_type") != "outing"
             else _noop_flight()
@@ -1013,7 +1023,9 @@ class MicroAdventurePlannerAbility(MatchingCapability):
             await self._speak_plans_brief(
                 city=city, focus=focus, duration=dur, trip_type=ttype
             )
-            detail_prompt = "Want more details on any of these spots, or is that enough?"
+            detail_prompt = (
+                "Want more details on any of these spots, or is that enough?"
+            )
         else:
             await self.capability_worker.speak(
                 f"I've found some great spots for your {dur or 'trip'} in {city}. "
@@ -1043,7 +1055,7 @@ class MicroAdventurePlannerAbility(MatchingCapability):
             "1. wants_plan: does the user want to proceed with the full plan? (true/false)\n"
             "2. duration_correction: if they mentioned a different duration (e.g. 'one week', "
             "'3 days', 'a month'), extract it. Otherwise null.\n\n"
-            "Reply ONLY with JSON: {\"wants_plan\": true/false, \"duration_correction\": \"...\" or null}"
+            'Reply ONLY with JSON: {"wants_plan": true/false, "duration_correction": "..." or null}'
         )
         wants = False
         try:
@@ -1112,13 +1124,23 @@ class MicroAdventurePlannerAbility(MatchingCapability):
         # Otherwise LLM fills in "medium" by default and the question gets silently skipped.
         raw_input = (intent.get("raw_input") or "").lower()
         BUDGET_KEYWORDS = (
-            "low", "cheap", "budget", "medium", "moderate",
-            "expensive", "high", "luxury", "$", "dollar", "euro",
-            "pound", "thousand", "hundred",
+            "low",
+            "cheap",
+            "budget",
+            "medium",
+            "moderate",
+            "expensive",
+            "high",
+            "luxury",
+            "$",
+            "dollar",
+            "euro",
+            "pound",
+            "thousand",
+            "hundred",
         )
-        budget_in_input = (
-            any(w in raw_input for w in BUDGET_KEYWORDS)
-            or any(c.isdigit() for c in raw_input)
+        budget_in_input = any(w in raw_input for w in BUDGET_KEYWORDS) or any(
+            c.isdigit() for c in raw_input
         )
         if not budget_in_input:
             intent.pop("budget", None)  # discard LLM guess, ask the user
@@ -1511,15 +1533,25 @@ class MicroAdventurePlannerAbility(MatchingCapability):
                 )
 
             places_responses = all_responses[: len(places_tasks)]
-            organic_responses = all_responses[len(places_tasks):]
+            organic_responses = all_responses[len(places_tasks) :]
 
             collected: list[dict] = []
 
             # Parse Places results -- these are real business names
             _ARTICLE_SIGNALS = (
-                "itinerary", " guide", "days in", "week in", "things to do",
-                "best places", "first time", "first-tim", "tips for",
-                "what to do", "perfect trip", "must see", "must-see",
+                "itinerary",
+                " guide",
+                "days in",
+                "week in",
+                "things to do",
+                "best places",
+                "first time",
+                "first-tim",
+                "tips for",
+                "what to do",
+                "perfect trip",
+                "must see",
+                "must-see",
             )
 
             for idx, resp in enumerate(places_responses):
@@ -1573,8 +1605,12 @@ class MicroAdventurePlannerAbility(MatchingCapability):
                     ).strip()
                     clean = clean or raw_title
                     _ARTICLE_PREFIXES = (
-                        "hotels in", "motels in", "transport in", "transportation in",
-                        "buses in", "trains in",
+                        "hotels in",
+                        "motels in",
+                        "transport in",
+                        "transportation in",
+                        "buses in",
+                        "trains in",
                     )
                     if any(clean.lower().startswith(p) for p in _ARTICLE_PREFIXES):
                         continue
@@ -1619,7 +1655,9 @@ class MicroAdventurePlannerAbility(MatchingCapability):
             answer_box = data.get("answerBox", {})
             if answer_box:
                 ab_snippet = answer_box.get("snippet") or answer_box.get("answer") or ""
-                if ab_snippet and any(c in ab_snippet for c in ("$", "€", "£", "USD", "EUR")):
+                if ab_snippet and any(
+                    c in ab_snippet for c in ("$", "€", "£", "USD", "EUR")
+                ):
                     prices.append(ab_snippet[:200])
             for item in data.get("organic", [])[:5]:
                 snippet = item.get("snippet", "")
@@ -1966,14 +2004,12 @@ class MicroAdventurePlannerAbility(MatchingCapability):
         # Build events context line (Ticketmaster events not already in the top-3 options)
         top_titles = {p["title"].lower() for p in self.current_plans[:3]}
         extra_events = [
-            e for e in (events or [])
-            if e.get("title", "").lower() not in top_titles
+            e for e in (events or []) if e.get("title", "").lower() not in top_titles
         ]
         events_line = ""
         if extra_events:
             ev_text = ", ".join(
-                f"{e['title']} at {e.get('location', city)}"
-                for e in extra_events[:3]
+                f"{e['title']} at {e.get('location', city)}" for e in extra_events[:3]
             )
             events_line = f"- Upcoming events in the city: {ev_text}\n"
         base = (
@@ -2092,7 +2128,17 @@ class MicroAdventurePlannerAbility(MatchingCapability):
         if re.search(r"\bno[tscz]+i[oa]n?\b", lower_text):
             return True
         # STT sometimes splits: "no shin" / "no tion" / "no shen" / "no sjenn"
-        _ACTION_WORDS = ("save", "post", "send", "share", "put", "add", "past", "waste", "push")
+        _ACTION_WORDS = (
+            "save",
+            "post",
+            "send",
+            "share",
+            "put",
+            "add",
+            "past",
+            "waste",
+            "push",
+        )
         has_action = any(w in lower_text for w in _ACTION_WORDS)
         if has_action and re.search(r"\bno\s*[stzj]\w{1,4}\b", lower_text):
             return True
@@ -2185,9 +2231,8 @@ class MicroAdventurePlannerAbility(MatchingCapability):
             return False
 
         # Use the planned city from context, not the first option's street address
-        city = (
-            self._last_plan_context.get("city")
-            or self.current_plans[0].get("location", "Unknown City")
+        city = self._last_plan_context.get("city") or self.current_plans[0].get(
+            "location", "Unknown City"
         )
         origin_label = (self._last_plan_context.get("origin_city") or "").strip()
         now = datetime.datetime.now(datetime.timezone.utc)
@@ -2241,9 +2286,11 @@ class MicroAdventurePlannerAbility(MatchingCapability):
         if ctx.get("duration"):
             overview_items.append(f"Duration: {ctx['duration']}")
         if ctx.get("budget"):
-            budget_display = {"low": "Low ($)", "medium": "Medium ($$)", "high": "High ($$$)"}.get(
-                ctx["budget"], ctx["budget"].capitalize()
-            )
+            budget_display = {
+                "low": "Low ($)",
+                "medium": "Medium ($$)",
+                "high": "High ($$$)",
+            }.get(ctx["budget"], ctx["budget"].capitalize())
             overview_items.append(f"Budget: {budget_display}")
         if ctx.get("vibe"):
             overview_items.append(f"Vibe: {ctx['vibe'].capitalize()}")
@@ -2284,7 +2331,9 @@ class MicroAdventurePlannerAbility(MatchingCapability):
             _ttype = ctx.get("trip_type", "travel")
             _ctx_events = ctx.get("events") or []
             _top_titles = {p["title"].lower() for p in self.current_plans[:3]}
-            _extra_events = [e for e in _ctx_events if e.get("title", "").lower() not in _top_titles]
+            _extra_events = [
+                e for e in _ctx_events if e.get("title", "").lower() not in _top_titles
+            ]
             _events_line = ""
             if _extra_events:
                 _ev_text = ", ".join(
@@ -2379,7 +2428,10 @@ class MicroAdventurePlannerAbility(MatchingCapability):
         # Fallback values in case LLM fails
         _fallback_ranges = {
             "low": ("$30 – 60 / day", "Budget hostels, street food, public transit"),
-            "medium": ("$60 – 150 / day", "Mid-range hotels, casual restaurants, mix of transit"),
+            "medium": (
+                "$60 – 150 / day",
+                "Mid-range hotels, casual restaurants, mix of transit",
+            ),
             "high": ("$150+ / day", "Boutique hotels, fine dining, private transfers"),
         }
         try:
@@ -2399,7 +2451,9 @@ class MicroAdventurePlannerAbility(MatchingCapability):
                 _budget_bullets.append(f"Tip: {_tip}")
         except Exception as _exc:
             self._err(f"Budget LLM error, using fallback: {_exc}")
-            _fb_range, _fb_hint = _fallback_ranges.get(_budget, _fallback_ranges["medium"])
+            _fb_range, _fb_hint = _fallback_ranges.get(
+                _budget, _fallback_ranges["medium"]
+            )
             _budget_bullets = [
                 f"Budget level: {_budget.capitalize()}",
                 f"Estimated range: {_fb_range}",
@@ -2412,7 +2466,10 @@ class MicroAdventurePlannerAbility(MatchingCapability):
                 "type": "heading_2",
                 "heading_2": {
                     "rich_text": [
-                        {"type": "text", "text": {"content": f"{MONEY}  Budget Summary"}}
+                        {
+                            "type": "text",
+                            "text": {"content": f"{MONEY}  Budget Summary"},
+                        }
                     ],
                     "color": "default",
                 },
@@ -2438,7 +2495,10 @@ class MicroAdventurePlannerAbility(MatchingCapability):
                     "type": "heading_2",
                     "heading_2": {
                         "rich_text": [
-                            {"type": "text", "text": {"content": f"{PLANE}  Getting There"}}
+                            {
+                                "type": "text",
+                                "text": {"content": f"{PLANE}  Getting There"},
+                            }
                         ],
                         "color": "default",
                     },
@@ -2480,8 +2540,14 @@ class MicroAdventurePlannerAbility(MatchingCapability):
                                 "rich_text": [
                                     {
                                         "type": "text",
-                                        "text": {"content": _t, "link": {"url": _flights_url}},
-                                        "annotations": {"color": "blue", "underline": True},
+                                        "text": {
+                                            "content": _t,
+                                            "link": {"url": _flights_url},
+                                        },
+                                        "annotations": {
+                                            "color": "blue",
+                                            "underline": True,
+                                        },
                                     }
                                 ],
                                 "color": "default",
@@ -2498,8 +2564,14 @@ class MicroAdventurePlannerAbility(MatchingCapability):
                                 "rich_text": [
                                     {
                                         "type": "text",
-                                        "text": {"content": _t, "link": {"url": _r2r_url}},
-                                        "annotations": {"color": "blue", "underline": True},
+                                        "text": {
+                                            "content": _t,
+                                            "link": {"url": _r2r_url},
+                                        },
+                                        "annotations": {
+                                            "color": "blue",
+                                            "underline": True,
+                                        },
                                     }
                                 ],
                                 "color": "default",
@@ -2512,7 +2584,9 @@ class MicroAdventurePlannerAbility(MatchingCapability):
                             "object": "block",
                             "type": "bulleted_list_item",
                             "bulleted_list_item": {
-                                "rich_text": [{"type": "text", "text": {"content": _t}}],
+                                "rich_text": [
+                                    {"type": "text", "text": {"content": _t}}
+                                ],
                                 "color": "default",
                             },
                         }
@@ -2530,7 +2604,10 @@ class MicroAdventurePlannerAbility(MatchingCapability):
                     "type": "heading_2",
                     "heading_2": {
                         "rich_text": [
-                            {"type": "text", "text": {"content": f"{TICKET}  Upcoming Events"}}
+                            {
+                                "type": "text",
+                                "text": {"content": f"{TICKET}  Upcoming Events"},
+                            }
                         ],
                         "color": "default",
                     },
@@ -2550,8 +2627,14 @@ class MicroAdventurePlannerAbility(MatchingCapability):
                                 "rich_text": [
                                     {
                                         "type": "text",
-                                        "text": {"content": _ev_text, "link": {"url": _ev_url}},
-                                        "annotations": {"color": "blue", "underline": True},
+                                        "text": {
+                                            "content": _ev_text,
+                                            "link": {"url": _ev_url},
+                                        },
+                                        "annotations": {
+                                            "color": "blue",
+                                            "underline": True,
+                                        },
                                     }
                                 ],
                                 "color": "default",
@@ -2564,7 +2647,9 @@ class MicroAdventurePlannerAbility(MatchingCapability):
                             "object": "block",
                             "type": "bulleted_list_item",
                             "bulleted_list_item": {
-                                "rich_text": [{"type": "text", "text": {"content": _ev_text}}],
+                                "rich_text": [
+                                    {"type": "text", "text": {"content": _ev_text}}
+                                ],
                                 "color": "default",
                             },
                         }
@@ -2798,7 +2883,8 @@ class MicroAdventurePlannerAbility(MatchingCapability):
         itineraries = await self._load_json(ITINERARY_FILE, default=[])
         entry = {
             "saved_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
-            "city": self._last_plan_context.get("city") or self.current_plans[0].get("location", "unknown"),
+            "city": self._last_plan_context.get("city")
+            or self.current_plans[0].get("location", "unknown"),
             "plans": [
                 {
                     "title": p.get("title", ""),
