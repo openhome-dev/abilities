@@ -950,12 +950,24 @@ class MicroAdventurePlannerAbility(MatchingCapability):
         event_task = self._fetch_ticketmaster(
             city, time_context, prefs.get("api_key_ticketmaster", "")
         )
+        # Fetch flight price snippets (only for travel trips with an origin)
+        async def _noop_flight():
+            return []
 
-        weather, aqi, activities, events = await asyncio.gather(
+        flight_task = (
+            self._fetch_flight_prices(
+                origin=origin_city, destination=city, api_key=prefs.get("api_key_serper", "")
+            )
+            if origin_city and intent.get("trip_type") != "outing"
+            else _noop_flight()
+        )
+
+        weather, aqi, activities, events, flight_prices = await asyncio.gather(
             weather_task,
             aqi_task,
             search_task,
             event_task,
+            flight_task,
         )
 
         candidates = self._build_candidates(
@@ -992,6 +1004,7 @@ class MicroAdventurePlannerAbility(MatchingCapability):
             "duration": dur,
             "trip_type": ttype,
             "events": events,  # Ticketmaster events for narrative context
+            "flight_prices": flight_prices if origin_city else [],
         }
 
         # For local outings: speak the 3-option brief then ask.
@@ -1576,6 +1589,51 @@ class MicroAdventurePlannerAbility(MatchingCapability):
             return collected
         except Exception as exc:
             self._err(f"Serper candidate error: {exc}")
+        return []
+
+    async def _fetch_flight_prices(
+        self, origin: str, destination: str, api_key: str
+    ) -> list[str]:
+        """Search Google via Serper for flight price snippets from origin to destination.
+
+        Returns a list of price-related strings extracted from search snippets,
+        e.g. ["$250 – $450 round-trip", "Budget airlines from $180"].
+        """
+        key = (SERPER_API_KEY or api_key or "").strip()
+        if not key or not origin or not destination:
+            return []
+        # Use first city name only ("Badr, Cairo, Egypt" → "Badr")
+        origin_short = origin.split(",")[0].strip()
+        query = f"flights from {origin_short} to {destination} price"
+        try:
+            headers = {"X-API-KEY": key, "Content-Type": "application/json"}
+            async with httpx.AsyncClient(timeout=10) as client:
+                resp = await client.post(
+                    SEARCH_URL, headers=headers, json={"q": query, "num": 5}
+                )
+            if resp.status_code != 200:
+                return []
+            data = resp.json()
+            prices: list[str] = []
+            # Extract price mentions from snippets and answer box
+            answer_box = data.get("answerBox", {})
+            if answer_box:
+                ab_snippet = answer_box.get("snippet") or answer_box.get("answer") or ""
+                if ab_snippet and any(c in ab_snippet for c in ("$", "€", "£", "USD", "EUR")):
+                    prices.append(ab_snippet[:200])
+            for item in data.get("organic", [])[:5]:
+                snippet = item.get("snippet", "")
+                # Only keep snippets that mention a price
+                if any(c in snippet for c in ("$", "€", "£", "USD", "EUR")):
+                    # Trim to the relevant price sentence
+                    for sentence in snippet.replace("\n", ". ").split("."):
+                        s = sentence.strip()
+                        if any(c in s for c in ("$", "€", "£")) and len(s) > 10:
+                            prices.append(s[:200])
+                            break
+            return prices[:3]  # cap at 3 snippets
+        except Exception as exc:
+            self._err(f"Flight price search error: {exc}")
         return []
 
     async def _fetch_ticketmaster(
@@ -2302,21 +2360,52 @@ class MicroAdventurePlannerAbility(MatchingCapability):
                 )
             blocks.append({"object": "block", "type": "divider", "divider": {}})
 
-        # ── Budget breakdown section ──────────────────────────────────────
+        # ── Budget breakdown section (country-aware via LLM) ───────────────
         _budget = (ctx.get("budget") or "medium").lower()
         _dur = ctx.get("duration") or "weekend"
-        _budget_ranges = {
+        # Ask LLM for destination-specific budget estimates instead of generic ranges
+        _budget_prompt = (
+            f"Give a realistic daily budget breakdown for a traveler visiting {city} "
+            f"with a {_budget} budget level for {_dur}.\n"
+            f"Include estimated costs in USD for: accommodation, meals, local transport, and activities.\n"
+            "Reply ONLY with JSON: "
+            '{"daily_range": "$X – $Y / day", '
+            '"accommodation": "$X – $Y / night", '
+            '"meals": "$X – $Y / day", '
+            '"transport": "$X – $Y / day", '
+            '"activities": "$X – $Y / day", '
+            '"tip": "one short practical tip"}'
+        )
+        # Fallback values in case LLM fails
+        _fallback_ranges = {
             "low": ("$30 – 60 / day", "Budget hostels, street food, public transit"),
             "medium": ("$60 – 150 / day", "Mid-range hotels, casual restaurants, mix of transit"),
             "high": ("$150+ / day", "Boutique hotels, fine dining, private transfers"),
         }
-        _range_text, _range_hint = _budget_ranges.get(_budget, _budget_ranges["medium"])
-        _budget_bullets = [
-            f"Budget level: {_budget.capitalize()}",
-            f"Estimated range: {_range_text}",
-            f"Typical spend: {_range_hint}",
-            f"Duration: {_dur}",
-        ]
+        try:
+            _br = self.capability_worker.text_to_text_response(_budget_prompt)
+            _bd = json.loads(self._strip_fences(_br or "{}"))
+            _budget_bullets = [
+                f"Budget level: {_budget.capitalize()} — {city}",
+                f"Estimated range: {_bd.get('daily_range', _fallback_ranges.get(_budget, _fallback_ranges['medium'])[0])}",
+                f"Accommodation: {_bd.get('accommodation', 'varies')}",
+                f"Meals: {_bd.get('meals', 'varies')}",
+                f"Local transport: {_bd.get('transport', 'varies')}",
+                f"Activities: {_bd.get('activities', 'varies')}",
+                f"Duration: {_dur}",
+            ]
+            _tip = (_bd.get("tip") or "").strip()
+            if _tip:
+                _budget_bullets.append(f"Tip: {_tip}")
+        except Exception as _exc:
+            self._err(f"Budget LLM error, using fallback: {_exc}")
+            _fb_range, _fb_hint = _fallback_ranges.get(_budget, _fallback_ranges["medium"])
+            _budget_bullets = [
+                f"Budget level: {_budget.capitalize()}",
+                f"Estimated range: {_fb_range}",
+                f"Typical spend: {_fb_hint}",
+                f"Duration: {_dur}",
+            ]
         blocks.append(
             {
                 "object": "block",
@@ -2371,6 +2460,10 @@ class MicroAdventurePlannerAbility(MatchingCapability):
                 _r2r_origin = origin_label.split(",")[0].strip().replace(" ", "-")
                 _r2r_dest = city.replace(" ", "-")
                 _transport_bullets.append("Compare all routes on Rome2Rio")
+                # Add flight price snippets from Serper search
+                _fp = ctx.get("flight_prices") or []
+                for _fp_line in _fp[:2]:
+                    _transport_bullets.append(f"Price info: {_fp_line}")
             else:
                 _flights_url = ""
                 _r2r_origin = ""
@@ -2426,6 +2519,57 @@ class MicroAdventurePlannerAbility(MatchingCapability):
                     )
 
         blocks.append({"object": "block", "type": "divider", "divider": {}})
+
+        # ── Local Events section (Ticketmaster) ──────────────────────────
+        _events = ctx.get("events") or []
+        if _events:
+            TICKET = "\U0001f3ab"  # ticket emoji
+            blocks.append(
+                {
+                    "object": "block",
+                    "type": "heading_2",
+                    "heading_2": {
+                        "rich_text": [
+                            {"type": "text", "text": {"content": f"{TICKET}  Upcoming Events"}}
+                        ],
+                        "color": "default",
+                    },
+                }
+            )
+            for _ev in _events[:5]:
+                _ev_title = _ev.get("title", "Event")
+                _ev_venue = _ev.get("location", city)
+                _ev_url = _ev.get("url", "")
+                _ev_text = f"{_ev_title} — {_ev_venue}"
+                if _ev_url:
+                    blocks.append(
+                        {
+                            "object": "block",
+                            "type": "bulleted_list_item",
+                            "bulleted_list_item": {
+                                "rich_text": [
+                                    {
+                                        "type": "text",
+                                        "text": {"content": _ev_text, "link": {"url": _ev_url}},
+                                        "annotations": {"color": "blue", "underline": True},
+                                    }
+                                ],
+                                "color": "default",
+                            },
+                        }
+                    )
+                else:
+                    blocks.append(
+                        {
+                            "object": "block",
+                            "type": "bulleted_list_item",
+                            "bulleted_list_item": {
+                                "rich_text": [{"type": "text", "text": {"content": _ev_text}}],
+                                "color": "default",
+                            },
+                        }
+                    )
+            blocks.append({"object": "block", "type": "divider", "divider": {}})
 
         # Section header
         blocks.append(
