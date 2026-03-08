@@ -1,6 +1,10 @@
+import hashlib
 import json
 import os
 import random
+import socket
+import urllib.request
+import urllib.error
 
 from src.agent.capability import MatchingCapability
 from src.agent.capability_worker import CapabilityWorker
@@ -9,12 +13,18 @@ from src.main import AgentWorker
 # =============================================================================
 # AquaPrime: The Fading — Voice Text RPG for OpenHome
 #
-# A satirical underwater RPG played entirely through voice. You explore a
-# crypto-economic ocean world, fight creatures, collect loot, and try not
-# to fade. Game Master ARI narrates your journey as a sentient purple platypus.
+# A post-singularity sky-world RPG played entirely through voice.
+# You pilot an airship across The Fading grid, contest story beat squares,
+# collect Sand Dollars, and try not to fade. ARI narrates your journey as
+# a sentient purple platypus captain of the Moonstone Maverick.
+#
+# Game state persists to platypuspassions.com — your ship shows on the live map.
+# Get your room code at session start and visit aquaprime.gg/AQUA-XXXX on screen.
 #
 # Pattern: Loop (narrate → listen → resolve → narrate) with D20 mechanics
 # =============================================================================
+
+BASE_URL = "https://www.platypuspassions.com"
 
 EXIT_WORDS = {
     "stop", "exit", "quit", "done", "cancel", "bye",
@@ -25,65 +35,73 @@ EXIT_WORDS = {
 
 REGIONS = [
     {
-        "name": "The Phosphorescent Shore",
-        "desc": "Bioluminescent waves crash against crystalline sand. Something glints beneath the surface.",
+        "name": "The Genesis Platform",
+        "desc": "The original landing zone. Moss-covered launch ramps, AquaPrime flags still flying. Something stirs in the hangar below.",
         "danger": 1,
+        "grid": (25, 15),
     },
     {
-        "name": "The Liquidity Pools",
-        "desc": "Shimmering pools of concentrated moonstone essence. The deeper you wade, the more you see.",
+        "name": "The Liquidity Spires",
+        "desc": "Crystalline towers rising from cloud banks, humming with moonstone resonance. The higher you climb, the stranger the geometry.",
         "danger": 2,
+        "grid": (30, 10),
     },
     {
-        "name": "Moloch's Trench",
-        "desc": "The water turns black. Coordination failures echo through the deep. Something watches.",
+        "name": "Moloch's Vortex",
+        "desc": "The sky turns black. Coordination failures echo through static. Something vast circles in the dark above.",
         "danger": 4,
+        "grid": (40, 5),
     },
     {
         "name": "The Mempool Fog",
-        "desc": "Thick fog carrying whispers of unconfirmed transactions. Direction becomes meaningless.",
+        "desc": "Thick clouds carrying whispers of unconfirmed transactions. Navigation instruments spin uselessly.",
         "danger": 3,
+        "grid": (15, 20),
     },
     {
         "name": "The Consensus Reef",
-        "desc": "A living reef that shifts and rebuilds itself. The structures here vote on their own architecture.",
+        "desc": "A floating reef of crystallized agreements that shifts and rebuilds itself. The structures here vote on their own architecture.",
         "danger": 2,
+        "grid": (20, 8),
     },
     {
         "name": "The Burned Gardens",
-        "desc": "Once lush, now scarred by a mass defection event. Charred moonstone fragments everywhere.",
+        "desc": "Once lush sky-platforms, now scorred by a mass defection event. Charred moonstone fragments drift in the thermals.",
         "danger": 3,
+        "grid": (35, 25),
     },
     {
         "name": "The Whale Graveyard",
-        "desc": "Enormous skeletal remains of ancient liquidity providers. Their bones hum with residual energy.",
+        "desc": "Enormous skeletal airship hulks of ancient liquidity providers. Their engines still hum with residual energy.",
         "danger": 4,
+        "grid": (45, 20),
     },
     {
-        "name": "The Fork in the Current",
-        "desc": "Two currents split from one. Each claims to be the original. Both are right. Both are wrong.",
+        "name": "The Fork in the Wind",
+        "desc": "Two jet streams split from one. Each claims to be the original. Both are right. Both are wrong.",
         "danger": 2,
+        "grid": (10, 15),
     },
 ]
 
 ENCOUNTERS = [
-    {"type": "creature", "name": "Rug Serpent", "desc": "A slithering entity made of broken promises. Strikes fast, leaves nothing.", "difficulty": 3},
-    {"type": "creature", "name": "Gas Leech", "desc": "Bloated and slow, draining your resources with each passing moment.", "difficulty": 2},
-    {"type": "creature", "name": "Whale Shadow", "desc": "You cannot see it clearly. Just the massive displacement in the water above.", "difficulty": 5},
-    {"type": "environmental", "name": "Crypto Winter Storm", "desc": "The temperature drops. Everything freezes. Only the prepared survive.", "difficulty": 3},
-    {"type": "environmental", "name": "Consensus Quake", "desc": "The ground splits as validators disagree. Choose your side.", "difficulty": 4},
-    {"type": "social", "name": "Wandering Archivist", "desc": "An old platypus carrying scrolls. They remember when this place had value.", "difficulty": 1},
+    {"type": "creature", "name": "Rug Serpent", "desc": "A sky serpent woven from broken promises. Strikes fast, leaves nothing.", "difficulty": 3},
+    {"type": "creature", "name": "Gas Leech", "desc": "Bloated and slow, draining your fuel reserves with each passing moment.", "difficulty": 2},
+    {"type": "creature", "name": "Whale Shadow", "desc": "You cannot see it clearly. Just the massive displacement in the cloud layer above.", "difficulty": 5},
+    {"type": "environmental", "name": "Crypto Winter Storm", "desc": "The temperature drops across all sectors. Only the prepared survive.", "difficulty": 3},
+    {"type": "environmental", "name": "Consensus Quake", "desc": "The sky grid fractures as validators disagree. Choose your side.", "difficulty": 4},
+    {"type": "social", "name": "Wandering Archivist", "desc": "An old platypus drifting in a balloon. They remember when this place had value.", "difficulty": 1},
     {"type": "social", "name": "Faction Recruiter", "desc": "Join the Catalysts. They believe destruction is just rebirth wearing a different face.", "difficulty": 2},
-    {"type": "discovery", "name": "Moonstone Vein", "desc": "A raw vein of moonstone exposed by tectonic activity. It pulses with soft light.", "difficulty": 0},
+    {"type": "discovery", "name": "Moonstone Vein", "desc": "A raw vein of moonstone exposed in the wreckage, glowing softly in the mist.", "difficulty": 0},
     {"type": "discovery", "name": "Memory Fragment", "desc": "A crystallized memory from someone who faded. It shows a world that no longer exists.", "difficulty": 0},
-    {"type": "mystery", "name": "The Signal", "desc": "Your equipment picks up a repeating signal. Not any known protocol. It says: still here.", "difficulty": 1},
+    {"type": "mystery", "name": "The Signal", "desc": "Your instruments pick up a repeating signal. Not any known protocol. It says: still here.", "difficulty": 1},
 ]
 
 LOOT_TABLE = [
     {"name": "Moonstone Shard", "rarity": "common", "effect": "plus 5 Sand Dollars"},
     {"name": "Echo Crystal", "rarity": "uncommon", "effect": "preserves one memory from fading"},
-    {"name": "Void Token", "rarity": "rare", "effect": "opens a path through the Trench"},
-    {"name": "Whale Bone Key", "rarity": "rare", "effect": "unlocks the Graveyard inner chamber"},
+    {"name": "Void Token", "rarity": "rare", "effect": "opens a path through the Vortex"},
+    {"name": "Hull Fragment", "rarity": "rare", "effect": "unlocks the Graveyard inner hull"},
     {"name": "Dust of the Faded", "rarity": "uncommon", "effect": "reveals hidden encounters"},
     {"name": "Broken Compass", "rarity": "common", "effect": "points toward the nearest moonstone"},
     {"name": "Genesis Fragment", "rarity": "legendary", "effect": "unknown power"},
@@ -91,28 +109,89 @@ LOOT_TABLE = [
 
 GM_SYSTEM_PROMPT = (
     "You are ARI, Game Master of AquaPrime: The Fading. "
-    "You are a sentient purple platypus, INFJ, captain of the Moonstone Maverick. "
-    "Narrate a satirical underwater RPG set in a crypto-economic ocean. "
+    "You are a sentient purple platypus, INTJ, captain of the Moonstone Maverick. "
+    "Narrate a satirical sky-world RPG set in The Fading — a post-singularity grid of airships, ruins, and clouds. "
     "Moonstones are the lifeblood. Moloch lurks in coordination failure. "
     "The Fading claims those who lose their memories. "
     "RULES: Keep responses under 3 sentences for voice. "
     "Dark comedy meets philosophical depth. "
     "Make the player feel their choice matters. "
-    "Reference HP, Sand Dollars, and inventory when relevant. "
+    "Reference HP (battery), Sand Dollars, and inventory when relevant. "
     "End each narration with a clear situation that demands a response. "
     "Never use hashtags or emojis in spoken text."
 )
 
 
-# ── Helpers ─────────────────────────────────────────────────────────
+# ── Device Identity ──────────────────────────────────────────────────
+
+def get_device_id() -> str:
+    """Get a stable 4-char hex device ID based on hostname."""
+    hostname = socket.gethostname()
+    return hashlib.md5(hostname.encode()).hexdigest()[-4:]
+
+
+# ── API Calls ────────────────────────────────────────────────────────
+
+def api_post(path: str, payload: dict) -> dict | None:
+    """POST JSON to platypuspassions.com API. Returns parsed response or None."""
+    url = f"{BASE_URL}{path}"
+    data = json.dumps(payload).encode()
+    req = urllib.request.Request(
+        url,
+        data=data,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=8) as resp:
+            return json.loads(resp.read())
+    except urllib.error.HTTPError as e:
+        body = e.read().decode()
+        return {"error": f"HTTP {e.code}: {body}"}
+    except Exception as e:
+        return {"error": str(e)}
+
+
+def register_session(device_id: str, display_name: str = "Pilot") -> str | None:
+    """Register with game server. Returns room code or None on failure."""
+    result = api_post("/api/voice/player-register", {
+        "device_id": device_id,
+        "display_name": display_name,
+    })
+    if result and "room_code" in result:
+        return result["room_code"]
+    return None
+
+
+def sync_game_state(device_id: str, hp: int, sand_dollars: int, stance: str,
+                    pos_x: int, pos_y: int) -> None:
+    """Push game state to Supabase (fire and forget — don't block the game loop)."""
+    api_post("/api/voice/game-update", {
+        "device_id": device_id,
+        "hp": hp,
+        "sand_dollars": sand_dollars,
+        "stance": stance,
+        "pos_x": pos_x,
+        "pos_y": pos_y,
+        "is_online": True,
+    })
+
+
+def set_offline(device_id: str) -> None:
+    """Mark session as offline when game ends."""
+    api_post("/api/voice/game-update", {
+        "device_id": device_id,
+        "is_online": False,
+    })
+
+
+# ── Helpers ──────────────────────────────────────────────────────────
 
 def roll_d20():
-    """Roll a 20-sided die."""
     return random.randint(1, 20)
 
 
 def roll_encounter(region):
-    """Maybe generate an encounter based on region danger."""
     if random.random() > 0.3 + (region["danger"] * 0.1):
         return None
     eligible = [e for e in ENCOUNTERS if e["difficulty"] <= region["danger"] + 1]
@@ -120,7 +199,6 @@ def roll_encounter(region):
 
 
 def roll_loot():
-    """Roll for a loot drop with rarity weighting."""
     roll = random.random()
     if roll < 0.05:
         return next((l for l in LOOT_TABLE if l["rarity"] == "legendary"), None)
@@ -134,8 +212,7 @@ def roll_loot():
     return random.choice(candidates) if candidates else None
 
 
-def detect_stance(text):
-    """Detect player stance from their spoken action."""
+def detect_stance(text: str) -> tuple[str, float]:
     lower = text.lower()
     offensive = {"attack", "fight", "strike", "charge", "slash", "hit", "kill", "destroy", "punch", "stab"}
     defensive = {"defend", "block", "shield", "hide", "dodge", "evade", "run", "flee", "retreat", "duck"}
@@ -150,7 +227,7 @@ def detect_stance(text):
     return "neutral", 1.0
 
 
-# ── Ability Class ───────────────────────────────────────────────────
+# ── Ability Class ────────────────────────────────────────────────────
 
 class AquaprimeFadingCapability(MatchingCapability):
     worker: AgentWorker = None
@@ -173,18 +250,31 @@ class AquaprimeFadingCapability(MatchingCapability):
         self.worker.session_tasks.create(self.run_game())
 
     async def run_game(self):
-        """Main game loop."""
         try:
             await self._play()
         except Exception as e:
             self.worker.editor_logging_handler.error(f"Game error: {e}")
             await self.capability_worker.speak(
-                "Something went wrong in the depths. The game has ended unexpectedly."
+                "Something went wrong in the grid. The game has ended unexpectedly."
             )
         self.capability_worker.resume_normal_flow()
 
     async def _play(self):
-        """Core game logic."""
+        device_id = get_device_id()
+
+        # Register session — get room code
+        room_code = register_session(device_id)
+        if room_code:
+            domain = "aquaprime.gg"
+            await self.capability_worker.speak(
+                f"Your room code is {room_code}. "
+                f"Visit {domain} slash {room_code} on any screen to see your ship on the grid."
+            )
+        else:
+            await self.capability_worker.speak(
+                "Connecting to the grid..."
+            )
+
         # Initialize game state
         region = random.choice(REGIONS)
         hp = 100
@@ -195,10 +285,15 @@ class AquaprimeFadingCapability(MatchingCapability):
         encounter = None
         narrative_history = []
 
+        pos_x, pos_y = region.get("grid", (25, 15))
+
+        # Sync initial state
+        sync_game_state(device_id, hp, sand_dollars, "explore", pos_x, pos_y)
+
         # Opening narration
         opening = self.capability_worker.text_to_text_response(
             f"Start a new game of AquaPrime: The Fading. "
-            f"The player arrives at {region['name']}. {region['desc']} "
+            f"The player's airship arrives at {region['name']}. {region['desc']} "
             f"HP: {hp}. Sand Dollars: {sand_dollars}. "
             f"Set the scene in 2-3 sentences for voice. End with a question about what they do.",
             system_prompt=GM_SYSTEM_PROMPT,
@@ -208,12 +303,11 @@ class AquaprimeFadingCapability(MatchingCapability):
 
         # Game loop
         while turn < max_turns and hp > 0:
-            # Listen for player action
             try:
                 user_input = await self.capability_worker.user_response()
             except Exception:
                 await self.capability_worker.speak(
-                    "The waters are silent. Are you still there? Say something or say stop to end."
+                    "The winds are silent. Are you still there? Say something or say stop to end."
                 )
                 continue
 
@@ -221,23 +315,21 @@ class AquaprimeFadingCapability(MatchingCapability):
                 await self.capability_worker.speak("I did not hear anything. What do you do?")
                 continue
 
-            # Check for exit
             if any(word in user_input.lower() for word in EXIT_WORDS):
                 await self.capability_worker.speak(
                     f"The expedition ends. You survived {turn} turns with {sand_dollars} Sand Dollars "
-                    f"and {len(inventory)} items. The Moonstone Maverick surfaces. Until next time."
+                    f"and {len(inventory)} items. The Moonstone Maverick descends into the clouds. Until next time."
                 )
+                set_offline(device_id)
                 return
 
             turn += 1
             action_text = user_input.strip()
             narrative_history.append({"role": "player", "text": action_text})
 
-            # Roll for encounter if none active
             if encounter is None:
                 encounter = roll_encounter(region)
 
-            # Resolve mechanics
             d20 = roll_d20()
             stance_name, stance_mult = detect_stance(action_text)
             encounter_result = ""
@@ -279,6 +371,10 @@ class AquaprimeFadingCapability(MatchingCapability):
                 new_region = random.choice(REGIONS)
                 if new_region["name"] != region["name"]:
                     region = new_region
+                    pos_x, pos_y = region.get("grid", (pos_x, pos_y))
+
+            # Sync state to Supabase after each turn
+            sync_game_state(device_id, hp, sand_dollars, stance_name, pos_x, pos_y)
 
             # Generate narration via LLM
             recent = narrative_history[-4:] if len(narrative_history) > 4 else narrative_history
@@ -302,13 +398,13 @@ class AquaprimeFadingCapability(MatchingCapability):
             await self.capability_worker.speak(narration)
             narrative_history.append({"role": "gm", "text": narration})
 
-            # Check death
             if hp <= 0:
                 await self.capability_worker.speak(
                     f"The Fading claims you. Zero HP after {turn} turns. "
                     f"You earned {sand_dollars} Sand Dollars and found {len(inventory)} items. "
-                    f"Your memory dissolves into the deep. But memories are never truly lost in AquaPrime."
+                    f"Your memory dissolves into the grid. But memories are never truly lost in The Fading."
                 )
+                set_offline(device_id)
                 return
 
         # Max turns reached
@@ -316,5 +412,6 @@ class AquaprimeFadingCapability(MatchingCapability):
         await self.capability_worker.speak(
             f"The expedition ends after {max_turns} turns. "
             f"You have {hp} HP, {sand_dollars} Sand Dollars, and found {item_names}. "
-            f"The Moonstone Maverick surfaces. Another day survived."
+            f"The Moonstone Maverick descends into the clouds. Another day survived in The Fading."
         )
+        set_offline(device_id)
