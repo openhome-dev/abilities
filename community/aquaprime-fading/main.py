@@ -471,6 +471,9 @@ class AquaprimeFadingCapability(MatchingCapability):
             success = False
             crit_fail = d20 <= 3
 
+            # Capture encounter before clearing it — used for memory type + theme below
+            resolved_encounter = encounter
+
             if encounter:
                 score = round(d20 * stance_mult)
                 threshold = encounter["difficulty"] * 4
@@ -512,14 +515,19 @@ class AquaprimeFadingCapability(MatchingCapability):
             # Sync state to Supabase after each turn
             sync_game_state(device_id, hp, sand_dollars, stance_name, pos_x, pos_y)
 
-            # Generate narration via LLM
+            # Determine memory type + skill grant from resolved encounter
+            mem_type, grants_ability = get_memory_type_for_encounter(resolved_encounter, success)
+
+            # Build memory theme from resolved encounter or region
+            if resolved_encounter:
+                memory_theme = f"{resolved_encounter['name']} at {region['name']}"
+            else:
+                memory_theme = f"The {region['name']}"
+
+            # Generate narration via LLM — ask ARI to embed a MEMORY tag for the experience
+            # This avoids a second LLM call by parsing the experience out of the narration response.
             recent = narrative_history[-4:] if len(narrative_history) > 4 else narrative_history
             context_str = " | ".join(f"{n['role']}: {n['text'][:80]}" for n in recent)
-
-            # Determine memory type and potential skill grant based on encounter
-            mem_type, grants_ability = get_memory_type_for_encounter(
-                encounter, success
-            ) if encounter else ("lore", None)
 
             narration_prompt = (
                 f"Game state: Region: {region['name']}. HP: {hp}/100. Sand Dollars: {sand_dollars}. "
@@ -529,28 +537,23 @@ class AquaprimeFadingCapability(MatchingCapability):
                 f"Recent context: {context_str} "
                 f"Player said: \"{action_text}\" "
                 f"Narrate the outcome in 2-3 sentences for voice. "
-                f"Include the dice roll result naturally. End with what happens next."
+                f"Include the dice roll result naturally. End with what happens next. "
+                f"Then on a new line write exactly: MEMORY: [one evocative first-person sentence, max 15 words]"
             )
 
-            narration = self.capability_worker.text_to_text_response(
+            raw_response = self.capability_worker.text_to_text_response(
                 narration_prompt,
                 system_prompt=session_prompt,
             )
-            await self.capability_worker.speak(narration)
-            narrative_history.append({"role": "gm", "text": narration})
 
-            # Extract single evocative experience sentence from the narration
-            experience_text = self.capability_worker.text_to_text_response(
-                f"Extract ONE evocative first-person sentence (max 15 words) that captures "
-                f"the core moment of this narration. No preamble, just the sentence: {narration}",
-                system_prompt="You extract the single most memorable sentence from game narration. First person, present tense, evocative, max 15 words.",
-            ).strip().strip('"').strip("'")
-
-            # Build memory theme from encounter or region
-            if encounter:
-                memory_theme = f"{encounter['name']} at {region['name']}"
+            # Split narration from embedded MEMORY tag
+            if "MEMORY:" in raw_response:
+                parts = raw_response.split("MEMORY:", 1)
+                narration = parts[0].strip()
+                experience_text = parts[1].strip().strip("[]").strip('"').strip("'")
             else:
-                memory_theme = f"The {region['name']}"
+                narration = raw_response.strip()
+                experience_text = narration[:100]  # fallback: first 100 chars
 
             # Write this moment to node story and player memory
             mem_result = write_memory(
