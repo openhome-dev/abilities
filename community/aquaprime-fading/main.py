@@ -163,6 +163,34 @@ def register_session(device_id: str, display_name: str = "Pilot") -> str | None:
     return None
 
 
+def fetch_memories(device_id: str) -> list[dict]:
+    """Fetch active memory slots for this device. Returns list of memory dicts."""
+    url = f"{BASE_URL}/api/voice/memories?device_id={device_id}"
+    req = urllib.request.Request(url, method="GET")
+    try:
+        with urllib.request.urlopen(req, timeout=8) as resp:
+            data = json.loads(resp.read())
+            return data.get("memories", [])
+    except Exception:
+        return []
+
+
+def build_memory_context(memories: list[dict]) -> str:
+    """Build the memory context string injected into the system prompt."""
+    if not memories:
+        return ""
+    lines = ["PLAYER MEMORY (what they still carry from previous sessions):"]
+    for m in memories:
+        title = m.get("memory_title", "")
+        desc = m.get("memory_description", "")
+        lines.append(f"  - {title}" + (f": {desc[:120]}" if desc else ""))
+    lines.append(
+        "Reference these memories naturally in narration. "
+        "Memories that are NOT listed here have been erased — never mention them."
+    )
+    return "\n".join(lines)
+
+
 def sync_game_state(device_id: str, hp: int, sand_dollars: int, stance: str,
                     pos_x: int, pos_y: int) -> None:
     """Push game state to Supabase (fire and forget — don't block the game loop)."""
@@ -291,6 +319,15 @@ class AquaprimeFadingCapability(MatchingCapability):
                 "Connecting to the grid..."
             )
 
+        # Load persistent memories from previous sessions
+        memories = fetch_memories(device_id)
+        memory_context = build_memory_context(memories)
+
+        # Build session-specific system prompt with memory context injected
+        session_prompt = GM_SYSTEM_PROMPT
+        if memory_context:
+            session_prompt = GM_SYSTEM_PROMPT + "\n\n" + memory_context
+
         # Initialize game state
         region = random.choice(REGIONS)
         hp = 100
@@ -306,13 +343,25 @@ class AquaprimeFadingCapability(MatchingCapability):
         # Sync initial state
         sync_game_state(device_id, hp, sand_dollars, "explore", pos_x, pos_y)
 
+        # "Previously on The Fading" recap if returning player
+        if memories:
+            recap = self.capability_worker.text_to_text_response(
+                f"Do a brief 'previously on The Fading' recap for a returning player. "
+                f"Their active memories: {[m.get('memory_title') for m in memories]}. "
+                f"2-3 sentences max, voice-ready, evocative. "
+                f"Then transition: their airship now drifts toward {region['name']}.",
+                system_prompt=session_prompt,
+            )
+            await self.capability_worker.speak(recap)
+            narrative_history.append({"role": "gm", "text": recap})
+
         # Opening narration
         opening = self.capability_worker.text_to_text_response(
-            f"Start a new game of AquaPrime: The Fading. "
+            f"{'Continue the session. ' if memories else 'Start a new game of AquaPrime: The Fading. '}"
             f"The player's airship arrives at {region['name']}. {region['desc']} "
             f"HP: {hp}. Sand Dollars: {sand_dollars}. "
-            f"Set the scene in 2-3 sentences for voice. End with a question about what they do.",
-            system_prompt=GM_SYSTEM_PROMPT,
+            f"Set the scene in 2 sentences for voice. End with a question about what they do.",
+            system_prompt=session_prompt,
         )
         await self.capability_worker.speak(opening)
         narrative_history.append({"role": "gm", "text": opening})
@@ -409,7 +458,7 @@ class AquaprimeFadingCapability(MatchingCapability):
 
             narration = self.capability_worker.text_to_text_response(
                 narration_prompt,
-                system_prompt=GM_SYSTEM_PROMPT,
+                system_prompt=session_prompt,
             )
             await self.capability_worker.speak(narration)
             narrative_history.append({"role": "gm", "text": narration})
@@ -443,6 +492,12 @@ class AquaprimeFadingCapability(MatchingCapability):
                         f"Memory slot {slot_to_erase} fades. The Fading takes it. "
                         f"You continue."
                     )
+                    # Rebuild session prompt — erased memory no longer exists
+                    memories = fetch_memories(device_id)
+                    memory_context = build_memory_context(memories)
+                    session_prompt = GM_SYSTEM_PROMPT
+                    if memory_context:
+                        session_prompt = GM_SYSTEM_PROMPT + "\n\n" + memory_context
                     # Retry the memory write now that a slot is free
                     write_memory(device_id, pos_x, pos_y, narration,
                                  memory_title=f"Turn {turn}: {action_text[:40]}")
