@@ -127,7 +127,7 @@ Speaker: "Say a number for details, or done to finish."
 | `speak()` | Deliver the digest and responses |
 | `run_io_loop()` | Prompt and listen for user's next command |
 | `text_to_text_response()` | Narrate raw API data conversationally |
-| `resume_normal_flow()` | Return control to Personality on exit |
+| `resume_normal_flow()` | Return control to Agent on exit |
 | `editor_logging_handler` | Log API errors (never `print()`) |
 | `session_tasks.create()` | Launch the async run loop |
 

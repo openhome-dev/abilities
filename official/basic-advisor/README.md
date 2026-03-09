@@ -30,7 +30,7 @@ No setup required. No external APIs needed.
 - `user_response()` — Listen for user input
 - `text_to_text_response()` — LLM text generation
 - `run_io_loop()` — Speak + listen in one call
-- `resume_normal_flow()` — Return to Personality
+- `resume_normal_flow()` — Return to Agent
 
 ## Example Conversation
 

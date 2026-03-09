@@ -12,7 +12,7 @@ Inside any Ability, you have access to two objects:
 
 | Object | What it is | Access via |
 |--------|-----------|------------|
-| `self.capability_worker` | **The SDK** — all I/O, speech, audio, LLM, files, and flow control | `CapabilityWorker(self)` |
+| `self.capability_worker` | **The SDK** — all I/O, speech, audio, LLM, files, flow control, and context storage | `CapabilityWorker(self)` |
 | `self.worker` | **The Agent** — logging, session management, memory, user connection info | Passed into `call()` |
 
 ---
@@ -27,30 +27,31 @@ Inside any Ability, you have access to two objects:
 6. [Audio Recording](#6-audio-recording)
 7. [Audio Streaming](#7-audio-streaming)
 8. [File Storage (Persistent + Temporary)](#8-file-storage-persistent--temporary)
-9. [WebSocket Communication](#9-websocket-communication)
-10. [Flow Control](#10-flow-control)
-11. [Logging](#11-logging)
-12. [Session Tasks](#12-session-tasks)
-13. [User Connection Info](#13-user-connection-info)
-14. [Conversation Memory & History](#14-conversation-memory--history)
-15. [Music Mode](#15-music-mode)
-16. [Common Patterns](#16-common-patterns)
-17. [Appendix: What You CAN'T Do (Yet)](#appendix-what-you-cant-do-yet)
-18. [Appendix: Blocked Imports](#appendix-blocked-imports)
+9. [Context Storage (Key-Value)](#9-context-storage-key-value)
+10. [WebSocket Communication](#10-websocket-communication)
+11. [Flow Control](#11-flow-control)
+12. [Logging](#12-logging)
+13. [Session Tasks](#13-session-tasks)
+14. [User Connection Info](#14-user-connection-info)
+15. [Conversation Memory & History](#15-conversation-memory--history)
+16. [Music Mode](#16-music-mode)
+17. [Common Patterns](#17-common-patterns)
+18. [Appendix: What You CAN'T Do (Yet)](#appendix-what-you-cant-do-yet)
+19. [Appendix: Blocked Imports](#appendix-blocked-imports)
 
 ---
 
 ## 1. Speaking / TTS
 
 ### `speak(text)`
-Converts text to speech using the Personality's default voice. Streams audio to the user.
+Converts text to speech using the Agent's default voice. Streams audio to the user.
 
 ```python
 await self.capability_worker.speak("Hello! How can I help?")
 ```
 
 - **Async:** Yes (`await`)
-- **Voice:** Uses whatever voice is configured on the Personality
+- **Voice:** Uses whatever voice is configured on the Agent
 - **Tip:** Keep it to 1-2 sentences. This is voice, not text.
 
 ---
@@ -63,7 +64,7 @@ await self.capability_worker.text_to_speech("Welcome aboard.", "pNInz6obpgDQGcFm
 ```
 
 - **Async:** Yes (`await`)
-- **Voice:** Overrides the Personality's default
+- **Voice:** Overrides the Agent's default
 - **See:** [Voice ID catalog](#voice-id-quick-reference) at the bottom of this doc
 
 ---
@@ -107,7 +108,7 @@ answer = await self.capability_worker.run_io_loop("What's your favorite color?")
 
 - **Async:** Yes (`await`)
 - **Returns:** `str` — user's reply
-- **Note:** Uses the Personality's default voice (not a custom voice ID)
+- **Note:** Uses the Agent's default voice (not a custom voice ID)
 
 ---
 
@@ -168,7 +169,7 @@ await self.capability_worker.play_audio(audio.content)
 
 - **Async:** Yes (`await`)
 - **Input:** `bytes` or file-like object
-- **Tip:** For anything longer than a TTS clip, use [Music Mode](#15-music-mode)
+- **Tip:** For anything longer than a TTS clip, use [Music Mode](#16-music-mode)
 
 ---
 
@@ -468,7 +469,196 @@ async def get_cached(self, key: str) -> str | None:
 
 ---
 
-## 9. WebSocket Communication
+## 9. Context Storage (Key-Value)
+
+A structured key-value store built into `capability_worker` for persisting user context across sessions. Unlike File Storage, this system stores `dict` objects directly — no serialization, no file management, no append corruption risk.
+
+**Ideal for:**
+- AI conversation memory and multi-step workflow state
+- User preferences and feature flags
+- Cart/session state
+- Cached API responses
+- Any structured data that needs to survive disconnects
+
+Storage is scoped at the **user level** — any ability can read and write any key for a given user. All methods are **synchronous** (no `await`).
+
+---
+
+### `create_key(key, value)`
+
+Creates a new key-value pair. Errors if the key already exists — always check with `get_single_key()` first.
+
+```python
+self.capability_worker.create_key(
+    key="user_preferences",
+    value={
+        "language": "en",
+        "theme": "dark",
+        "notifications": True
+    }
+)
+```
+
+- **Parameters:** `key` (str), `value` (dict)
+- **Use case:** Storing user preferences on first configuration
+
+---
+
+### `update_key(key, value)`
+
+Replaces the value at an existing key with a new dict. Errors if the key does not exist.
+
+```python
+self.capability_worker.update_key(
+    key="user_preferences",
+    value={
+        "language": "en",
+        "theme": "light",
+        "notifications": False
+    }
+)
+```
+
+- **Parameters:** `key` (str), `value` (dict)
+- **Use case:** User changes a setting; advancing a multi-step workflow
+
+---
+
+### `delete_key(key)`
+
+Permanently removes a stored key-value pair.
+
+```python
+self.capability_worker.delete_key("user_preferences")
+```
+
+- **Parameters:** `key` (str)
+- **Use case:** Clear session state on logout, remove outdated cache, reset workflow
+
+---
+
+### `get_all_keys()`
+
+Returns every stored key-value pair for the current user as a dict.
+
+```python
+all_context = self.capability_worker.get_all_keys()
+```
+
+- **Returns:** `dict` — e.g. `{"user_preferences": {"theme": "light"}, "last_session": {...}}`
+- **Use case:** Debugging, admin display, loading full user context at startup
+
+---
+
+### `get_single_key(key)`
+
+Returns the dict stored at a specific key, or `None` if the key doesn't exist.
+
+```python
+preferences = self.capability_worker.get_single_key("user_preferences")
+# Returns: {"language": "en", "theme": "light", "notifications": False}
+# Returns: None  ← if key doesn't exist
+```
+
+- **Parameters:** `key` (str)
+- **Returns:** `dict` or `None`
+- **Use case:** Load user context before generating a response; check workflow state
+
+---
+
+### ⚠️ Safe Create-or-Update Pattern
+
+`create_key` errors if the key exists. `update_key` errors if it doesn't. Always check first:
+
+```python
+existing = self.capability_worker.get_single_key("user_preferences")
+if existing:
+    self.capability_worker.update_key("user_preferences", updated_value)
+else:
+    self.capability_worker.create_key("user_preferences", updated_value)
+```
+
+---
+
+### Complete Example: Multi-Step Workflow State
+
+```python
+# Step 1 — create state when workflow begins
+self.capability_worker.create_key(
+    key="booking_flow_1234",
+    value={
+        "intent": "book_flight",
+        "destination": "Dubai",
+        "travel_date": "2026-04-01",
+        "step": "awaiting_confirmation"
+    }
+)
+
+# Step 2 — advance to next step
+self.capability_worker.update_key(
+    key="booking_flow_1234",
+    value={
+        "intent": "book_flight",
+        "destination": "Dubai",
+        "travel_date": "2026-04-01",
+        "step": "confirmed"
+    }
+)
+
+# Step 3 — resume from stored state (e.g. user reconnects)
+context = self.capability_worker.get_single_key("booking_flow_1234")
+if context and context.get("step") == "confirmed":
+    await self.capability_worker.speak("Your flight to Dubai is confirmed.")
+
+# Step 4 — clean up when done
+self.capability_worker.delete_key("booking_flow_1234")
+```
+
+---
+
+### File Storage vs. Context Storage — When to Use Which
+
+| | File Storage | Context Storage |
+|---|---|---|
+| **Format** | Raw strings (text, JSON, CSV, logs) | Structured `dict` only |
+| **JSON safety** | Requires delete+write pattern | Native — no corruption risk |
+| **Append support** | Yes (great for logs) | No — always full replacement |
+| **Best for** | Logs, documents, raw text data | Preferences, state, workflow memory |
+| **Async** | Yes (`await`) | No (synchronous) |
+
+> Use **File Storage** when you need logs, text documents, or raw data. Use **Context Storage** when you need structured key-value records with no serialization overhead.
+
+---
+
+### Key Naming Convention
+
+Use descriptive, namespaced keys to avoid collisions across abilities:
+
+```python
+# ✅ Good
+"smarthub_user_prefs"
+"alarm_state_1234"
+"conversation_session_789"
+
+# ❌ Avoid
+"data"
+"prefs"
+"state"
+```
+
+Always store structured JSON dicts, not raw scalars:
+
+```python
+# ✅ Good
+{"status": "active", "expires_at": "2026-05-01"}
+
+# ❌ Avoid
+"active"
+```
+
+---
+
+## 10. WebSocket Communication
 
 ### `send_data_over_websocket(data_type, data)`
 Sends structured data over WebSocket. Used for custom events (music mode, DevKit actions, etc.).
@@ -495,11 +685,11 @@ await self.capability_worker.send_devkit_action("led_on")
 
 ---
 
-## 10. Flow Control
+## 11. Flow Control
 
 ### `resume_normal_flow()`
 
-**⚠️ CRITICAL: You MUST call this when your Ability is done.** It hands control back to the Personality. Without it, the Personality goes silent and the user has to restart the conversation.
+**⚠️ CRITICAL: You MUST call this when your Ability is done.** It hands control back to the Agent. Without it, the Agent goes silent and the user has to restart the conversation.
 
 ```python
 self.capability_worker.resume_normal_flow()
@@ -520,9 +710,20 @@ self.capability_worker.resume_normal_flow()
 - [ ] Called after timeout logic?
 - [ ] Called after user exit detection?
 
+### `send_interrupt_signal()`
+
+Sends an interrupt event to stop the current assistant output (speech/audio) and switch back to user input.
+
+```python
+interrupt_signal = await self.capability_worker.send_interrupt_signal()
+```
+
+- **Async:** Yes (`await`)
+- **Use case:** Manual cutoffs when your Ability needs to immediately stop ongoing output and listen for fresh input
+
 ---
 
-## 11. Logging
+## 12. Logging
 
 ### `editor_logging_handler`
 
@@ -544,7 +745,7 @@ self.worker.editor_logging_handler.debug("Debugging")
 
 ---
 
-## 12. Session Tasks
+## 13. Session Tasks
 
 OpenHome's managed task system. Ensures async work gets properly cancelled when sessions end. Raw `asyncio` tasks can outlive a session — if the user hangs up or switches abilities, your task keeps running as a ghost process. `session_tasks` ensures everything gets cleaned up properly.
 
@@ -568,7 +769,19 @@ await self.worker.session_tasks.sleep(5.0)
 
 ---
 
-## 13. User Connection Info
+## 14. User Connection Info
+
+### `get_timezone()`
+
+Returns the timezone for the active user/session when available.
+
+```python
+timezone = self.capability_worker.get_timezone()
+```
+
+- **Async:** No (synchronous)
+- **Returns:** Timezone string (for example `America/Chicago`) or empty/`None` when unavailable
+- **Use case:** Time-aware scheduling, local date/time formatting, reminders
 
 ### `user_socket.client.host`
 The user's public IP address at connection time.
@@ -594,7 +807,6 @@ def get_user_location(self):
         if resp.status_code == 200:
             data = resp.json()
             if data.get("status") == "success":
-                # Check for cloud/datacenter IPs
                 isp = data.get("isp", "").lower()
                 cloud_indicators = ["amazon", "aws", "google", "microsoft", "azure", "digitalocean"]
                 if any(c in isp for c in cloud_indicators):
@@ -615,13 +827,14 @@ def get_user_location(self):
 
 ---
 
-## 14. Conversation Memory & History
+## 15. Conversation Memory & History
 
-### `agent_memory.full_message_history`
-Access the full conversation message history from the current session.
+### `get_full_message_history()`
+
+Access the full conversation message history from the current session through `CapabilityWorker`.
 
 ```python
-history = self.worker.agent_memory.full_message_history
+history = self.capability_worker.get_full_message_history()
 self.worker.editor_logging_handler.info(f"Messages so far: {len(history)}")
 ```
 
@@ -654,23 +867,25 @@ async def main_loop(self):
 
 ### Passing Context Back After `resume_normal_flow()`
 
-Currently, there is **no direct way** to inject data into the Personality's system prompt after an Ability finishes. When `resume_normal_flow()` fires, the Ability is done and control returns to the Personality.
+Currently, there is **no direct way** to inject data into the Agent's system prompt after an Ability finishes. When `resume_normal_flow()` fires, the Ability is done and control returns to the Agent.
 
 **What you CAN do:**
 
-1. **Save to conversation history** — Anything spoken during the Ability (via `speak()`) becomes part of the conversation history, which the Personality's LLM can see in subsequent turns.
+1. **Save to conversation history** — Anything spoken during the Ability (via `speak()`) becomes part of the conversation history, which the Agent's LLM can see in subsequent turns.
 
-2. **Use file storage** — Write data to persistent files (see [File Storage](#8-file-storage-persistent--temporary)) that other Abilities can read later. The Personality itself won't read these files directly, but your Abilities can share data through them.
+2. **Use file storage** — Write data to persistent files (see [File Storage](#8-file-storage-persistent--temporary)) that other Abilities can read later.
 
-3. **Memory feature** — OpenHome has a new memory feature that can persist user context. (Details TBD as this feature evolves.)
+3. **Use context storage** — Store structured dicts via `create_key` / `update_key` (see [Context Storage](#9-context-storage-key-value)) that other Abilities can instantly retrieve with `get_single_key`.
+
+4. **Memory feature** — OpenHome has a new memory feature that can persist user context. (Details TBD as this feature evolves.)
 
 **What you CANNOT do (yet):**
-- Directly update or modify the Personality's system prompt from within an Ability
-- Pass structured data (like user location or preferences) to the Personality's LLM context after `resume_normal_flow()`
+- Directly update or modify the Agent's system prompt from within an Ability
+- Pass structured data (like user location or preferences) to the Agent's LLM context after `resume_normal_flow()`
 
 ---
 
-## 15. Music Mode
+## 16. Music Mode
 
 When playing audio that's longer than a TTS utterance (music, sound effects, long recordings), you need to signal the system to stop listening and not interrupt.
 
@@ -694,7 +909,7 @@ async def play_track(self, audio_bytes):
 
 ---
 
-## 16. Common Patterns
+## 17. Common Patterns
 
 ### LLM as Intent Router
 
@@ -774,11 +989,7 @@ Being explicit about limitations saves developers hours of guessing:
 
 | You might want to... | Status |
 |----------------------|--------|
-| Update the Personality's system prompt from an Ability | ❌ Not possible |
-| Pass structured data back to the Personality after `resume_normal_flow()` | ❌ Not possible — use conversation history or file storage as workarounds |
-| Access other Abilities from within an Ability | ❌ Not supported |
-| Run background tasks after `resume_normal_flow()` | ❌ Tasks are cancelled on session end |
-| Access a database directly (Redis, SQL, etc.) | ❌ Blocked — use File Storage API instead |
+| Access a database directly (Redis, SQL, etc.) | ❌ Blocked — use File Storage or Context Storage API instead |
 | Use `print()` | ❌ Blocked — use `editor_logging_handler` |
 | Use `asyncio.sleep()` or `asyncio.create_task()` | ❌ Blocked — use `session_tasks` |
 | Use `open()` for raw file access | ❌ Blocked — use File Storage API |
@@ -792,10 +1003,10 @@ These will cause your Ability to be rejected by the sandbox:
 
 | Import | Why | Use Instead |
 |--------|-----|-------------|
-| `redis` | Direct datastore coupling | File Storage API |
-| `RedisHandler` | Bypasses platform abstractions | File Storage API |
+| `redis` | Direct datastore coupling | File Storage or Context Storage API |
+| `RedisHandler` | Bypasses platform abstractions | File Storage or Context Storage API |
 | `connection_manager` | Breaks isolation | CapabilityWorker APIs |
-| `user_config` | Can leak global state | File Storage API |
+| `user_config` | Can leak global state | File Storage or Context Storage API |
 
 Also avoid: `exec()`, `eval()`, `pickle`, `dill`, `shelve`, `marshal`, hardcoded secrets, MD5, ECB cipher mode.
 
@@ -808,5 +1019,5 @@ Also avoid: `exec()`, `eval()`, `pickle`, `dill`, `shelve`, `marshal`, hardcoded
 
 ---
 
-*Last updated: February 2026*
+*Last updated: March 2026*
 *Found an undocumented method? Report it on [Discord](https://discord.gg/openhome) so we can add it here.*
