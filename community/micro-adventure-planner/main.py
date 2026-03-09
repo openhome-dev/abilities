@@ -245,12 +245,14 @@ class MicroAdventurePlannerAbility(MatchingCapability):
     _is_running: bool = False
 
     def call(self, worker: AgentWorker):
+        self.worker = worker
+        self.capability_worker = CapabilityWorker(self)
+        
         if MicroAdventurePlannerAbility._is_running:
             # Already active -- silently ignore the re-trigger
             return
+        
         MicroAdventurePlannerAbility._is_running = True
-        self.worker = worker
-        self.capability_worker = CapabilityWorker(self)
         self.current_plans = []
         self._last_plan_context: dict = {}
         self._last_narrative: str = ""  # last LLM-generated plan narrative for Notion
