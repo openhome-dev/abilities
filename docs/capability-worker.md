@@ -1,4 +1,4 @@
-# CapabilityWorker 
+# CapabilityWorker
 
 The `CapabilityWorker` is the core SDK class for all I/O inside an Ability. Access it via `self.capability_worker` after initializing in `call()`.
 
@@ -170,13 +170,11 @@ If you forget this, the Agent will be stuck and unresponsive.
 
 ### `send_interrupt_signal()`
 
-Stops current assistant output and returns control to user input.
+Stops current assistant output and returns control to user input. Call this before `speak()` or `play_audio()` from a background daemon to avoid audio overlap.
 
 ```python
-interrupt_signal = await self.capability_worker.send_interrupt_signal()
+await self.capability_worker.send_interrupt_signal()
 ```
-
-Async. Use when you need to cut off ongoing speech/audio and listen immediately.
 
 ---
 
@@ -201,6 +199,94 @@ history = self.capability_worker.get_full_message_history()
 ```
 
 Use this to read what happened before your Ability was triggered — gives context for smarter responses.
+
+---
+
+## Context Storage (Key-Value)
+
+A built-in key-value store for persisting structured user data across sessions. All methods are **synchronous** (no `await`). Each key stores a `dict` as its value. Storage is scoped at the user level — any ability can read and write any key for a given user.
+
+### `create_key(key, value)`
+
+Creates a new key-value pair. Errors if the key already exists.
+
+```python
+self.capability_worker.create_key(
+    key="user_preferences",
+    value={"language": "en", "theme": "dark", "notifications": True}
+)
+```
+
+### `update_key(key, value)`
+
+Replaces the value at an existing key with a new dict. Errors if the key doesn't exist.
+
+```python
+self.capability_worker.update_key(
+    key="user_preferences",
+    value={"language": "en", "theme": "light", "notifications": False}
+)
+```
+
+### `delete_key(key)`
+
+Permanently removes a stored key-value pair.
+
+```python
+self.capability_worker.delete_key("user_preferences")
+```
+
+### `get_all_keys()`
+
+Returns all stored key-value pairs for the current user as a dict.
+
+```python
+all_context = self.capability_worker.get_all_keys()
+# Returns: {"user_preferences": {"theme": "light"}, "last_session": {...}}
+```
+
+### `get_single_key(key)`
+
+Returns the dict stored at a specific key, or `None` if the key doesn't exist.
+
+```python
+preferences = self.capability_worker.get_single_key("user_preferences")
+# Returns: {"language": "en", "theme": "light"} or None
+```
+
+### Safe Create-or-Update Pattern
+
+`create_key` errors if the key exists; `update_key` errors if it doesn't. Always check first:
+
+```python
+existing = self.capability_worker.get_single_key("user_preferences")
+if existing:
+    self.capability_worker.update_key("user_preferences", new_value)
+else:
+    self.capability_worker.create_key("user_preferences", new_value)
+```
+
+### Multi-Step Workflow Example
+
+```python
+# Save state when workflow starts
+self.capability_worker.create_key(
+    key="booking_flow_1234",
+    value={"destination": "Dubai", "step": "awaiting_date"}
+)
+
+# Advance state
+self.capability_worker.update_key(
+    key="booking_flow_1234",
+    value={"destination": "Dubai", "step": "confirmed"}
+)
+
+# Resume from state
+context = self.capability_worker.get_single_key("booking_flow_1234")
+
+# Clean up
+self.capability_worker.delete_key("booking_flow_1234")
+```
 
 ---
 

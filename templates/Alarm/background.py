@@ -8,7 +8,7 @@ from src.main import AgentWorker
 from src.agent.capability_worker import CapabilityWorker
 
 
-class AlarmCapabilityWatcher(MatchingCapability):
+class BackgroundCapabilityBackground(MatchingCapability):
     worker: AgentWorker = None
     capability_worker: CapabilityWorker = None
     background_daemon_mode: bool = False
