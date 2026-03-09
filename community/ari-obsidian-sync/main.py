@@ -5,6 +5,7 @@ from src.main import AgentWorker
 from src.agent.capability_worker import CapabilityWorker
 import subprocess
 
+
 class ARI_ObsidianSync(MatchingCapability):
     worker: AgentWorker = None
     capability_worker: CapabilityWorker = None
@@ -29,20 +30,20 @@ class ARI_ObsidianSync(MatchingCapability):
         try:
             # Trigger the Obsidian sync script
             await self.capability_worker.speak("Syncing Obsidian vault...")
-            
+
             # Run the local sync script
             result = subprocess.run(
                 ["/Users/ari/.openclaw/scripts/obsidian-watcher.sh"],
                 capture_output=True,
                 text=True
             )
-            
+
             if result.returncode == 0:
                 await self.capability_worker.speak("Obsidian sync complete. Your notes are up to date.")
             else:
                 await self.capability_worker.speak(f"Sync failed: {result.stderr}")
-                
+
         except Exception as e:
             await self.capability_worker.speak(f"Error during sync: {str(e)}")
-            
+
         self.capability_worker.resume_normal_flow()

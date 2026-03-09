@@ -1,3 +1,6 @@
+from src.agent.capability import MatchingCapability
+from src.main import AgentWorker
+from src.agent.capability_worker import CapabilityWorker
 import datetime
 import hashlib
 import json
@@ -19,9 +22,6 @@ def mark_fate_used() -> None:
     global _fate_used_date
     _fate_used_date = datetime.date.today().isoformat()
 
-from src.agent.capability import MatchingCapability
-from src.agent.capability_worker import CapabilityWorker
-from src.main import AgentWorker
 
 # =============================================================================
 # AquaPrime: The Fading — Voice Text RPG for OpenHome
@@ -47,7 +47,6 @@ from src.main import AgentWorker
 #   - Player's voice phrasing determines mechanic: fate / recall / act
 #   - d20 = movement (how far your ship travels), not success/fail resolution
 # =============================================================================
-
 BASE_URL = "https://www.platypuspassions.com"
 
 EXIT_WORDS = {
@@ -1020,7 +1019,7 @@ class AquaprimeFadingCapability(MatchingCapability):
                 erasable = skill_memories if skill_memories else memories
                 if erasable:
                     lost = erasable[0]
-                    lost_type = lost.get("memory_type", "lore")
+                    lost.get("memory_type", "lore")
                     lost_title = lost.get("memory_title", "something")
                     lost_skill = lost.get("grants_ability")
                     # Write the scar before erasing — loss generates story
