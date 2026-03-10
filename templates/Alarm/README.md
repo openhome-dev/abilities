@@ -1,29 +1,29 @@
-# Alarm Watcher Template — OpenHome Ability
+# Alarm Background Template — OpenHome Ability
 ![Community](https://img.shields.io/badge/OpenHome-Community-orange?style=flat-square)
 ![Template](https://img.shields.io/badge/Type-Template-blue?style=flat-square)
 ![Advanced](https://img.shields.io/badge/Level-Advanced-red?style=flat-square)
 
 ## What This Is
-**This is an advanced template ability** that demonstrates OpenHome's "watcher mode" — a special ability type that runs continuously in the background to monitor conditions and trigger actions. This template shows how to build an alarm clock system that fires at scheduled times.
+**This is an advanced template ability** that demonstrates OpenHome's "background mode" — a special ability type that runs continuously in the background to monitor conditions and trigger actions. This template shows how to build an alarm clock system that fires at scheduled times.
 
-## ⚠️ Important: Watcher Mode Abilities
+## ⚠️ Important: Background Mode Abilities
 
 ### What Makes This Different
 **Normal abilities** are on-demand — they activate when triggered, do their job, then exit with `resume_normal_flow()`.
 
-**Watcher abilities** run continuously in an infinite loop, checking conditions every few seconds. This template is one of the **only** ability types that doesn't call `resume_normal_flow()` because it's designed to never exit.
+**Background abilities** run continuously in an infinite loop, checking conditions every few seconds. This template is one of the **only** ability types that doesn't call `resume_normal_flow()` because it's designed to never exit.
 
 ### Understanding the Architecture
 
 From the official docs:
 > **Abilities don't run in the background. They're on-demand** — your ability only exists while it's actively handling a conversation.
 
-However, **watcher mode is a special case**. When an ability is initialized with `watcher_mode=True`, it enters an infinite loop that runs for the lifetime of the session. This is used for:
+However, **Background mode is a special case**. When an ability is initialized with `background_daemon_mode=True`, it enters an infinite loop that runs for the lifetime of the session. This is used for:
 - **Alarm systems** (like this template)
 - **Periodic monitoring** (checking APIs every N seconds)
 - **Event detection** (watching for conditions to trigger actions)
 
-**Critical limitation:** The watcher loop stops when the Agent session ends. You cannot build:
+**Critical limitation:** The background loop stops when the Agent session ends. You cannot build:
 - ❌ Truly "background" tasks that run 24/7
 - ❌ Alarms that fire when the user isn't active
 - ❌ Proactive notifications that interrupt the user
@@ -32,20 +32,20 @@ This template is best for **active session alarms** — alarms that fire while t
 
 ## What You Can Build
 
-This watcher pattern can be adapted for:
+This background pattern can be adapted for:
 - **Alarm clock** — Play audio at scheduled times (this template)
 - **Timer system** — Countdown timers that fire audio alerts
 - **Periodic reminders** — Check every N minutes and speak reminders
 - **API monitoring** — Poll external APIs and alert on changes
-- **Condition watchers** — Check file changes, system status, etc.
+- **Condition backgrounds** — Check file changes, system status, etc.
 
 ## How the Template Works
 
 ### Template Flow
-1. Ability initializes with `watcher_mode=True`
+1. Ability initializes with `background_daemon_mode=True`
 2. Enters infinite `while True` loop
 3. Every 20 seconds (configurable):
-   - Logs "watcher watching" message
+   - Logs "background watching" message
    - Reads last 10 messages from conversation history
    - Logs each message (role + content)
    - Sleeps for 20 seconds
@@ -53,24 +53,24 @@ This watcher pattern can be adapted for:
 
 ### Key Components
 
-**1. Watcher Mode Initialization:**
+**1. Background Mode Initialization:**
 ```python
-def call(self, worker: AgentWorker, watcher_mode: bool):
+def call(self, worker: AgentWorker, background_daemon_mode: bool):
     self.worker = worker
-    self.watcher_mode = watcher_mode  # ← Special flag
+    self.background_daemon_mode = background_daemon_mode  # ← Special flag
     self.capability_worker = CapabilityWorker(self)
     self.worker.session_tasks.create(self.first_function())
 ```
-- `watcher_mode` parameter distinguishes this from normal abilities
+- `background_daemon_mode` parameter distinguishes this from normal abilities
 - Creates infinite task with `session_tasks.create()`
 
 **2. Infinite Watch Loop:**
 ```python
 async def first_function(self):
-    self.worker.editor_logging_handler.info("%s: Watcher Called" % time())
+    self.worker.editor_logging_handler.info("%s: Background Called" % time())
     
     while True:  # ← Never exits
-        self.worker.editor_logging_handler.info("%s: watcher watching" % time())
+        self.worker.editor_logging_handler.info("%s: Background watching" % time())
         
         # Do something (read history, check conditions, etc.)
         message_history = self.capability_worker.get_full_message_history()[-10:]
@@ -102,7 +102,7 @@ message_history = self.capability_worker.get_full_message_history()[-10:]
 
 ## Production Alarm Implementation
 
-The template includes a production-ready alarm watcher in the documents section. Here's how it works:
+The template includes a production-ready alarm background in the documents section. Here's how it works:
 
 ### Alarm Data Structure
 ```json
@@ -120,10 +120,10 @@ The template includes a production-ready alarm watcher in the documents section.
 
 Stored in `alarms.json` (per-user storage).
 
-### Alarm Watcher Flow
+### Alarm Background Flow
 1. **Every 1 second:**
    - Read `alarms.json` safely (handles corruption)
-   - Get current time in watcher's timezone
+   - Get current time in background's timezone
    - Find alarms with `status: "scheduled"` where `now >= target_iso`
 2. **For each due alarm:**
    - Play `alarm.mp3` from ability directory
@@ -136,9 +136,9 @@ Stored in `alarms.json` (per-user storage).
 - **Timezone-aware** — Uses `ZoneInfo` for proper time handling
 - **No repeat firing** — Marks alarms `triggered` after firing
 - **Error resilient** — Try-catch around all operations, logs errors
-- **Graceful degradation** — Failed audio playback doesn't crash watcher
+- **Graceful degradation** — Failed audio playback doesn't crash background
 
-## Building Your Own Watcher
+## Building Your Own Background
 
 ### Pattern 1: Simple Timer
 ```python
@@ -217,7 +217,7 @@ async def first_function(self):
 
 ## Adding Audio Files
 
-The alarm watcher plays `alarm.mp3` from the ability directory:
+The alarm background plays `alarm.mp3` from the ability directory:
 
 ```python
 await self.capability_worker.play_from_audio_file("alarm.mp3")
@@ -234,7 +234,7 @@ await self.capability_worker.play_from_audio_file("alarm.mp3")
 - [ ] File format is supported (.mp3 recommended)
 - [ ] File is not corrupted
 
-## Best Practices for Watchers
+## Best Practices for Backgrounds
 
 ### 1. Always Use session_tasks.sleep()
 ```python
@@ -267,22 +267,22 @@ await self.worker.session_tasks.sleep(300.0)
 ```python
 while True:
     try:
-        # Your watcher logic here
+        # Your background logic here
         ...
         
     except Exception as e:
-        self.worker.editor_logging_handler.error(f"Watcher error: {e}")
+        self.worker.editor_logging_handler.error(f"Background error: {e}")
         await self.worker.session_tasks.sleep(2.0)  # Brief pause before retry
 ```
 
 ### 4. Use editor_logging_handler (Not print)
 ```python
 # ✅ GOOD — Structured logging
-self.worker.editor_logging_handler.info("Watcher started")
+self.worker.editor_logging_handler.info("Background started")
 self.worker.editor_logging_handler.error(f"Failed: {e}")
 
 # ❌ BAD — Won't appear in logs
-print("Watcher started")
+print("Background started")
 ```
 
 ### 5. Handle File Corruption Gracefully
@@ -337,14 +337,14 @@ while True:
     await self.worker.session_tasks.sleep(10.0)
 ```
 
-## Limitations of Watcher Mode
+## Limitations of Background Mode
 
-### What Watchers Cannot Do
+### What Backgrounds Cannot Do
 
 From the official docs:
 > **You can't set a timer that fires in 15 minutes to remind the user of a meeting. You can't poll an API every 5 minutes in the background. You can't have an ability proactively interrupt the user with a notification.**
 
-**Why?** The watcher only exists while the Agent session is active. When the user stops talking or the session ends, the watcher stops.
+**Why?** The background only exists while the Agent session is active. When the user stops talking or the session ends, the background stops.
 
 ### What This Means for Alarms
 
@@ -356,7 +356,7 @@ This alarm template will work **only while the user is actively using their Agen
 
 For true background alarms, you need:
 1. **External system integration** — Use device's native alarm APIs
-2. **Server-side scheduling** — Run watcher on always-on server
+2. **Server-side scheduling** — Run background on always-on server
 3. **Separate daemon** — Run independent background process
 
 This template is best for:
@@ -366,7 +366,7 @@ This template is best for:
 
 ## Troubleshooting
 
-### Watcher Stops Running
+### Background Stops Running
 **Problem:** Loop exits unexpectedly
 
 **Causes:**
@@ -401,7 +401,7 @@ await self._save_alarms(alarms)  # Write back to file
 ```
 
 ### High CPU Usage
-**Problem:** Watcher consumes too many resources
+**Problem:** Background consumes too many resources
 
 **Causes:**
 1. Sleep interval too short
@@ -434,10 +434,10 @@ await self.capability_worker.write_file(
 
 ## Security Considerations
 
-### 🔒 Watcher-Specific Security
+### 🔒 Background-Specific Security
 
 **1. Rate Limiting**
-Prevent abuse by limiting watcher frequency:
+Prevent abuse by limiting background frequency:
 ```python
 MIN_SLEEP = 1.0  # Minimum 1 second between checks
 
@@ -446,7 +446,7 @@ if sleep_duration < MIN_SLEEP:
 ```
 
 **2. Resource Monitoring**
-Log watcher activity to detect issues:
+Log background activity to detect issues:
 ```python
 loop_count = 0
 
@@ -454,29 +454,29 @@ while True:
     loop_count += 1
     
     if loop_count % 100 == 0:  # Every 100 loops
-        self.worker.editor_logging_handler.info(f"Watcher healthy: {loop_count} loops")
+        self.worker.editor_logging_handler.info(f"background healthy: {loop_count} loops")
 ```
 
 **3. Graceful Shutdown**
-Allow watcher to clean up:
+Allow background to clean up:
 ```python
 try:
     while True:
         ...
 except asyncio.CancelledError:
-    self.worker.editor_logging_handler.info("Watcher cancelled, cleaning up...")
+    self.worker.editor_logging_handler.info("Background cancelled, cleaning up...")
     # Clean up resources here
     raise
 ```
 
 ## Quick Start Checklist
 
-### Understanding Watchers
+### Understanding Backgrounds
 - [ ] Read "What Makes This Different" section
-- [ ] Understand watcher runs continuously (no `resume_normal_flow()`)
+- [ ] Understand background runs continuously (no `resume_normal_flow()`)
 - [ ] Know limitations (session-scoped, not truly background)
 
-### Building Your Watcher
+### Building Your Background
 - [ ] Define what condition to watch (file, time, API, etc.)
 - [ ] Set appropriate sleep interval (1-30 seconds usually)
 - [ ] Add try-catch around entire loop
@@ -505,25 +505,25 @@ except asyncio.CancelledError:
 
 ## Support & Contribution
 
-If you build something with watcher mode:
+If you build something with background mode:
 - 🎉 Share your implementation in Discord
 - 💡 Contribute improvements to the template
-- 🤝 Help others understand watcher limitations
+- 🤝 Help others understand background limitations
 - 📝 Document your use case
 
 ## Final Reminder
 
-⚠️ **Watcher abilities are advanced — understand the limitations before building.**
+⚠️ **Background abilities are advanced — understand the limitations before building.**
 
 **Key takeaways:**
-- ✅ Watchers run continuously in infinite loops
+- ✅ Backgrounds run continuously in infinite loops
 - ✅ Great for active session monitoring (timers, reminders)
 - ✅ Must use `session_tasks.sleep()`, never `asyncio.sleep()`
 - ❌ **Not** truly background tasks
 - ❌ **Cannot** fire when user isn't active
 - ❌ **Never** call `resume_normal_flow()` (intentionally unreachable)
 
-Use watchers for real-time monitoring during active sessions, not for long-term background tasks! ⏰🚀
+Use backgrounds for real-time monitoring during active sessions, not for long-term background tasks! ⏰🚀
 
 ---
 
