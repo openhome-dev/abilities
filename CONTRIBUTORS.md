@@ -23,7 +23,7 @@ Format: - **@username** — ability-name ([ability-name](community/ability-name/
 - **[@yonaseth12](https://github.com/yonaseth12)** — live-flight-status ([live-flight-status](community/live-flight-status/)), noise-machine ([noise-machine](community/noise-machine/)), dev-standup-assistant ([dev-standup-assistant](community/dev-standup-assistant/))
 - **[@alimujtaba478](https://github.com/alimujtaba478)** — x-news-feed ([x-news-feed](community/x-news-feed/))
 - **[@Akio9090-dev](https://github.com/Akio9090-dev)** — WeatherPro ([WeatherPro](community/WeatherPro/)), Hubspot ([Hubspot](community/Hubspot/))
-- **[@RyanBhandal](https://github.com/RyanBhandal)** — Outlook ([Outlook](community/Outlook/)), MicrosoftMail ([MicrosoftMail](community/MicrosoftMail/))
+- **[@RyanBhandal](https://github.com/RyanBhandal)** — Outlook ([Outlook](community/Outlook/)), MicrosoftMail ([MicrosoftMail](community/MicrosoftMail/)), outlook-daily-brief ([outlook-daily-brief](community/outlook-daily-brief/))
 - **[@fiction17](https://github.com/fiction17)** — flight-price-checker ([flight-price-checker](community/flight-price-checker/)), voice-memory-capture ([voice-memory-capture](community/voice-memory-capture/)), add-flight-information-email ([add-flight-information-email](community/add-flight-information-email/))
 - **[@pipinstallshan](https://github.com/pipinstallshan)** — crypto-insight ([crypto-insight](community/crypto-insight/)), vibe-trivia ([vibe-trivia](community/vibe-trivia/))
 - **[@crunchdomo](https://github.com/crunchdomo)** — redcast-checker ([redcast-checker](community/redcast-checker/))
