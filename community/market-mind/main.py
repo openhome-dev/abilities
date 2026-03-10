@@ -299,7 +299,7 @@ class MarketMindCapability(MatchingCapability):
     capability_worker: CapabilityWorker = None
 
     # Do not change following tag of register capability
-    #{{register capability}}
+    # {{register capability}}
 
     def call(self, worker: AgentWorker):
         self.worker = worker
@@ -531,7 +531,7 @@ class MarketMindCapability(MatchingCapability):
         macd = data.get("MACD.macd")
         macd_sig = data.get("MACD.signal")
         ema20 = data.get("EMA20")
-        ema50 = data.get("EMA50")
+        data.get("EMA50")
         ema200 = data.get("EMA200")
         rec_d = data.get("Recommend.All")
         rec_1h = data.get("Recommend.All|60")
