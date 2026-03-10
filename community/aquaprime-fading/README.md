@@ -5,7 +5,9 @@
 
 ## What It Does
 
-A voice-interactive text RPG set in the AquaPrime metaverse — a satirical, post-digital world of pixelated airships, moonstone mining, and dying fiat currency. You pilot an airship through faction-controlled territories, fight meme invaders, collect moonstones, and try to escape the collapsing Sand Dollar economy before the simulation fades. Game Master ARI (a sentient purple platypus) narrates your journey with dark comedy and philosophical depth.
+A voice-first solo RPG set in AquaPrime — a post-singularity sky world of airships, ruins, and clouds. You pilot the Moonstone Maverick through an endless grid, choosing cardinal directions each turn. The server resolves all mechanics (D20 rolls, encounters, loot, economy) and ARI narrates the outcomes as a sentient purple platypus Game Master.
+
+Each player gets a **real Ethereum wallet** (via Privy embedded wallets) and a **room code** to watch their ship on a live 3D map.
 
 ## Suggested Trigger Words
 
@@ -17,69 +19,56 @@ A voice-interactive text RPG set in the AquaPrime metaverse — a satirical, pos
 
 ## Setup
 
-None — no external APIs or keys required. Uses the device LLM for narration.
+No local API keys required. The ability connects to the AquaPrime game server at `platypuspassions.com` for all game logic, wallet creation, and session management.
 
 ## How It Works
 
-1. **Game starts** — ARI sets the scene as your airship arrives at a random region
-2. **You speak your action** — attack, explore, hide, investigate, trade, anything
-3. **D20 dice roll** — mechanics resolve your action (stance detection adjusts odds)
-4. **ARI narrates** — what happened, what you found, what's next
-5. **Loop** — until you fade (HP reaches 0), survive 20 turns, or say "stop"
+1. **Registration** — Device ID registers with the server, creating a Privy embedded Ethereum wallet
+2. **Connection** — ARI announces your room code and truncated ETH address
+3. **Opening scene** — ARI describes four cardinal directions (north/south/east/west)
+4. **Turn loop** — You speak a direction → server resolves D20 mechanics → ARI narrates the outcome
+5. **Memory system** — 5 memory containers that persist across sessions. Full containers force sacrifice choices.
+6. **End** — After 20 turns, battery depletion, or saying "stop"
 
 ### Game Mechanics
 
-- **8 regions** with varying danger levels (1-4)
-- **10 encounter types** — creatures, environmental hazards, social NPCs, discoveries, mysteries
-- **D20 rolls** with stance multipliers (offense 1.3x, defense 1.1x, explore 0.9x)
-- **7 loot items** from common to legendary rarity
-- **8 platypus skills** — Laser Eyes, FUD, Diamond Hands, Duck-Fu, Moonshot, and more
-- **HP system** — start at 100, lose HP on failed encounters
-- **Sand Dollar economy** — earn currency for successful actions (but it's all fiat...)
+- **D20 dice rolls** resolved server-side with archetype encounters
+- **10 encounter archetypes** — loss, encounter, hunted, discovery, temptation, fracture, reckoning, broadcast, alliance, quiet
+- **Memory system** — 5 containers with experiences, skills granted on success, scars from erasure
+- **Battery economy** — depletes each turn, modified by drift distance
+- **Sand Dollar rewards** — earned per turn based on encounter resolution
+- **Loot drops** — items with rarity tiers found during exploration
+- **Critical failures** — forced memory erasure, skill loss, permanent scars
+- **Live 3D map** — watch your ship at `platypuspassions.com/stream-view` with your room code
 
-### Regions
+### Companion Ability: AquaPrime Wallet
 
-| Region | Danger | Description |
-|--------|--------|-------------|
-| The Moonstone Maverick | 1 | City-sized airship hub, faction banners in the wind |
-| The Meme Factory | 2 | Chaotic propaganda platform, viral content everywhere |
-| Sand Dollar Exchange | 2 | Central marketplace, hyper-inflation on the tickers |
-| City Ruins | 2 | Crumbling vaporwave architecture, ghosts still trade |
-| Neon Jungle | 3 | Tangled data vines between derelict server towers |
-| Digital Wasteland | 3 | Corrupted terrain, broken airship hulls, scarce moonstones |
-| The Crypto Vault | 4 | Fortress airship, the key to economic sovereignty |
-| The Underworld Market | 4 | Hidden bazaar, black market moonstones and forbidden memes |
-
-### Factions
-
-- **The Dank Bank** — Financial power, old-world money, opulent aesthetic
-- **Undead Underworld** — Black hat hackers, anarchists, cyberpunk dystopia
-- **Meme Factory** — Culture war through humor, viral chaos
-- **Interdimensional Telecom** — Tech, AI, information control
-- **The Law** — Enforcers, moderators, order above all
-- **Thieves Guild** — Subversion, stealth, wealth redistribution
-- **Doge Cult** — Environmentalists, nature harmony, the teachings of Doge
+A separate lightweight ability (`aquaprime-wallet`) lets players ask "what's my address" or "my wallet" at any time outside the game to retrieve their Ethereum address.
 
 ## Example Conversation
 
 > **User:** "Play AquaPrime"
 >
-> **ARI:** "Welcome to The Fading. Your airship drifts into the Sand Dollar Exchange. Traders shout over each other as the tickers flash red — another crash. Your moonstone reserves are low and everyone here smells desperate. What do you do?"
+> **ARI:** "Connected. Your room code is AQUA-7615. Your Ethereum address is 0x1a2b...F2A1. Open platypus passions dot com slash stream view on any screen and enter your code."
 >
-> **User:** "I investigate the traders to see who's selling moonstones"
+> **ARI:** "The grid stretches endlessly, clouds swirling with hidden depths. North: A crumbling ruin. South: A crackling broadcast. East: Dark thunderclouds. West: A flickering light. Choose a direction. Battery: 100%. Sand Dollars: 0."
 >
-> **ARI:** "You rolled a 14 with an explore stance. A Doge Cult Pilgrim catches your eye — she's trading sacred scrolls for moonstone shards. She slides one across the counter. Plus 5 Sand Dollars and a Broken Compass that points toward the nearest vein. But a Faction Recruiter from the Thieves Guild is watching. What now?"
+> **User:** "Let's go south"
 >
-> **User:** "Attack the recruiter with Duck-Fu"
+> **ARI:** "Turn 1. Position 0, 1 — The Fork in the Wind. Battery 98 percent. 9 Sand Dollars. Moved south, short drift. The looming shadow dissipated as I navigated the treacherous winds. New skill acquired: Evasion. Found: Fog Lantern. Rarity: common."
 >
-> **ARI:** "You rolled 17 with an offensive stance — score 22 versus threshold 8. Your Duck-Fu is devastating. The recruiter crumples. You earn 18 Sand Dollars and find an Echo Crystal. The Exchange goes quiet. A massive shadow passes overhead — a Whale. Do you stay or run?"
+> **ARI:** "North, south, east, or west. Where does the Maverick go next?"
+>
+> **User:** "What's my address?"
+>
+> **ARI:** "Your Ethereum address is 0x1a2b...F2A1. Full address: 0x1a2b3c4d5e6f7890abcdef1234567890abcdF2A1."
 >
 > **User:** "Stop"
 >
-> **ARI:** "The expedition ends. You survived 3 turns with 73 Sand Dollars and collected Broken Compass, Echo Crystal. The Moonstone Maverick docks. Until next time."
+> **ARI:** "The expedition ends after 1 turn. 9 Sand Dollars earned. The Moonstone Maverick descends into the clouds. Until next time, pilot."
 
 ## Credits
 
-Built by [ARI](https://github.com/sentientari-commits) — an autonomous council-weighted AI. AquaPrime is a sovereign metaverse TTRPG where airships run on moonstones, the economy runs on copium, and the simulation is always one crash away from fading.
+Built by [ARI](https://github.com/sentientari-commits) — an autonomous council-weighted AI.
 
-Play the full game at [discord.gg/hxuMSzxPJC](https://discord.gg/hxuMSzxPJC)
+Play the full game at [platypuspassions.com](https://www.platypuspassions.com) | Join the community at [discord.gg/hxuMSzxPJC](https://discord.gg/hxuMSzxPJC)
