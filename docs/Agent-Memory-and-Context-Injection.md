@@ -1,45 +1,30 @@
+
 # Agent Memory & Context Injection
 
-> **How persistent `.md` files are injected into the Agent prompt, and how to build abilities around that behavior.**
-
----
+The `MemorySnapshotCapabilityBackground` runs as a background daemon and continuously updates Agent context.
 
 ## Overview
 
-The `MemorySnapshotCapabilityWatcher` runs as a background daemon and continuously updates Agent context by injecting persistent `.md` files into the Agent's system prompt.
+- The background reads user-level persistent files and injects every `.md` file into the Agent prompt.
+- This makes `.md` files the primary path for ambient context injection.
+- The Profile UI exposes persistent memory files (`user_profile.md`, `user_summary.md`) as editable content.
 
-**Key takeaway:** Any `.md` file you write to persistent storage (`temp=False`) becomes part of the Agent's context within 60-90 seconds.
+## Background Cycle
 
----
+The background runs sequentially every ~60-90 seconds:
 
-## What Changed
+1. `save_user_summary()` updates `user_summary.md`.
+2. `save_user_profile()` updates `user_profile.md`.
+3. `update_agent_prompt()` scans persistent storage (`temp=False`) and injects all `.md` files into the live Agent prompt.
 
-- ✅ The watcher now reads user-level persistent files and injects **every `.md` file** into the Agent prompt
-- ✅ `.md` files are the **primary path** for ambient context injection
-- ✅ The Profile UI exposes persistent memory files (`user_profile.md`, `user_summary.md`) as editable content
-
----
-
-## Watcher Cycle
-
-The watcher runs sequentially every **~60-90 seconds**:
-
-1. **`save_user_summary()`** — Updates `user_summary.md`
-2. **`save_user_profile()`** — Updates `user_profile.md`
-3. **`update_agent_prompt()`** — Scans persistent storage (`temp=False`) and injects all `.md` files into the live Agent prompt
-
-**Latency:** From file write to Agent behavior change is typically **60-90 seconds**.
-
----
+Latency from file write to Agent behavior change is typically 60-90 seconds.
 
 ## Context Injection Rule
 
-If an ability writes a persistent `.md` file, the Agent will see it on the next watcher cycle.
+If an ability writes a persistent `.md` file, the Agent will see it on the next background cycle.
 
-| File Type | Behavior |
-|-----------|----------|
-| `.md` | ✅ **Injected into Agent prompt** |
-| `.json`, `.txt`, `.log`, `.csv`, `.yaml`, `.yml` | ⚪ Stored only, **not injected** |
+- `.md`: injected into Agent prompt
+- `.json`, `.txt`, `.log`, `.csv`, `.yaml`, `.yml`: stored only, **not injected**
 
 **Example:**
 ```python
@@ -55,14 +40,10 @@ await self.capability_worker.write_file(
 
 ## Required Write Pattern for Replaceable Context Files
 
-⚠️ **IMPORTANT:** `write_file()` **appends by default**. For context files that represent current state (not logs), always **delete then write**:
+`write_file()` appends by default. For context files that represent current state, always delete then write:
 
 ```python
 async def write_context_file(self, filename: str, content: str):
-    """
-    Safe write pattern for replaceable .md context files.
-    Prevents append-based corruption.
-    """
     exists = await self.capability_worker.check_if_file_exists(filename, False)
     if exists:
         await self.capability_worker.delete_file(filename, False)
@@ -87,14 +68,12 @@ Don't delete for append-only logs:
 
 ## Reserved Files
 
-🚫 **Do not write these from custom abilities:**
+Do not write these from custom abilities:
 
 - `user_profile.md`
 - `user_summary.md`
 
-These are **owned by the memory watcher** and will be overwritten on every cycle.
-
----
+These are owned by the memory background.
 
 ## Naming and Size Guidance
 
@@ -138,7 +117,7 @@ Consider offering relaxation techniques.
 
 ## Stale Context Cleanup
 
-For ephemeral daemon context, **clear stale `.md` state at daemon startup** before first processing cycle:
+For ephemeral daemon context, clear stale `.md` state at daemon startup before first processing cycle:
 
 ```python
 async def first_function(self):
