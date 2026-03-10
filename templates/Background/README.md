@@ -60,7 +60,7 @@ Enter while True Loop
 def call(self, worker: AgentWorker, background_daemon_mode: bool)
     self.worker = worker
     self.background_daemon_mode = background_daemon_mode
-    self.capability_worker = CapabilityWorker(self.worker)
+    self.capability_worker = CapabilityWorker(self)
     self.worker.session_tasks.create(self.first_function())
 ```
 - `background_daemon_mode=True` indicates this is a background ability
