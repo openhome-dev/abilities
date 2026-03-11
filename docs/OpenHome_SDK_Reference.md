@@ -804,6 +804,20 @@ timezone = self.capability_worker.get_timezone()
 - **Use case:** Time-aware scheduling, local date/time formatting, reminders
 - **Common daemon use:** Alarm/reminder checks aligned to the user's local timezone
 
+### `get_token(linked_platform)`
+Returns the linked account access token for the current user.
+
+```python
+token = self.capability_worker.get_token("google")
+self.worker.editor_logging_handler.info(token)
+```
+
+- **Async:** No (synchronous)
+- **Parameters:**
+  - `linked_platform` (str): Platform name. Supported values: Google (`"google"`), Slack (`"slack"`), Discord (`"discord"`)
+- **Returns:** Access token string for that linked platform
+- **Use case:** Calling Google/Slack/Discord APIs on behalf of the linked user account
+
 ### `user_socket.client.host`
 The user's public IP address at connection time.
 
