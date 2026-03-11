@@ -188,7 +188,7 @@ def write_loss_scar(device_id, pos_x, pos_y, lost_memory):
     elif mtype == "skill" and skill:
         scar = f"The fracture took {skill}. I reached for it and found nothing."
     elif mtype == "fate":
-        scar = f"The wheel spun without me. I felt it leave."
+        scar = "The wheel spun without me. I felt it leave."
     else:
         scar = f"I lost {title}. The Fading took it cleanly."
 
