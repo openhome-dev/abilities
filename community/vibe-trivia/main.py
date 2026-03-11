@@ -1,6 +1,7 @@
 import json
 import os
 import re
+from pathlib import Path
 from typing import Any
 
 from src.agent.capability import MatchingCapability
@@ -52,17 +53,18 @@ ANSWER_JUDGE_PROMPT = (
 class VibeTriviaCapability(MatchingCapability):
     model_config = {"extra": "allow", "arbitrary_types_allowed": True}
 
-    worker: AgentWorker | None = None
-    capability_worker: CapabilityWorker | None = None
+    worker: AgentWorker = None
+    capability_worker: CapabilityWorker = None
     initial_request: str | None = None
     hotwords: list[str] = ["start vibe trivia", "vibe trivia", "trivia time", "quiz me", "play trivia", "start a quiz"]
 
+    # {{register_capability}}
     @classmethod
     def register_capability(cls) -> "MatchingCapability":
-        with open(
-            os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.json")
-        ) as file:
-            data = json.load(file)
+        config_path = os.path.join(
+            os.path.dirname(os.path.abspath(__file__)), "config.json"
+        )
+        data = json.loads(Path(config_path).read_text(encoding="utf-8"))
         return cls(
             unique_name=data["unique_name"],
             matching_hotwords=data["matching_hotwords"],
@@ -192,8 +194,8 @@ class VibeTriviaCapability(MatchingCapability):
     async def _listen_nonempty(
         self, prompt: str, retries: int = 2, exit_ok: bool = True
     ) -> str | None:
-        assert self.capability_worker is not None
-
+        if not self.capability_worker:
+            return None
         if self.worker:
             await self.worker.session_tasks.sleep(0.2)
 
@@ -250,8 +252,8 @@ class VibeTriviaCapability(MatchingCapability):
             self._log_error(f"[VibeTrivia] Failed to write best score: {e}")
 
     async def _ask_num_questions(self) -> int | None:
-        assert self.capability_worker is not None
-
+        if not self.capability_worker:
+            return None
         user_input = await self._listen_nonempty(ASK_NUM_QUESTIONS, retries=1)
         if user_input is None:
             await self.capability_worker.speak("Okay, exiting trivia.")
@@ -268,8 +270,8 @@ class VibeTriviaCapability(MatchingCapability):
         return n
 
     async def _generate_questions(self, num: int, category: str) -> list[dict] | None:
-        assert self.capability_worker is not None
-
+        if not self.capability_worker:
+            return None
         last_raw: str | None = None
         for attempt in range(1, 4):
             try:
@@ -298,8 +300,8 @@ class VibeTriviaCapability(MatchingCapability):
         return None
 
     async def _ask_one(self, idx: int, total: int, q: dict) -> bool | None:
-        assert self.capability_worker is not None
-
+        if not self.capability_worker:
+            return None
         question = q["question"]
         choices: list[str] = q["choices"]
         correct_letter: str = q["correct_answer"]
