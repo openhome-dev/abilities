@@ -1,8 +1,5 @@
-# Building Great OpenHome Abilities
 
-*Voice UX, Architecture Patterns, and Real-World Examples*
-
----
+> For product design philosophy, ability archetypes, and 170+ ideas for what to build, see [Designing OpenHome Abilities](/Designing_OpenHome_Abilities).
 
 ## What Makes a Good Ability
 
@@ -41,45 +38,58 @@ A good Ability brings in something the LLM can't do on its own:
 
 ## How Ability Runtime Works
 
-Before you start building, it helps to understand what actually happens under the hood when your Ability runs. This saves you from building something that the platform can't support — like background timers or proactive notifications.
+Before you start building, it helps to understand which runtime model your Ability uses.
 
-### On-Demand, Stateless by Design
+### Ability Categories and Runtime Modes
 
-Abilities don't run in the background. They're on-demand — your Ability only exists while it's actively handling a conversation. Here's what that means in practice:
+| Category | Trigger | Runtime Model | Primary File |
+|---|---|---|---|
+| Skill | User hotword | On-demand interaction, then handoff | `main.py` |
+| Brain Skills | Brain-routed by Agent | On-demand delegation by the system brain | `main.py` |
+| Background Daemon | Automatic on session start | Continuous background thread for full session | `background.py` |
+| Local | Device-side execution | On-device package/runtime (under development) | Local package files |
 
-- **Your Ability starts** when the user says a trigger word and the platform calls your `call()` method.
-- **Your Ability lives** as long as your async method is running. All your instance variables (`self.whatever`), your conversation history list, your API data — it all lives in memory on that instance.
-- **Your Ability dies** the moment you call `resume_normal_flow()`. The instance is gone. Every variable, every list, every dict you built up during the session — vanished.
-
-This is the thing that trips people up. You can't set a timer that fires in 15 minutes to remind the user of a meeting. You can't poll an API every 5 minutes in the background. You can't have an Ability proactively interrupt the user with a notification. The Ability only exists while the user is actively talking to it.
+### Entry Signatures: `main.py` vs `background.py`
 
 ```python
-# This is your Ability's entire lifespan:
+# Interactive Skill / Brain Skill
 def call(self, worker):
     self.worker = worker
     self.capability_worker = CapabilityWorker(self)
-    self.my_data = {}  # ← exists now
-    self.worker.session_tasks.create(self.run())  # ← starts your logic
-
-async def run(self):
-    self.my_data["name"] = "Chris"  # ← lives in memory
-    await self.capability_worker.speak("Hey Chris!")
-    # ... do stuff ...
-    self.capability_worker.resume_normal_flow()
-    # ← self.my_data is gone. Instance is gone. Everything is gone.
+    self.worker.session_tasks.create(self.run())
 ```
 
-### What You Can't Do (Yet)
+```python
+# Background Daemon
+def call(self, worker, background_daemon_mode: bool):
+    self.worker = worker
+    self.background_daemon_mode = background_daemon_mode
+    self.capability_worker = CapabilityWorker(self)
+    self.worker.session_tasks.create(self.background_loop())
+```
 
-Because of the on-demand architecture, these aren't possible right now:
+`background.py` is detected by filename only. If the file is not named exactly `background.py`, it will not start as a daemon.
 
-- **Background polling** — no checking email every 5 minutes
-- **Proactive notifications** — no "hey, your meeting starts in 10 minutes" interrupts
-- **Scheduled tasks** — no timers, no cron-style execution
-- **Cross-ability communication** — one Ability can't directly talk to another while they're running
-- **Chaining Abilities** — your Ability can't call another Ability directly. You must call `resume_normal_flow()` first to hand control back to the Agent, and then the user's next utterance can trigger a different Ability. You can stack complex logic inside a single Ability, but you can't orchestrate across multiple Abilities in one session.
+### Ability File Structures
 
-This might change as the platform evolves, but for now, design your Abilities around the trigger → respond → exit pattern. The user initiates, your Ability responds, then it's done.
+| Pattern | Files | Behavior |
+|---|---|---|
+| Standard Interactive Skill | `main.py` | User triggers ability, ability runs and exits via `resume_normal_flow()` |
+| Standalone Background Daemon | `background.py` | Starts when session begins, runs continuously, no hotword required |
+| Interactive + Background Combined | `main.py` + `background.py` | Foreground interaction plus background monitoring; coordinate through shared files |
+
+### What Is Possible
+
+- **Background polling** (file/API checks on a timer)
+- **Proactive notifications** (interrupt active output and speak when needed)
+- **Scheduled tasks** (alarms/reminders monitored by daemon loop)
+- **Ambient monitoring** (conversation-aware note-taking/summarization)
+
+### Still Important Limits
+
+- **Cross-ability direct calls** are still not supported.
+- **Chaining abilities directly** is still not supported; return control to main flow first.
+- **Silent hidden history injection** is still not supported (speech is still explicit).
 
 ### What You Can Do
 
@@ -88,18 +98,21 @@ Within a session, you have full control:
 - **Maintain state in memory** — dictionaries, lists, counters, anything on `self`. It all works fine as long as the session is alive.
 - **Build conversation history** — keep a list of `{"role": "user", "content": "..."}` dicts and pass it to `text_to_text_response()` on every turn. The LLM will have full context of the conversation so far.
 - **Rebuild context every turn** — your system prompt can be dynamic. Rebuild it with fresh data on every LLM call so the response is always contextual.
-- **Read the Main Flow's conversation history** — `self.capability_worker.get_full_message_history()` gives you what happened before your Ability was triggered.
+- **Read full session history from skills or daemons** — `self.capability_worker.get_full_message_history()` provides live transcript context.
 - **Persist data across sessions** — using the file storage API (see the Persistence & Memory section below).
 
-The mental model is: your Ability is a focused, self-contained session. It boots up, does its job with full capabilities, then exits cleanly. If you need something to survive between sessions, write it to a file.
+The runtime mental model is split:
+
+- **Skill/Brain Skill**: trigger → run → `resume_normal_flow()`
+- **Background Daemon**: auto-start → `while True` loop → session end cleanup
 
 ### How Conversation History Works
 
 There are two layers of conversation history to understand:
 
-**The Agent's conversation history** is what the user sees in their chat. It includes everything spoken aloud — both by the Agent and by your Ability (via `speak()`). This history is **scoped per-agent per-user** — each Agent maintains a separate history with each user, so a calendar Ability triggered from one Agent won't see the history from a different Agent. If the user deletes an Agent's history from the dashboard, `agent_memory.full_message_history` is also cleared — your Ability will see an empty history on the next activation.
+**The Agent's conversation history** is what the user sees in their chat. It includes everything spoken aloud — both by the Agent and by your Ability (via `speak()`). This history is **scoped per-Agent per-user** — each Agent maintains a separate history with each user, so a calendar Ability triggered from one Agent won't see the history from a different Agent. If the user deletes an Agent's history from the dashboard, `get_full_message_history()` will return an empty history on the next activation.
 
-**Your Ability's internal history** is a list you maintain yourself and pass to `text_to_text_response()`. This gives the LLM context across multiple turns within your Ability. It only exists in memory while your Ability is running — it's gone when you call `resume_normal_flow()`.
+**Your Ability's internal history** is a list you maintain yourself and pass to `text_to_text_response()`. This gives the LLM context across multiple turns. It exists only for the lifetime of that running instance (skill run or daemon thread) and is reset when the instance ends.
 
 ```python
 # Your Ability maintains its own history list
@@ -111,7 +124,7 @@ response = self.capability_worker.text_to_text_response(
 self.history.append({"role": "assistant", "content": response})
 ```
 
-One important detail: there's currently no way to inject data directly into the Agent's system prompt after your Ability finishes. When `resume_normal_flow()` fires, the Ability is done. But anything your Ability said via `speak()` does become part of the Agent's conversation history, so the Agent's LLM can reference it in later turns. For anything more structured, use file storage to persist data that your Ability can read on its next activation.
+One important detail: if you need to carry behavior/context back into the main Agent flow, use `update_personality_agent_prompt(prompt_addition)`. Also, anything your Ability says via `speak()` becomes part of conversation history, so the Agent's LLM can reference it later. For structured data sharing between Abilities, use file storage.
 
 There's also no way to silently inject text into the conversation history — the only way to add to it is through `speak()`, which means the agent has to actually say it out loud. You can't write hidden context or metadata into the history behind the scenes. Conversation history is managed by a separate module tied to the normal conversation flow, so your Ability can contribute to it by speaking, but can't manipulate it directly.
 
@@ -161,9 +174,9 @@ Trigger words can be edited anytime in the **Installed Abilities** section of th
 
 ---
 
-## How Abilities Work With the Main Flow
+## How Skill Abilities Work With the Main Flow
 
-This is the architectural context that most developers miss. Your Ability doesn't run in isolation — it's called from the Agent's Main Flow when a user says a trigger word. Understanding this handoff is critical.
+This section is specifically for interactive `main.py` skills. They are called from the Agent's Main Flow when a user says a trigger word.
 
 ### The Lifecycle
 
@@ -373,8 +386,6 @@ Always strip markdown fences from LLM output before parsing JSON. LLMs love wrap
 The more context you give the LLM, the more natural its responses sound. In the calendar Ability, the system prompt includes the user's name, location, local time, and the day of the week — so the LLM can say things like "Busy afternoon ahead" instead of generic responses:
 
 ```python
-timezone = self.capability_worker.get_timezone()
-# Use with datetime to get local time for context injection
 system_prompt = f"""You are a concise voice assistant for calendar management.
 USER: {user_name} | LOCATION: {city} | TIME: {current_time}
 Rules: Keep responses to 2-4 sentences max. Be conversational."""
@@ -448,14 +459,15 @@ With persistence, you can build Abilities that:
 
 ### The File Storage API
 
-Four methods, all on `self.capability_worker`:
+Five methods, all on `self.capability_worker`:
 
 | Method | What It Does |
 |---|---|
 | `await check_if_file_exists(filename, temp)` | Returns `True`/`False`. Use before reading to avoid errors. |
-| `await write_file(filename, content, temp)` | Writes content to file. **Appends** if the file already exists. |
+| `await write_file(filename, content, temp, mode="a+")` | Writes content to file. Default behavior appends. |
 | `await read_file(filename, temp)` | Returns the file content as a string. |
 | `await delete_file(filename, temp)` | Deletes the file. |
+| `await get_user_data_file_names()` | Lists filenames currently saved in user-level data storage. |
 
 The `temp` flag controls persistence:
 - `temp=False` — **Persistent.** Data lives on the server and survives across sessions. Use for anything the user would expect to be remembered.
@@ -463,9 +475,29 @@ The `temp` flag controls persistence:
 
 Allowed file types: `.txt`, `.csv`, `.json`, `.md`, `.log`, `.yaml`, `.yml`
 
+### Capability Context Storage (Key-Value)
+
+For structured context (preferences, workflow state, feature flags), use CapabilityWorker's key-value storage:
+
+- `create_key(key: str, value: dict)`
+- `update_key(key: str, value: dict)`
+- `delete_key(key: str)`
+- `get_all_keys()`
+- `get_single_key(key: str)`
+
+Each value should be a JSON dictionary (`dict`), and these methods are synchronous (do not `await`).
+
+```python
+existing = self.capability_worker.get_single_key("user_preferences")
+if existing:
+    self.capability_worker.update_key("user_preferences", updated_value)
+else:
+    self.capability_worker.create_key("user_preferences", updated_value)
+```
+
 ### The JSON Gotcha
 
-`write_file` **appends** to existing files. This is great for logs and text files, but it will corrupt JSON:
+`write_file` defaults to **append mode** (`a+`). This is great for logs and text files, but it will corrupt JSON unless you overwrite (`mode="w"`) or delete first:
 
 ```python
 # ⚠️ BAD — this produces: {"name":"Chris"}{"name":"Mike"} (invalid JSON)
@@ -477,6 +509,16 @@ await self.capability_worker.write_file("prefs.json", json.dumps(new_prefs), Fal
 ```
 
 Always delete then write for JSON files. For `.txt` or `.log` files where you're appending lines, the default behavior works perfectly.
+
+### `.md` Context Injection Gotcha
+
+Persistent `.md` files are injected into Agent prompt context by the memory background. This is powerful, but you need strict naming and write discipline.
+
+Rules:
+- use `.md` only for context the Agent should read
+- use delete-then-write for replaceable state files (emotion, schedule, environment)
+- avoid generic names like `context.md`; namespace by feature (`audio_emotion.md`)
+- never write `user_profile.md` or `user_summary.md` (platform-owned)
 
 ### Pattern: First-Run Detection
 
@@ -562,9 +604,11 @@ if idle_count >= 2:
 
 One idle cycle = keep going. Two = offer to leave. This feels natural and not pushy.
 
-### Don't Forget resume_normal_flow()
+### Skill Exit Rule: Don't Forget `resume_normal_flow()`
 
-No matter how your Ability exits, `resume_normal_flow()` needs to be called. This is the #1 bug we see in Abilities. Walk through every path your code can take — happy path, break statements, except blocks, timeouts, user exits — and make sure each one calls it.
+For interactive `main.py` skills, `resume_normal_flow()` must be called on every exit path. This is still the #1 bug we see in skills.
+
+For `background.py` daemons, do the opposite: do not call `resume_normal_flow()` in the daemon loop. Keep the daemon alive with a `while True` loop and `session_tasks.sleep()`.
 
 ---
 
@@ -574,7 +618,7 @@ Before submitting an Ability, run through this list:
 
 | | Check |
 |---|---|
-| ☐ | `resume_normal_flow()` called on EVERY exit path (happy path, breaks, except blocks, timeouts, user exit) |
+| ☐ | For `main.py` skills: `resume_normal_flow()` called on EVERY exit path |
 | ☐ | No `print()` statements — using `editor_logging_handler` for all logging |
 | ☐ | No raw `asyncio.sleep()` or `asyncio.create_task()` — using `session_tasks` |
 | ☐ | All API calls wrapped in try/except with spoken error messages |
@@ -590,6 +634,9 @@ Before submitting an Ability, run through this list:
 | ☐ | Filler speech ("One sec") plays before any API call that takes > 1 second |
 | ☐ | API keys are placeholder constants with comments, not hardcoded real keys |
 | ☐ | No blocked imports (redis, connection_manager, user_config, open()) |
+| ☐ | For `background.py` daemons: file is named exactly `background.py` and uses `call(self, worker, background_daemon_mode)` |
+| ☐ | For `background.py` daemons: loop uses `while True` + `session_tasks.sleep()` (not `asyncio.sleep()`) |
+| ☐ | For `background.py` daemons: call `send_interrupt_signal()` before daemon `speak()`/audio playback |
 
 ---
 
@@ -598,14 +645,14 @@ Before submitting an Ability, run through this list:
 The anatomy of a great Ability:
 
 1. It does something the LLM can't do on its own — calls an API, plays audio, controls a device, or persists data. If it can be handled with an Agent prompt, it doesn't need to be an Ability.
-2. It understands the runtime model — on-demand, stateless, no background processing. Design around trigger → respond → exit.
+2. It understands the runtime model — choose the right category (`main.py` skill, brain skill, `background.py` daemon, or local package) and design for that lifecycle.
 3. Its trigger words match how people actually talk — natural phrases, plural forms, phrase-level triggers for ambiguous words, tested against false positives.
 4. It reads the trigger context to understand what the user actually wanted, not just that a trigger word was said.
 5. It's designed for voice first — short responses, spoken error handling, filler speech during loading, confirmation loops, exit detection.
 6. It handles multi-turn flows gracefully — pending states, cancellation at any point, clear follow-up questions for missing info.
 7. It uses the LLM as a router — classify intent with JSON output, inject context into system prompts, strip markdown fences.
 8. It persists what matters — file storage for cross-session memory, first-run detection, user preferences, activity logs.
-9. It exits cleanly — quick mode exits silently, full mode signs off, `resume_normal_flow()` fires on every path.
+9. It exits cleanly — skills call `resume_normal_flow()` on every path, daemons stay alive and sleep between cycles.
 10. It's clean and portable — no hardcoded keys, no blocked imports, proper error handling with spoken errors.
 
 > *Build Abilities that make the Agent feel like it can reach out and touch the real world. That's the whole point.*

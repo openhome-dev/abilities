@@ -1,6 +1,6 @@
 # Contributing to OpenHome Abilities
 
-Thanks for wanting to contribute! This guide will get you from idea to merged PR as smoothly as possible. If you're building great abilities with real, high-impact use cases, also check out [Building Great OpenHome Abilities](https://github.com/openhome-dev/abilities/blob/dev/docs/Building_Great_OpenHome_Abilities.md).
+Thanks for wanting to contribute! This guide will get you from idea to merged PR as smoothly as possible. If you're building great abilities with real, high-impact use cases, also check out [What Makes a Good Ability](https://github.com/openhome-dev/abilities/blob/dev/docs/What_Makes_a_Good_Ability.md).
 
 ---
 
