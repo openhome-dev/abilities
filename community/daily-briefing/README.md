@@ -73,7 +73,7 @@ Default location is New York. Users can change the city by voice during the sess
 | `run_io_loop()` | Ask follow-up prompts and listen for user replies |
 | `text_to_text_response()` | LLM weaves raw API data into a conversational briefing; also used for city name extraction fallback |
 | `user_response()` | Capture user input for city changes |
-| `resume_normal_flow()` | Hand control back to the Personality when done |
+| `resume_normal_flow()` | Hand control back to the Agent when done |
 | `editor_logging_handler` | Log API errors without using print() |
 
 ## Architecture
