@@ -1,5 +1,3 @@
-import json
-import random
 
 import requests
 
@@ -29,7 +27,7 @@ class AquaprimeWalletCapability(MatchingCapability):
     worker: AgentWorker = None
     capability_worker: CapabilityWorker = None
 
-    #{{register_capability}}
+    # {{register_capability}}
 
     def call(self, worker: AgentWorker):
         self.worker = worker

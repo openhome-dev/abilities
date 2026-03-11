@@ -1,5 +1,3 @@
-import datetime
-import json
 import random
 
 import requests
@@ -263,7 +261,7 @@ class AquaprimeFadingCapability(MatchingCapability):
     worker: AgentWorker = None
     capability_worker: CapabilityWorker = None
 
-    #{{register_capability}}
+    # {{register_capability}}
 
     def call(self, worker: AgentWorker):
         self.worker = worker
@@ -304,7 +302,7 @@ class AquaprimeFadingCapability(MatchingCapability):
         # API returns "user_address" not "wallet_address"
         wallet_address = reg.get("user_address")
         room_code = reg.get("room_code")
-        starting_node = reg.get("starting_node", "25,15")
+        reg.get("starting_node", "25,15")
 
         if not wallet_address:
             log.error(f"No user_address in registration response: {reg}")
@@ -447,13 +445,13 @@ class AquaprimeFadingCapability(MatchingCapability):
             crit_fail = turn_result.get("critFail", False)
             game_over = turn_result.get("gameOver", False)
             loot = turn_result.get("loot")
-            must_erase = turn_result.get("mustErase", False)
+            turn_result.get("mustErase", False)
             movement = turn_result.get("movement", {})
             region = turn_result.get("region", {})
             archetype_id = turn_result.get("archetypeId", "unknown")
             archetype_name = turn_result.get("archetypeName", "Unknown")
             d20_roll = turn_result.get("d20Roll", 0)
-            stance = turn_result.get("stance", "neutral")
+            turn_result.get("stance", "neutral")
 
             pos_x = movement.get("newX", pos_x)
             pos_y = movement.get("newY", pos_y)
