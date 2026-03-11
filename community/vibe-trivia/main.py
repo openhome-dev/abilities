@@ -58,7 +58,7 @@ class VibeTriviaCapability(MatchingCapability):
     initial_request: str | None = None
     hotwords: list[str] = ["start vibe trivia", "vibe trivia", "trivia time", "quiz me", "play trivia", "start a quiz"]
 
-    #{{register_capability}}
+    # {{register_capability}}
     @classmethod
     def register_capability(cls) -> "MatchingCapability":
         config_path = os.path.join(
