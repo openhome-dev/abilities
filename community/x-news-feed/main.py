@@ -627,7 +627,7 @@ class XNewsFeedCapability(MatchingCapability):
 
     async def speak_single_tweet(self, number, tweet):
         raw_text = tweet.get("text", "").strip()
-        score = tweet.get("score", 0)
+        tweet.get("score", 0)
         if raw_text:
             cleaned = self.clean_tweet_text(raw_text)
             polished = self.polish_tweet_for_speech(cleaned)
