@@ -254,3 +254,17 @@ jobs:
         run: |
           echo "❌ Lint failed — check the PR comment for details"
           exit 1
+      - name: Report status
+        if: always()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const conclusion = '${{ job.status }}';
+            await github.rest.repos.createCommitStatus({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              sha: context.payload.pull_request.head.sha,
+              state: conclusion === 'success' ? 'success' : 'failure',
+              context: 'lint',
+              description: conclusion === 'success' ? 'Passed' : 'Failed'
+            });
