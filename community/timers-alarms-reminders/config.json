@@ -1,0 +1,9 @@
+{
+  "unique_name": "timers_alarms_reminders",
+  "matching_hotwords": [
+    "alarms",
+    "reminders",
+    "schedule",
+    "timer"
+  ]
+}
