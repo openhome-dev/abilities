@@ -106,9 +106,10 @@ The LLM has **zero access** to your HubSpot account. It can't search contacts, l
 1. Copy these files to your OpenHome abilities folder:
    - `main.py`
    - `__init__.py`
-   - `config.json`
+   - `README.md`
+2. Set the ability's unique name and trigger words in the OpenHome dashboard.
 
-2. Open `main.py` and replace the placeholder token on **line 20**:
+3. Open `main.py` and replace the placeholder token on **line 20**:
    ```python
    API_TOKEN: ClassVar[str] = "YOUR_TOKEN_HERE"
    ```
@@ -417,9 +418,10 @@ Voice Input → STT → Mode Detection → Route to Handler
 hubspot_ability/
 ├── main.py              # Core capability (700+ lines)
 ├── __init__.py          # Package initialization
-├── config.json          # Trigger words configuration
 └── README.md           # This file
 ```
+
+Trigger words and the ability's unique name are managed in the OpenHome dashboard.
 
 ### Preferences File
 

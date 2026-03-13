@@ -344,7 +344,6 @@ INITIAL_REFRESH_TOKEN: ClassVar[str] = "YOUR_REFRESH_TOKEN"
 
 Copy these files to your OpenHome abilities folder:
 - `salesforce_main.py`
-- `salesforce_config.json`
 - `salesforce__init__.py`
 
 ### **Step 3: Restart OpenHome**
