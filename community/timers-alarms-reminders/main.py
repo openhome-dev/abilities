@@ -39,7 +39,7 @@ class TimersAlarmsRemindersCapability(MatchingCapability):
     capability_worker: CapabilityWorker = None
 
     # Do not change following tag of register capability
-    #{{register capability}}
+    # {{register capability}}
 
     # ------------------------------------------------------------------
     # scheduled_events.json safe read / write
