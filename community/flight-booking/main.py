@@ -22,7 +22,7 @@ class FlightBookingCapability(MatchingCapability):
     api_key: str = None
 
     # Do not change following tag of register capability
-    #{{register capability}}
+    # {{register capability}}
 
     DUFFEL_BASE: ClassVar[str] = "https://api.duffel.com"
     DUFFEL_API_KEY: ClassVar[str] = "duffel_test_YOUR_KEY_HERE"
@@ -602,8 +602,8 @@ class FlightBookingCapability(MatchingCapability):
 
             # Extract payment deadline from order if present
             pay_by_raw = (
-                order.get("payment_required_by") or
-                order.get("payment_status", {}).get("payment_required_by", "")
+                order.get("payment_required_by")
+                or order.get("payment_status", {}).get("payment_required_by", "")
             )
             if pay_by_raw:
                 pay_by_date = self._format_date_natural(pay_by_raw[:10])
