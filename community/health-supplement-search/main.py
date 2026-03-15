@@ -94,6 +94,12 @@ def _strip_llm_fences(text: str) -> str:
     return text.strip()
 
 
+def _strip_html(text: str) -> str:
+    """Remove HTML tags and normalize whitespace."""
+    text = re.sub(r"<[^>]+>", " ", str(text))
+    return re.sub(r"\s+", " ", text).strip()
+
+
 class HealthSupplementSearchCapability(MatchingCapability):
     worker: AgentWorker = None
     capability_worker: CapabilityWorker = None
@@ -330,7 +336,7 @@ class HealthSupplementSearchCapability(MatchingCapability):
         p = product_payload
         reviews = p.get("reviews", [])
         review_sample = (
-            reviews[0][:120]
+            _strip_html(reviews[0])[:150]
             if isinstance(reviews, list) and reviews
             else "No reviews available."
         )
@@ -497,9 +503,10 @@ class HealthSupplementSearchCapability(MatchingCapability):
                     continue
 
                 # Detail request on previous results (only valid for curated results)
-                if self._last_results and self._last_source == "curated":
+                if self._last_results and self._last_source == "curated" and not self._just_showed_detail:
                     detail_payload = self._wants_detail(user_input, self._last_results)
                     if detail_payload:
+                        self._just_showed_detail = True
                         await self.capability_worker.speak(await self._detail_response(detail_payload))
                         await self.capability_worker.speak(
                             "Would you like details on another product, or search for something else?"
@@ -512,6 +519,8 @@ class HealthSupplementSearchCapability(MatchingCapability):
                             "Say the first, second, or third."
                         )
                         continue
+
+                self._just_showed_detail = False
 
                 # Off-topic guard — only search if the input is health/supplement related
                 if not self._is_health_query(user_input):
@@ -551,6 +560,7 @@ class HealthSupplementSearchCapability(MatchingCapability):
         self._last_results = []
         self._last_source = ""
         self._trigger_text = ""
+        self._just_showed_detail = False
         # Extract the trigger phrase to pre-fill the first search turn if it contains a query
         try:
             if worker.transcription and worker.transcription.strip():
