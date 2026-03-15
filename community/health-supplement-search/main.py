@@ -1,3 +1,4 @@
+import asyncio
 import re
 
 import httpx
@@ -38,7 +39,10 @@ JINA_API_KEY = ""        # only needed for Qdrant
 # Serper web fallback (optional — leave empty to disable)
 SERPER_API_KEY = ""      # get a free key at serper.dev (2,500/month free)
 
-# How similar a result must be to count as a match (0.0 = identical, 1.0 = unrelated)
+# How similar a result must be to count as a match.
+# Weaviate returns "certainty" (higher = more similar). Threshold applies as distance = 1 - certainty.
+# Qdrant returns cosine score; distance = 1 - score. Both use the same threshold but are not
+# identical scales — if using Qdrant, you may need to tune this value (try 0.60-0.65).
 DISTANCE_THRESHOLD = 0.70
 
 # -----------------------------------------------------------------------------
@@ -54,7 +58,13 @@ MAX_TURNS = 20
 IDLE_REPROMPT = 2
 IDLE_EXIT = 3
 
-EXIT_WORDS = {"stop", "exit", "quit", "done", "bye", "goodbye", "no thanks", "cancel"}
+EXIT_WORDS = {
+    "stop", "exit", "quit", "done", "bye", "goodbye", "cancel",
+    "no thanks", "no thank you", "that's all", "that's it",
+    "never mind", "nevermind", "all done", "i'm done", "im done",
+}
+
+_ORDINAL_TO_IDX = {"first": 0, "second": 1, "third": 2, "fourth": 3, "fifth": 4}
 
 
 def _strip_llm_fences(text: str) -> str:
@@ -89,17 +99,22 @@ class HealthSupplementSearchCapability(MatchingCapability):
     # -------------------------------------------------------------------------
 
     def _log(self, msg: str):
-        self.worker.editor_logging_handler.info(f"[HealthSupSearch] {msg}")
+        try:
+            self.worker.editor_logging_handler.info(f"[HealthSupSearch] {msg}")
+        except Exception:
+            pass
 
     def _err(self, msg: str):
-        self.worker.editor_logging_handler.error(f"[HealthSupSearch] {msg}")
+        try:
+            self.worker.editor_logging_handler.error(f"[HealthSupSearch] {msg}")
+        except Exception:
+            pass
 
     # -------------------------------------------------------------------------
     # Embedding (Qdrant path only)
     # -------------------------------------------------------------------------
 
     async def _embed_query(self, text: str) -> list:
-        """Embed a query string via Jina AI. Returns 1536-dim vector or []."""
         if not JINA_API_KEY.strip():
             self._err("Jina API key missing")
             return []
@@ -251,7 +266,7 @@ class HealthSupplementSearchCapability(MatchingCapability):
     # LLM summarization
     # -------------------------------------------------------------------------
 
-    def _summarize_curated(self, user_query: str, results: list) -> str:
+    async def _summarize_curated(self, user_query: str, results: list) -> str:
         products_text = ""
         for i, r in enumerate(results[:3], 1):
             p = r["payload"]
@@ -274,9 +289,9 @@ class HealthSupplementSearchCapability(MatchingCapability):
             "Mention product names, ratings, and key benefits. Keep it to 3-4 sentences. "
             "End by asking if they want more details on any product. No markdown. Not medical advice."
         )
-        return self.capability_worker.text_to_text_response(prompt)
+        return await asyncio.to_thread(self.capability_worker.text_to_text_response, prompt)
 
-    def _summarize_web(self, user_query: str, web_results: list) -> str:
+    async def _summarize_web(self, user_query: str, web_results: list) -> str:
         snippets = "".join(
             f"- {r.get('title', '')}: {r.get('snippet', '')}\n" for r in web_results[:4]
         )
@@ -287,12 +302,16 @@ class HealthSupplementSearchCapability(MatchingCapability):
             "not a curated product database. Remind the user to consult a healthcare provider. "
             "No markdown or URLs."
         )
-        return self.capability_worker.text_to_text_response(prompt)
+        return await asyncio.to_thread(self.capability_worker.text_to_text_response, prompt)
 
-    def _detail_response(self, product_payload: dict) -> str:
+    async def _detail_response(self, product_payload: dict) -> str:
         p = product_payload
         reviews = p.get("reviews", [])
-        review_sample = reviews[0][:120] if reviews else "No reviews available."
+        review_sample = (
+            reviews[0][:120]
+            if isinstance(reviews, list) and reviews
+            else "No reviews available."
+        )
         prompt = (
             f"Give a detailed voice summary of this supplement:\n"
             f"Name: {p.get('name', '')}\n"
@@ -304,7 +323,7 @@ class HealthSupplementSearchCapability(MatchingCapability):
             f"Sample review: {review_sample}\n"
             "4 sentences max. Friendly, informative. No markdown. Not medical advice."
         )
-        return self.capability_worker.text_to_text_response(prompt)
+        return await asyncio.to_thread(self.capability_worker.text_to_text_response, prompt)
 
     # -------------------------------------------------------------------------
     # Intent detection
@@ -312,12 +331,7 @@ class HealthSupplementSearchCapability(MatchingCapability):
 
     def _wants_exit(self, user_input: str) -> bool:
         lowered = user_input.lower().strip()
-        if any(word in lowered for word in EXIT_WORDS):
-            return True
-        result = self.capability_worker.text_to_text_response(
-            f"Does this mean the user wants to stop the supplement search?\nInput: \"{user_input}\"\nReply YES or NO only."
-        ).strip().upper()
-        return result.startswith("YES")
+        return any(phrase in lowered for phrase in EXIT_WORDS)
 
     def _wants_detail(self, user_input: str, last_results: list) -> dict:
         if not last_results:
@@ -325,18 +339,25 @@ class HealthSupplementSearchCapability(MatchingCapability):
         detail_triggers = ("more", "detail", "tell me about", "ingredients", "reviews", "what's in")
         if not any(t in user_input.lower() for t in detail_triggers):
             return {}
+        # Guard: only curated results have payload keys
         product_names = [r["payload"].get("name", "") for r in last_results if "payload" in r]
+        if not product_names:
+            return {}
         names_str = "\n".join(f"{i+1}. {n}" for i, n in enumerate(product_names))
-        raw = self.capability_worker.text_to_text_response(
+        raw = _strip_llm_fences(self.capability_worker.text_to_text_response(
             f"The user said: \"{user_input}\"\n"
             f"Which product are they asking about? Reply with only the number (1-{len(product_names)}) or 0.\n{names_str}"
-        ).strip()
+        ))
+        # Try numeric first, then ordinal words ("first", "second", etc.)
         try:
             idx = int(raw) - 1
             if 0 <= idx < len(last_results):
                 return last_results[idx].get("payload", {})
         except ValueError:
             pass
+        for word, idx in _ORDINAL_TO_IDX.items():
+            if word in raw.lower() and idx < len(last_results):
+                return last_results[idx].get("payload", {})
         return {}
 
     def _wants_rerank(self, user_input: str) -> str:
@@ -364,21 +385,36 @@ class HealthSupplementSearchCapability(MatchingCapability):
 
             self._log(f"Starting. Provider: {VECTOR_DB_PROVIDER}")
 
-            await self.capability_worker.speak(
-                "Welcome to Health Supplement Search. "
-                "I can help you find supplements for specific health concerns using a curated database "
-                "of 100 reviewed products. This is informational only — not medical advice. "
-                "What health concern can I help you with today?"
-            )
+            # If the trigger phrase already contains a specific query (e.g. "find supplements
+            # for joint pain"), use it as the first turn instead of asking again.
+            pending_input = None
+            if self._trigger_text and len(self._trigger_text.split()) > 2:
+                pending_input = self._trigger_text
 
-            self._last_results = []
-            self._last_source = ""
+            if pending_input:
+                await self.capability_worker.speak(
+                    "Welcome to Health Supplement Search. This is informational only — not medical advice. "
+                    "Let me search for that..."
+                )
+            else:
+                await self.capability_worker.speak(
+                    "Welcome to Health Supplement Search. "
+                    "I can help you find supplements for specific health concerns using a curated database "
+                    "of 100 reviewed products. This is informational only — not medical advice. "
+                    "What health concern can I help you with today?"
+                )
+
             idle_count = 0
             turn = 0
 
             while turn < MAX_TURNS:
                 turn += 1
-                user_input = await self.capability_worker.user_response()
+
+                if pending_input is not None:
+                    user_input = pending_input
+                    pending_input = None
+                else:
+                    user_input = await self.capability_worker.user_response()
 
                 if not user_input or not user_input.strip():
                     idle_count += 1
@@ -397,7 +433,8 @@ class HealthSupplementSearchCapability(MatchingCapability):
                     await self.capability_worker.speak("Thanks for using Health Supplement Search. Stay healthy!")
                     break
 
-                # Rerank previous results
+                # Check rerank before detail — rerank must happen first so that a subsequent
+                # detail request can reference the newly ordered list.
                 rerank = self._wants_rerank(user_input)
                 if rerank and self._last_results and self._last_source == "curated":
                     sorted_results = sorted(
@@ -407,16 +444,16 @@ class HealthSupplementSearchCapability(MatchingCapability):
                     )
                     label = "highest" if rerank == "rating_high" else "lowest"
                     await self.capability_worker.speak(
-                        self._summarize_curated(f"{label} rated {user_input}", sorted_results)
+                        await self._summarize_curated(f"{label} rated {user_input}", sorted_results)
                     )
                     self._last_results = sorted_results
                     continue
 
-                # Detail request on previous results
+                # Detail request on previous results (only valid for curated results)
                 if self._last_results and self._last_source == "curated":
                     detail_payload = self._wants_detail(user_input, self._last_results)
                     if detail_payload:
-                        await self.capability_worker.speak(self._detail_response(detail_payload))
+                        await self.capability_worker.speak(await self._detail_response(detail_payload))
                         await self.capability_worker.speak(
                             "Would you like details on another product, or search for something else?"
                         )
@@ -429,9 +466,9 @@ class HealthSupplementSearchCapability(MatchingCapability):
                 self._last_source = source
 
                 if source == "curated":
-                    await self.capability_worker.speak(self._summarize_curated(user_input, results))
+                    await self.capability_worker.speak(await self._summarize_curated(user_input, results))
                 elif source == "web":
-                    await self.capability_worker.speak(self._summarize_web(user_input, results))
+                    await self.capability_worker.speak(await self._summarize_web(user_input, results))
                 else:
                     await self.capability_worker.speak(
                         "I couldn't find supplements matching that concern in my database or online. "
@@ -447,4 +484,20 @@ class HealthSupplementSearchCapability(MatchingCapability):
     def call(self, worker: AgentWorker):
         self.worker = worker
         self.capability_worker = CapabilityWorker(self)
+        # Initialize per-session state to avoid leaking across ability invocations
+        self._last_results = []
+        self._last_source = ""
+        self._trigger_text = ""
+        # Extract the trigger phrase to pre-fill the first search turn if it contains a query
+        try:
+            if worker.transcription and worker.transcription.strip():
+                self._trigger_text = worker.transcription.strip()
+        except Exception:
+            pass
+        if not self._trigger_text:
+            try:
+                if worker.last_transcription and worker.last_transcription.strip():
+                    self._trigger_text = worker.last_transcription.strip()
+            except Exception:
+                pass
         self.worker.session_tasks.create(self.run())
