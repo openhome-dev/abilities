@@ -221,6 +221,8 @@ class HealthSupplementSearchCapability(MatchingCapability):
 
     _last_results: list = None
     _last_source: str = ""
+    _trigger_text: str = ""
+    _just_showed_detail: bool = False
 
     # {{register capability}}
 
@@ -614,12 +616,8 @@ class HealthSupplementSearchCapability(MatchingCapability):
             if self._trigger_text and len(self._trigger_text.split()) > 2:
                 pending_input = self._trigger_text
 
-            pending_guess = (
-                None  # last LLM-guessed health phrase offered for confirmation
-            )
-            confirmed_search = (
-                False  # bypass health check when guess was confirmed by user
-            )
+            pending_guess = None
+            confirmed_search = False
 
             if pending_input:
                 await self.capability_worker.speak(
