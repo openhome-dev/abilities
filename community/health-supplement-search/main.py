@@ -422,9 +422,11 @@ class HealthSupplementSearchCapability(MatchingCapability):
                         await self.capability_worker.speak("No response detected. Goodbye!")
                         break
                     if idle_count >= IDLE_REPROMPT:
-                        await self.capability_worker.speak(
+                        user_input = await self.capability_worker.run_io_loop(
                             "I'm still here. What supplement or health concern can I help you with?"
                         )
+                        if user_input and user_input.strip():
+                            idle_count = 0
                     continue
 
                 idle_count = 0
