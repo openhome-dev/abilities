@@ -157,8 +157,7 @@ class XNewsFeedCapability(MatchingCapability):
     first_visit: bool = True
     trigger_phrase: str = ""
 
-    # Do not change following tag of register capability
-    # {{register capability}}
+    #{{register_capability}}
 
     def call(self, worker: AgentWorker):
         self.worker = worker

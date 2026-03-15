@@ -160,8 +160,8 @@ X_API_BEARER_TOKEN = "your_bearer_token_here"
 ### 3. Upload to OpenHome
 
 1. Create a new ability in your OpenHome dashboard
-2. Upload `main.py`
-3. Set trigger words in `config.json`
+2. Upload the `main.py` file
+3. Set trigger words in the OpenHome dashboard
 4. Test using "Start Live Test"
 
 ---
@@ -322,10 +322,15 @@ No `asyncio`, `concurrent`, `threading`, or `signal` — all blocked by the Open
 
 ## Troubleshooting
 
-**"I could not find any tweets on [topic] right now"**
-- Check your Bearer Token is set correctly in `main.py`
-- Verify you have API credits remaining (Free tier: 500 requests/month)
-- Try a broader topic name — very niche queries can return zero results
+**"I couldn't pull up the X feed"**
+- Check your API key is correct in `main.py`
+- Verify you have API credits remaining
+- Check network connectivity in OpenHome settings
+
+**Ability doesn't trigger**
+- Verify the trigger words are saved correctly in the OpenHome dashboard
+- Try more specific phrases: "What's trending on X" vs just "trending"
+- Check ability is enabled and saved
 
 **Ability does not trigger**
 - Confirm trigger words in the dashboard match your `config.json`
@@ -352,4 +357,5 @@ No `asyncio`, `concurrent`, `threading`, or `signal` — all blocked by the Open
 
 ---
 
-**Built for OpenHome** — The open-source voice AI platform
+**Built for OpenHome** - The open-source voice AI platform  
+**Questions?** Join the [OpenHome Discord](https://discord.gg/openhome)

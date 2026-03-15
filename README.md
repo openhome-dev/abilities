@@ -80,7 +80,7 @@ class MyFirstCapability(MatchingCapability):
         self.capability_worker.resume_normal_flow()
 ```
 
-> **Note:** The `#{{register_capability}}` This line is required boilerplate — copy it exactly. The platform handles `config.json` automatically; you never need to create or edit it.
+> **Note:** The `#{{register_capability}}` line is required boilerplate — copy it exactly. OpenHome handles the platform-managed `config.json` at runtime, so you never need to create or edit it.
 
 **3. Upload to OpenHome**
 
