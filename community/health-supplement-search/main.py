@@ -49,7 +49,7 @@ DISTANCE_THRESHOLD = 0.70
 
 JINA_EMBED_URL = "https://api.jina.ai/v1/embeddings"
 JINA_MODEL = "jina-embeddings-v3"
-JINA_DIMENSIONS = 1536
+JINA_DIMENSIONS = 1024
 
 SERPER_SEARCH_URL = "https://google.serper.dev/search"
 
