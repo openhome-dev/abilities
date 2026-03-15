@@ -62,6 +62,7 @@ EXIT_WORDS = {
     "stop", "exit", "quit", "done", "bye", "goodbye", "cancel",
     "no thanks", "no thank you", "that's all", "that's it",
     "never mind", "nevermind", "all done", "i'm done", "im done",
+    "thank you", "thanks", "cheers", "great thanks", "ok thanks", "okay thanks",
 }
 
 _ORDINAL_TO_IDX = {"first": 0, "second": 1, "third": 2, "fourth": 3, "fifth": 4}
@@ -352,7 +353,17 @@ class HealthSupplementSearchCapability(MatchingCapability):
 
     def _wants_exit(self, user_input: str) -> bool:
         lowered = user_input.lower().strip()
-        return any(phrase in lowered for phrase in EXIT_WORDS)
+        if any(phrase in lowered for phrase in EXIT_WORDS):
+            return True
+        # Short inputs (≤5 words) that passed keyword check — ask LLM once.
+        # Catches STT garbles like "Thank you, Snowby" when user said "goodbye".
+        if len(user_input.split()) <= 5:
+            result = self.capability_worker.text_to_text_response(
+                f"Does this mean the user wants to stop or say goodbye?\n"
+                f"Input: \"{user_input}\"\nReply YES or NO only."
+            ).strip().upper()
+            return result.startswith("YES")
+        return False
 
     def _is_health_query(self, user_input: str) -> bool:
         """Return True if the input looks like a health or supplement question."""
