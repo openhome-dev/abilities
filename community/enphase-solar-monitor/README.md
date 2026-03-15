@@ -1,6 +1,13 @@
-# Enphase Solar Monitor
+# Enphase Solar Monitor (V2)
 
-Voice-activated solar dashboard for Enphase systems (IQ Gateway with microinverters).
+Voice-activated solar dashboard for Enphase systems (IQ Gateway with microinverters). Fetches production, consumption, battery, and historical data from Enphase Cloud API v4.
+
+## V2 Features
+
+- **Historical data:** Yesterday, this week, this month
+- **Comparisons:** Today vs yesterday
+- **Lifetime stats:** Total production since installation
+- **Panel health:** Microinverter status
 
 ## Demo Mode
 
@@ -14,7 +21,7 @@ Voice-activated solar dashboard for Enphase systems (IQ Gateway with microinvert
 
 ## What It Does
 
-Ask "how's my solar?" to get real-time production, consumption, and battery status. Data is delivered as natural spoken responses.
+Ask "how's my solar?" to get real-time production, consumption, and battery status. Data is delivered as natural spoken responses. V2 adds historical summaries, today-vs-yesterday comparison, lifetime totals, and panel health.
 
 ## Trigger Words
 
@@ -175,9 +182,18 @@ This ability is built for the OpenHome sandbox:
 
 ## Supported Queries
 
+**V1 (Real-time):**
 - **Solar snapshot:** "How's my solar?", "Solar status"
 - **Battery:** "Battery level", "Battery status"
 - **Consumption:** "How much am I using?"
 - **Grid:** "Am I exporting?", "Grid status"
 - **Today:** "Solar today", "Today's production"
 - **Health:** "System health", "Panel status"
+
+**V2 (Historical):**
+- **Yesterday:** "How much yesterday?", "Yesterday's production"
+- **This week:** "This week", "Weekly total", "How much this week"
+- **This month:** "This month", "Monthly total"
+- **Compare:** "Better than yesterday?", "Compared to yesterday"
+- **Lifetime:** "Total production ever", "Lifetime", "All time"
+- **Panel health:** "Are all panels working?", "Microinverter status"
