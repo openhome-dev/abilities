@@ -80,7 +80,7 @@ class MyFirstCapability(MatchingCapability):
         self.capability_worker.resume_normal_flow()
 ```
 
-> **Note:** The `#{{register_capability}}` This line is required boilerplate — copy it exactly. The platform handles `config.json` automatically; you never need to create or edit it.
+> **Note:** The `#{{register_capability}}` line is required boilerplate — copy it exactly. OpenHome handles the platform-managed `config.json` at runtime, so you never need to create or edit it.
 
 **3. Upload to OpenHome**
 
@@ -136,12 +136,12 @@ Don't start from scratch — grab a template:
 | [Basic](templates/basic-template) | First-timers | Speak → Listen → Respond → Exit |
 | [API](templates/api-template) | API integrations | Speak → Call API → Speak result → Exit |
 | [Loop](templates/loop-template) | Interactive apps | Loop with listen → process → respond → exit command |
-| [Openclaw](templates/openclaw-template) | OpenClaw integrations | OpenClaw-based ability scaffold |
-| [OpenHome Local](templates/OpenHome-local) | Local development | Run & test abilities locally |
+| [Openclaw](templates/OpenClaw) | OpenClaw integrations | OpenClaw-based ability scaffold |
+| [OpenHome Local](templates/Local) | Local development | Run & test abilities locally |
 | [ReadWriteFile](templates/ReadWriteFile) | File operations | Read from / write to files on device |
 | [SendEmail](templates/SendEmail) | Email notifications | Compose & send emails programmatically |
-| [Alarm](templates/Alarm) | Timers & alarms | Watcher mode: continuous monitoring loop |
-| [Watcher](templates/Watcher) | Background monitoring | Auto-start → Monitor → Act → Sleep → Repeat (endless) |
+| [Alarm](templates/Alarm) | Timers & alarms | Background mode: continuous monitoring loop |
+| [Background](templates/Background) | Background monitoring | Auto-start → Monitor → Act → Sleep → Repeat (endless) |
 
 ---
 
@@ -182,7 +182,7 @@ When promoted, the Ability moves to `official/`, gets the blue badge on Marketpl
 | [Publishing to Marketplace](docs/publishing-to-marketplace.md) | How to ship your Ability to users |
 | [Promotion Path](docs/promotion.md) | How community Abilities become official |
 | [OpenHome SDK Reference](docs/OpenHome_SDK_Reference.md) | Complete guide to SDK
-| [Building Great OpenHome Abilities](docs/Building_Great_OpenHome_Abilities.md) | Guide to buil great OpenHome abilities
+| [What Makes a Good Ability](docs/What_Makes_a_Good_Ability.md) | Guide to buil great OpenHome abilities
 ---
 
 ## 📜 License

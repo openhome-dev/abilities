@@ -37,21 +37,13 @@ pip install requests
 
 1. Copy the ability folder into your agent's abilities directory.
 
-2. Create a `config.json` file alongside the main module:
-
-```json
-{
-  "unique_name": "crypto-insight",
-  "matching_hotwords": [
-    "crypto insight",
-    "crypto ai",
-    "check crypto",
-    "crypto price",
-    "bitcoin price",
-    "ethereum price"
-  ]
-}
-```
+2. In the OpenHome dashboard, set a unique name for the ability and add trigger phrases such as:
+   - `crypto insight`
+   - `crypto ai`
+   - `check crypto`
+   - `crypto price`
+   - `bitcoin price`
+   - `ethereum price`
 
 3. Register the ability with your agent by calling:
 
@@ -138,7 +130,7 @@ ASSET_ALIASES["wif"] = "dogwifhat"
 
 **Add a new hotword trigger:**
 
-Add the phrase to both `MATCHING_HOTWORDS` in the source and `matching_hotwords` in `config.json`.
+Add the phrase to `MATCHING_HOTWORDS` in the source and keep the dashboard trigger words aligned with it.
 
 **Adjust RSI/SMA periods:**
 

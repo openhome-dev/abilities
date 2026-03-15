@@ -42,8 +42,8 @@ An OpenHome ability that runs voice-powered D&D sessions with 14 distinct Dungeo
 |------|---------|
 | `main.py` | Ability class — DM selection, session loop, Codex integration |
 | `dm_personalities.py` | 14 DM personality registry with voice hints |
-| `config.json` | Trigger hotwords |
 | `.env` | Optional Codex API URL |
+| OpenHome dashboard | Trigger hotwords (platform-managed) |
 
 ## Optional: Codex Integration
 
