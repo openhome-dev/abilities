@@ -66,6 +66,25 @@ EXIT_WORDS = {
 
 _ORDINAL_TO_IDX = {"first": 0, "second": 1, "third": 2, "fourth": 3, "fifth": 4}
 
+# Keywords that signal a health/supplement query — used to reject off-topic input
+_HEALTH_KEYWORDS = {
+    "supplement", "vitamin", "mineral", "herb", "herbal", "capsule", "tablet", "pill",
+    "pain", "joint", "sleep", "energy", "immune", "anxiety", "stress", "inflammation",
+    "digestion", "gut", "heart", "brain", "memory", "focus", "mood", "skin", "hair",
+    "weight", "muscle", "bone", "liver", "kidney", "blood", "sugar", "pressure",
+    "cholesterol", "fatigue", "cold", "flu", "allergy", "hormone", "thyroid", "iron",
+    "calcium", "magnesium", "zinc", "omega", "probiotic", "prebiotic", "antioxidant",
+    "collagen", "protein", "fiber", "detox", "cleanse", "health", "wellness", "remedy",
+    "natural", "organic", "extract", "dose", "deficiency", "boost", "support",
+}
+
+# Triggers that indicate the user wants detail on a previously shown product
+_DETAIL_TRIGGERS = (
+    "more", "detail", "tell me about", "ingredients", "reviews", "what's in",
+    "yes", "give me", "show me", "that one", "the first", "the second", "the third",
+    "number", "about it", "about that", "first one", "second one", "third one",
+)
+
 
 def _strip_llm_fences(text: str) -> str:
     text = text.strip()
@@ -286,7 +305,9 @@ class HealthSupplementSearchCapability(MatchingCapability):
             f"The user asked: \"{user_query}\"\n\n"
             f"Top matching supplements from a curated database:\n{products_text}\n"
             "Give a friendly, conversational voice response recommending the most relevant products. "
-            "Mention product names, ratings, and key benefits. Keep it to 3-4 sentences. "
+            "Mention product names, ratings, and key benefits listed above. "
+            "IMPORTANT: Only mention benefits explicitly stated in the data above — do NOT infer, "
+            "add, or speculate about any benefits not listed. Keep it to 3-4 sentences. "
             "End by asking if they want more details on any product. No markdown. Not medical advice."
         )
         return await asyncio.to_thread(self.capability_worker.text_to_text_response, prompt)
@@ -333,11 +354,24 @@ class HealthSupplementSearchCapability(MatchingCapability):
         lowered = user_input.lower().strip()
         return any(phrase in lowered for phrase in EXIT_WORDS)
 
+    def _is_health_query(self, user_input: str) -> bool:
+        """Return True if the input looks like a health or supplement question."""
+        lowered = user_input.lower()
+        if any(kw in lowered for kw in _HEALTH_KEYWORDS):
+            return True
+        # Ask LLM only for short ambiguous inputs where keywords aren't enough
+        if len(user_input.split()) <= 6:
+            result = self.capability_worker.text_to_text_response(
+                f"Is this a question about health, wellness, or dietary supplements?\n"
+                f"Input: \"{user_input}\"\nReply YES or NO only."
+            ).strip().upper()
+            return result.startswith("YES")
+        return False
+
     def _wants_detail(self, user_input: str, last_results: list) -> dict:
         if not last_results:
             return {}
-        detail_triggers = ("more", "detail", "tell me about", "ingredients", "reviews", "what's in")
-        if not any(t in user_input.lower() for t in detail_triggers):
+        if not any(t in user_input.lower() for t in _DETAIL_TRIGGERS):
             return {}
         # Guard: only curated results have payload keys
         product_names = [r["payload"].get("name", "") for r in last_results if "payload" in r]
@@ -460,6 +494,22 @@ class HealthSupplementSearchCapability(MatchingCapability):
                             "Would you like details on another product, or search for something else?"
                         )
                         continue
+                    # Detail intent detected but couldn't resolve which product — ask to clarify
+                    if any(t in user_input.lower() for t in _DETAIL_TRIGGERS):
+                        await self.capability_worker.speak(
+                            "Which product would you like more details on? "
+                            "Say the first, second, or third."
+                        )
+                        continue
+
+                # Off-topic guard — only search if the input is health/supplement related
+                if not self._is_health_query(user_input):
+                    self._log(f"Off-topic input rejected: {user_input[:60]}")
+                    await self.capability_worker.speak(
+                        "I can only help with health and supplement questions. "
+                        "What health concern can I search supplements for?"
+                    )
+                    continue
 
                 # New search
                 await self.capability_worker.speak("Let me search for that...")
