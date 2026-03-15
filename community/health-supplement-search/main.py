@@ -376,14 +376,12 @@ class HealthSupplementSearchCapability(MatchingCapability):
         lowered = user_input.lower()
         if any(kw in lowered for kw in _HEALTH_KEYWORDS):
             return True
-        # Ask LLM only for short ambiguous inputs where keywords aren't enough
-        if len(user_input.split()) <= 6:
-            result = self.capability_worker.text_to_text_response(
-                f"Is this a question about health, wellness, or dietary supplements?\n"
-                f"Input: \"{user_input}\"\nReply YES or NO only."
-            ).strip().upper()
-            return result.startswith("YES")
-        return False
+        # LLM fallback for any input that didn't match keywords
+        result = self.capability_worker.text_to_text_response(
+            f"Is this a question about health, wellness, or dietary supplements?\n"
+            f"Input: \"{user_input}\"\nReply YES or NO only."
+        ).strip().upper()
+        return result.startswith("YES")
 
     def _wants_detail(self, user_input: str, last_results: list) -> dict:
         if not last_results:
