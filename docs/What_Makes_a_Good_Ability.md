@@ -573,7 +573,7 @@ Files are scoped to the user, not to your specific Ability. This means if your A
 
 # Risky — generic name might collide with another ability
 "data.json"
-"config.json"
+"settings.json"
 ```
 
 ---

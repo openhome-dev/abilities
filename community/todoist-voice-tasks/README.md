@@ -44,10 +44,10 @@ This ability connects OpenHome’s voice pipeline to your Todoist account. After
    You can also configure the token via the OpenHome dashboard when you upload the ability, if your deployment supports it.
 
 3. **Upload to OpenHome**  
-   Zip the `todoist-voice-tasks` folder (including `main.py`, `config.json`, and `__init__.py`) and upload the ability in the OpenHome dashboard.
+   Zip the `todoist-voice-tasks` folder (including `main.py` and `__init__.py`) and upload the ability in the OpenHome dashboard.
 
 4. **Trigger phrases**  
-   Trigger phrases are defined in `config.json` under `matching_hotwords`. You can adjust them there or in the OpenHome dashboard. When the user says one of these phrases, the Todoist ability starts.
+   Configure trigger phrases in the OpenHome dashboard. When the user says one of these phrases, the Todoist ability starts.
 
 ---
 
@@ -63,17 +63,25 @@ These phrases **start** the Todoist ability. After it’s running, any of the vo
 
 | Delete-oriented | “Delete from my list”, “Remove from my list” |
 
-The full list is in `config.json`:
+Suggested trigger phrases:
 
-```json
-"matching_hotwords": [
-  "open todoist", "todoist", "my tasks", "my task list", "task list",
-  "open my list", "add to my list", "what are my tasks", "what's on my list",
-  "add task", "what are my overdue tasks", "mark my top task complete",
-  "delete from my list", "remove from my list", "complete the task",
-  "complete a task", "mark task complete"
-]
-```
+- `open todoist`
+- `todoist`
+- `my tasks`
+- `my task list`
+- `task list`
+- `open my list`
+- `add to my list`
+- `what are my tasks`
+- `what's on my list`
+- `add task`
+- `what are my overdue tasks`
+- `mark my top task complete`
+- `delete from my list`
+- `remove from my list`
+- `complete the task`
+- `complete a task`
+- `mark task complete`
 
 ---
 
@@ -154,9 +162,10 @@ The ability finds the matching task and performs the action on it.
 community/todoist-voice-tasks/
 ├── README.md       # This file
 ├── main.py         # Ability logic (MatchingCapability, Todoist API calls, LLM intent)
-├── config.json     # unique_name, matching_hotwords (used by platform / register_capability)
 └── __init__.py     # Package marker
 ```
+
+Trigger phrases and the ability's unique name are configured in the OpenHome dashboard.
 
 ---
 
@@ -164,7 +173,7 @@ community/todoist-voice-tasks/
 
 This ability follows the OpenHome community requirements (see repo `CONTRIBUTING.md` and job spec):
 
-- **Registration:** Uses the `#{{register capability}}` tag; `config.json` provides `unique_name` and `matching_hotwords` for the platform.
+- **Registration:** Uses the `#{{register capability}}` tag; OpenHome provides the ability metadata and trigger words at runtime.
 - **Exit:** `resume_normal_flow()` is called on every exit path (in a `finally` block).
 - **Logging:** No `print()`; uses `editor_logging_handler` for logs.
 - **Concurrency:** No `asyncio.sleep()` or `asyncio.create_task()`; uses platform `session_tasks` where needed.
