@@ -33,7 +33,7 @@ class PrayerTimesBackground(MatchingCapability):
     background_daemon_mode: bool = False
 
     # Do not change following tag of register capability
-    #{{register capability}}
+    # {{register capability}}
 
     # ------------------------------------------------------------------
     # Helpers
