@@ -269,9 +269,10 @@ Regardless of which category you select in the dashboard, every ability is built
 AlarmAbility/
 ├── main.py        # Interactive — set an alarm
 ├── background.py     # Background — fire the alarm
-├── config.json    # Required
 └── alarm.mp3      # Supporting files
 ```
+
+Trigger words and the ability's unique name are configured in the OpenHome dashboard.
 
 > ⚠️ The background file **must** be named exactly `background.py`. No other filename will be detected by the platform.
 

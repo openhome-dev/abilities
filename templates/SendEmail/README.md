@@ -228,8 +228,8 @@ async def email_with_generated_report(self):
 ```python
 async def send_configured_email(self):
     # Load email configuration from persistent storage
-    if await self.capability_worker.check_if_file_exists("email_config.json", False):
-        raw = await self.capability_worker.read_file("email_config.json", False)
+    if await self.capability_worker.check_if_file_exists("email_settings.json", False):
+        raw = await self.capability_worker.read_file("email_settings.json", False)
         config = json.loads(raw)
     else:
         await self.capability_worker.speak("Email not configured. Please set up your email first.")
@@ -432,7 +432,7 @@ ATTACHMENTS = ["testfile.txt"]  # Just filename, not full path
 - [ ] Test with a simple email to yourself
 
 ### Building Your Ability
-- [ ] Customize trigger words in `config.json`
+- [ ] Customize trigger words in the OpenHome dashboard
 - [ ] Replace hardcoded values with dynamic inputs or file storage
 - [ ] Add email address validation
 - [ ] Implement error handling with try-catch
