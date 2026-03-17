@@ -63,17 +63,18 @@ class FlightBookingCapability(MatchingCapability):
     # Helpers
     # -------------------------------------------------------------------------
 
+    def _llm_classify(self, prompt: str) -> str:
+        """Call LLM classifier and return stripped lowercase result."""
+        return self.capability_worker.text_to_text_response(prompt).strip().lower()
+
     def _normalize_city_name(self, raw: str, iata: str) -> str:
         """Return a clean display name for a city given its resolved IATA code."""
-        # Reverse lookup in IATA_MAP — covers all mapped cities cleanly
         for city, code in self.IATA_MAP.items():
             if code == iata:
                 return city.title()
-        # Short input (≤3 words) is likely already clean — just strip punctuation
         words = raw.strip().split()
         if len(words) <= 3:
             return raw.strip().rstrip(".,!?").title()
-        # LLM fallback for noisy long-form inputs outside the map
         prompt = (
             f"What city does the IATA airport code '{iata}' primarily serve? "
             "Return ONLY the common city name, nothing else."
@@ -84,8 +85,8 @@ class FlightBookingCapability(MatchingCapability):
         """Convert spoken phone number (words or digits) to E.164 format via LLM."""
         prompt = (
             f"The user said: '{user_input}'. "
-            "This is a phone number including a country code. "
-            "Convert it to E.164 format (e.g. +923013018173). "
+            "This is a phone number. Convert it to E.164 format (e.g. +14155552671). "
+            "If no country code was spoken, assume +1 (United States). "
             "Return ONLY the + sign followed by digits. No spaces, no hyphens, no other text."
         )
         result = self.capability_worker.text_to_text_response(prompt).strip()
@@ -98,12 +99,21 @@ class FlightBookingCapability(MatchingCapability):
     def _format_date_natural(self, date_str: str) -> str:
         """Convert '2026-04-25' → 'April 25th' for voice readback."""
         try:
-            dt = datetime.strptime(date_str, "%Y-%m-%d")
+            dt = datetime.strptime(date_str[:10], "%Y-%m-%d")
             d = dt.day
             sfx = "th" if 11 <= d <= 13 else {1: "st", 2: "nd", 3: "rd"}.get(d % 10, "th")
             return dt.strftime(f"%B {d}{sfx}")
         except Exception:
             return date_str
+
+    def _format_time_ampm(self, raw_dt: str) -> str:
+        """Convert ISO datetime string to 12-hour AM/PM time for voice readback."""
+        try:
+            t = raw_dt[11:16]
+            dt = datetime.strptime(t, "%H:%M")
+            return dt.strftime("%I:%M %p").lstrip("0")
+        except Exception:
+            return raw_dt[11:16] if len(raw_dt) >= 16 else raw_dt
 
     def _duffel_headers(self) -> dict:
         return {
@@ -123,7 +133,10 @@ class FlightBookingCapability(MatchingCapability):
             return upper
         prompt = (
             f"Return ONLY the 3-letter IATA airport code for the main international "
-            f"airport serving: {city_or_code}. No explanation, no punctuation, just 3 letters."
+            f"airport serving: {city_or_code}. "
+            "The input may be noisy speech transcription (e.g. 'I want to fly to new york' "
+            "or 'new york city'). Extract the city and return ONLY the 3-letter IATA code. "
+            "No explanation, no punctuation."
         )
         code = self.capability_worker.text_to_text_response(prompt).strip().upper()
         self.worker.editor_logging_handler.info(f"[FlightBooking] IATA resolve '{city_or_code}' → '{code}'")
@@ -148,7 +161,8 @@ class FlightBookingCapability(MatchingCapability):
             "Extract flight details. Return ONLY valid JSON with these fields (use null if not mentioned):\n"
             '{"origin": "city or airport", "destination": "city or airport", '
             '"date": "YYYY-MM-DD or null", "return_date": "YYYY-MM-DD or null", '
-            '"trip_type": "one-way or round-trip or null", "cabin": "economy or business or first or null"}'
+            '"trip_type": "one-way or round-trip or null", '
+            '"cabin": "economy or business or first or premium_economy or null"}'
         )
         raw = self.capability_worker.text_to_text_response(prompt).strip()
         if raw.startswith("```"):
@@ -161,7 +175,7 @@ class FlightBookingCapability(MatchingCapability):
 
     def _search_flights(self, origin: str, dest: str, date: str,
                         return_date: str, cabin: str) -> list:
-        """Create Duffel offer request, return top 3 offers sorted by price."""
+        """Create Duffel offer request, return top 3 holdable offers sorted by price."""
         slices = [{"origin": origin, "destination": dest, "departure_date": date}]
         if return_date:
             slices.append({"origin": dest, "destination": origin, "departure_date": return_date})
@@ -184,7 +198,6 @@ class FlightBookingCapability(MatchingCapability):
         offers = data.get("offers", [])
         self.worker.editor_logging_handler.info(f"[FlightBooking] {len(offers)} offer(s) returned (pre-filter)")
 
-        # Keep only offers that support hold booking (requires_instant_payment must be false)
         holdable = [
             o for o in offers
             if not o.get("payment_requirements", {}).get("requires_instant_payment", True)
@@ -192,13 +205,12 @@ class FlightBookingCapability(MatchingCapability):
         self.worker.editor_logging_handler.info(
             f"[FlightBooking] {len(holdable)} holdable offer(s) after filter"
         )
-        # Use holdable offers; fall back to all if somehow none qualify
         result = holdable if holdable else offers
         result.sort(key=lambda o: float(o.get("total_amount", "9999") or "9999"))
         return result[:3]
 
     def _format_offer(self, offer: dict, index: int) -> str:
-        """Build a concise, voice-friendly offer summary."""
+        """Build a concise, voice-friendly offer summary with 12-hour times."""
         slice0 = offer.get("slices", [{}])[0]
         segments = slice0.get("segments", [])
         stops = max(len(segments) - 1, 0)
@@ -207,10 +219,8 @@ class FlightBookingCapability(MatchingCapability):
             carrier = segments[0].get("operating_carrier", {}).get("name", "Unknown airline")
         first_seg = segments[0] if segments else {}
         last_seg = segments[-1] if segments else {}
-        dep_raw = first_seg.get("departing_at", "")
-        arr_raw = last_seg.get("arriving_at", "")
-        dep = dep_raw[11:16] if len(dep_raw) >= 16 else dep_raw
-        arr = arr_raw[11:16] if len(arr_raw) >= 16 else arr_raw
+        dep = self._format_time_ampm(first_seg.get("departing_at", ""))
+        arr = self._format_time_ampm(last_seg.get("arriving_at", ""))
         price = offer.get("total_amount", "?")
         currency = offer.get("total_currency", "USD")
         stop_str = "Non-stop" if stops == 0 else f"{stops} stop{'s' if stops > 1 else ''}"
@@ -265,50 +275,125 @@ class FlightBookingCapability(MatchingCapability):
         self.worker.editor_logging_handler.info(f"[FlightBooking] Saved booking {entry['booking_ref']}")
 
     # -------------------------------------------------------------------------
+    # Change-routing helper (used in search-retry loop)
+    # -------------------------------------------------------------------------
+
+    async def _ask_and_apply_change(self, date_str: str, dest_city: str,
+                                    dest_iata: str, cabin: str):
+        """Ask what the user wants to change and update the relevant parameter."""
+        what = await self.capability_worker.run_io_loop(
+            "What would you like to change — the date, destination, or cabin class?"
+        )
+        answer = self._llm_classify(
+            f"The user said: '{what}'. Are they changing the DATE, DESTINATION, or CABIN CLASS? "
+            "Reply ONLY with one word: DATE, DESTINATION, or CABIN."
+        )
+        if "date" in answer:
+            date_raw = await self.capability_worker.run_io_loop("What date would you prefer?")
+            date_str = self._parse_date(date_raw)
+        elif "destination" in answer:
+            dest_city = await self.capability_worker.run_io_loop("Where would you like to fly?")
+            dest_iata = self._resolve_airport(dest_city)
+            dest_city = self._normalize_city_name(dest_city, dest_iata)
+        else:
+            cabin_raw = await self.capability_worker.run_io_loop(
+                "Economy, business, or first class?"
+            )
+            cabin_lower = cabin_raw.lower()
+            cabin = (
+                "business" if "business" in cabin_lower else
+                "first" if "first" in cabin_lower else
+                "premium_economy" if "premium" in cabin_lower else
+                "economy"
+            )
+        return date_str, dest_city, dest_iata, cabin
+
+    # -------------------------------------------------------------------------
     # Passenger Details Collection
     # -------------------------------------------------------------------------
 
     async def _collect_passenger_details(self, passenger_id: str) -> dict:
-        """Ask for passenger name, title, DOB, email, phone."""
-        given = await self.capability_worker.run_io_loop("What's the passenger's first name?")
-        family = await self.capability_worker.run_io_loop("And the last name?")
-
-        # Title → also derives gender (required by Duffel API)
-        title_raw = await self.capability_worker.run_io_loop(
-            "What's your title? Mr, Mrs, Miss, Ms, or Dr?"
+        """Ask for passenger details with a combined prompt; re-ask only for null fields."""
+        # One combined prompt — user can answer everything at once
+        combined = await self.capability_worker.run_io_loop(
+            "I need a few details. Please say your full name, date of birth, "
+            "email address, and phone number with country code."
         )
-        t = title_raw.lower().strip()
-        if "mrs" in t:
+        today = datetime.now().strftime("%Y-%m-%d")
+        extract_prompt = (
+            f"Today is {today}. The user said: '{combined}'.\n"
+            "Extract passenger details. Return ONLY valid JSON with these exact keys "
+            "(use null for any field not mentioned):\n"
+            '{"given_name": null, "family_name": null, '
+            '"born_on": "YYYY-MM-DD or null", "email": null, "phone": null}'
+        )
+        raw = self.capability_worker.text_to_text_response(extract_prompt).strip()
+        if raw.startswith("```"):
+            lines = raw.splitlines()
+            raw = "\n".join(lines[1:-1] if lines[-1].strip() == "```" else lines[1:]).strip()
+        extracted = {}
+        try:
+            extracted = json.loads(raw)
+        except Exception:
+            pass
+
+        given = extracted.get("given_name") or None
+        family = extracted.get("family_name") or None
+        dob = extracted.get("born_on") or None
+        email_raw = extracted.get("email") or None
+        phone_raw = extracted.get("phone") or None
+
+        # Re-ask individually for any field still missing
+        if not given:
+            given = await self.capability_worker.run_io_loop("What's the passenger's first name?")
+        if not family:
+            family = await self.capability_worker.run_io_loop("And the last name?")
+        if not dob:
+            dob_raw = await self.capability_worker.run_io_loop(
+                "Date of birth? For example, March 5th 1990."
+            )
+            dob = self._parse_date(dob_raw)
+        else:
+            # dob came from LLM extraction — validate it looks like a date
+            if not re.match(r"\d{4}-\d{2}-\d{2}", str(dob)):
+                dob = self._parse_date(str(dob))
+
+        if not email_raw:
+            email_raw = await self.capability_worker.run_io_loop("Email address?")
+        email_clean = re.sub(r"[^\x00-\x7F]", "", email_raw).strip().lower()
+        if not re.match(r'^[^@\s]+@[^@\s]+\.[^@\s]+$', email_clean):
+            email_raw = await self.capability_worker.run_io_loop(
+                "I didn't catch that clearly. Please spell out your email address."
+            )
+            email_clean = re.sub(r"[^\x00-\x7F]", "", email_raw).strip().lower()
+
+        if not phone_raw:
+            phone_raw = await self.capability_worker.run_io_loop(
+                "Phone number with country code? For example, plus 1 and then your ten-digit number."
+            )
+        phone_clean = self._parse_phone(str(phone_raw))
+
+        # Title — separate question with LLM classifier (TTS-friendly phrasing)
+        title_raw = await self.capability_worker.run_io_loop(
+            "Are you Mister, Missus, Miss, or Doctor?"
+        )
+        title_answer = self._llm_classify(
+            f"The user said: '{title_raw}'. Which title are they choosing? "
+            "Reply ONLY with one of: mr, mrs, miss, ms, dr."
+        )
+        if "mrs" in title_answer:
             title, gender = "mrs", "f"
-        elif "miss" in t:
+        elif "miss" in title_answer:
             title, gender = "miss", "f"
-        elif "ms" in t:
+        elif "ms" in title_answer:
             title, gender = "ms", "f"
-        elif "dr" in t:
+        elif "dr" in title_answer:
             title, gender = "dr", "m"
         else:
             title, gender = "mr", "m"
 
-        dob_raw = await self.capability_worker.run_io_loop(
-            "Date of birth? For example, March 5th 1990."
-        )
-        dob = self._parse_date(dob_raw)
-        email = await self.capability_worker.run_io_loop("Email address?")
-        # Re-ask once if email contains non-ASCII or is missing @ / domain
-        email_clean_check = re.sub(r"[^\x00-\x7F]", "", email).strip().lower()
-        if not re.match(r'^[^@\s]+@[^@\s]+\.[^@\s]+$', email_clean_check):
-            email = await self.capability_worker.run_io_loop(
-                "I didn't catch that clearly. Please spell out your email address."
-            )
-            email_clean_check = re.sub(r"[^\x00-\x7F]", "", email).strip().lower()
-        email = email_clean_check
-        phone = await self.capability_worker.run_io_loop(
-            "Phone number with country code? For example, plus 44 7700 900 123."
-        )
-        phone_clean = self._parse_phone(phone)
-
-        given_clean = re.sub(r"[^a-zA-Z\s'\-]", "", given).strip().title()
-        family_clean = re.sub(r"[^a-zA-Z\s'\-]", "", family).strip().title()
+        given_clean = re.sub(r"[^a-zA-Z\s'\-]", "", str(given)).strip().title()
+        family_clean = re.sub(r"[^a-zA-Z\s'\-]", "", str(family)).strip().title()
 
         details = {
             "id": passenger_id,
@@ -317,10 +402,12 @@ class FlightBookingCapability(MatchingCapability):
             "given_name": given_clean,
             "family_name": family_clean,
             "born_on": dob,
-            "email": email,
+            "email": email_clean,
             "phone_number": phone_clean,
         }
-        self.worker.editor_logging_handler.info(f"[FlightBooking] Passenger: {details['given_name']} {details['family_name']} ({title})")
+        self.worker.editor_logging_handler.info(
+            f"[FlightBooking] Passenger: {details['given_name']} {details['family_name']} ({title})"
+        )
         return details
 
     # -------------------------------------------------------------------------
@@ -342,7 +429,7 @@ class FlightBookingCapability(MatchingCapability):
                 extracted = self._extract_flight_details_from_utterance(full_utterance)
                 self.worker.editor_logging_handler.info(f"[FlightBooking] Extracted: {extracted}")
 
-            # Step 3: Fill in any missing details by asking
+            # Step 3: Fill in missing details
             origin_city = extracted.get("origin") or ""
             dest_city = extracted.get("destination") or ""
             date_str = extracted.get("date") or ""
@@ -350,6 +437,20 @@ class FlightBookingCapability(MatchingCapability):
             trip_type = extracted.get("trip_type") or ""
             cabin = extracted.get("cabin") or "economy"
 
+            # Catch-all: if 2+ core fields are missing, ask one combined question first
+            null_count = sum(1 for v in [origin_city, dest_city, date_str] if not v)
+            if null_count >= 2:
+                catch_all = await self.capability_worker.run_io_loop(
+                    "Where are you flying, and when?"
+                )
+                extra = self._extract_flight_details_from_utterance(catch_all)
+                origin_city = origin_city or extra.get("origin") or ""
+                dest_city = dest_city or extra.get("destination") or ""
+                date_str = date_str or extra.get("date") or ""
+                trip_type = trip_type or extra.get("trip_type") or ""
+                return_date_str = return_date_str or extra.get("return_date") or ""
+
+            # Individual fallback prompts for any still-missing fields
             if not origin_city:
                 origin_city = await self.capability_worker.run_io_loop(
                     "Where are you flying from?"
@@ -368,7 +469,7 @@ class FlightBookingCapability(MatchingCapability):
             try:
                 if date_str < datetime.now().strftime("%Y-%m-%d"):
                     date_raw = await self.capability_worker.run_io_loop(
-                        f"{date_str} is in the past. What date did you mean?"
+                        f"{self._format_date_natural(date_str)} is in the past. What date did you mean?"
                     )
                     date_str = self._parse_date(date_raw)
             except Exception:
@@ -378,9 +479,11 @@ class FlightBookingCapability(MatchingCapability):
                 trip_raw = await self.capability_worker.run_io_loop(
                     "Is that one-way or round trip?"
                 )
-                trip_type = "round-trip" if any(
-                    w in trip_raw.lower() for w in ["round", "return", "both"]
-                ) else "one-way"
+                answer = self._llm_classify(
+                    f"The user said: '{trip_raw}'. Are they booking a one-way or round-trip flight? "
+                    "Reply ONLY with ONE-WAY or ROUND-TRIP."
+                )
+                trip_type = "round-trip" if "round" in answer else "one-way"
 
             if trip_type == "round-trip" and not return_date_str:
                 return_raw = await self.capability_worker.run_io_loop(
@@ -428,7 +531,7 @@ class FlightBookingCapability(MatchingCapability):
                 self.capability_worker.resume_normal_flow()
                 return
 
-            # Normalise city names for clean voice readback (removes STT noise)
+            # Normalise city names for clean voice readback
             origin_city = self._normalize_city_name(origin_city, origin_iata)
             dest_city = self._normalize_city_name(dest_city, dest_iata)
 
@@ -460,19 +563,18 @@ class FlightBookingCapability(MatchingCapability):
                         "No flights found for that route and date. "
                         "Would you like to change the date or destination?"
                     )
-                    if any(w in retry.lower() for w in ["yes", "sure", "ok", "try", "change", "different"]):
-                        what = await self.capability_worker.run_io_loop(
-                            "What would you like to change — the date or the destination?"
+                    answer = self._llm_classify(
+                        f"The user said: '{retry}'. Did they agree to change their search? "
+                        "Reply ONLY with YES or NO."
+                    )
+                    if answer.startswith("yes"):
+                        date_str, dest_city, dest_iata, cabin = await self._ask_and_apply_change(
+                            date_str, dest_city, dest_iata, cabin
                         )
-                        wl = what.lower()
-                        if "dest" in wl or "where" in wl or "to" in wl:
-                            dest_city = await self.capability_worker.run_io_loop("Where would you like to fly?")
-                            dest_iata = self._resolve_airport(dest_city)
-                        else:
-                            date_raw = await self.capability_worker.run_io_loop("What date would you prefer?")
-                            date_str = self._parse_date(date_raw)
                         continue
-                    await self.capability_worker.speak("No problem. Let me know if you need anything else.")
+                    await self.capability_worker.speak(
+                        "No problem. Let me know if you need anything else."
+                    )
                     self.capability_worker.resume_normal_flow()
                     return
 
@@ -483,54 +585,50 @@ class FlightBookingCapability(MatchingCapability):
                         f"I found one flight: {offer_summary} "
                         "Would you like to book it? Or say no to change something."
                     )
-                    if any(w in confirm_search.lower() for w in
-                           ["yes", "yeah", "sure", "ok", "book", "go ahead", "sounds good"]):
+                    answer = self._llm_classify(
+                        f"The user said: '{confirm_search}'. "
+                        "Do they want to book this flight? Reply ONLY with YES or NO."
+                    )
+                    if answer.startswith("yes"):
                         selected_offer = offers[0]
                         break
-                    # User said no — ask what to change
-                    what = await self.capability_worker.run_io_loop(
-                        "Sure. What would you like to change — the date, destination, or cabin class?"
+                    date_str, dest_city, dest_iata, cabin = await self._ask_and_apply_change(
+                        date_str, dest_city, dest_iata, cabin
                     )
-                    wl = what.lower()
-                    if "date" in wl:
-                        date_raw = await self.capability_worker.run_io_loop("What date would you prefer?")
-                        date_str = self._parse_date(date_raw)
-                    elif any(w in wl for w in ["dest", "where", "to", "fly"]):
-                        dest_city = await self.capability_worker.run_io_loop("Where would you like to fly?")
-                        dest_iata = self._resolve_airport(dest_city)
-                    elif any(w in wl for w in ["cabin", "class", "business", "first", "economy"]):
-                        cabin_raw = await self.capability_worker.run_io_loop(
-                            "Economy, business, or first class?"
-                        )
-                        cabin = ("business" if "business" in cabin_raw.lower() else
-                                 "first" if "first" in cabin_raw.lower() else "economy")
                     continue
 
-                # ── Multiple offers: present numbered list ──────────────────────
-                options_text = " ".join(self._format_offer(o, i + 1) for i, o in enumerate(offers))
+                # ── Multiple offers: progressive reveal ─────────────────────────
+                await self.capability_worker.speak(self._format_offer(offers[0], 1))
+                await self.capability_worker.speak(self._format_offer(offers[1], 2))
+
+                if len(offers) == 3:
+                    want_more = await self.capability_worker.run_io_loop(
+                        "Want to hear the third option, or go with one of those?"
+                    )
+                    want_ans = self._llm_classify(
+                        f"The user said: '{want_more}'. "
+                        "Do they want to hear the third option? Reply ONLY with YES or NO."
+                    )
+                    if want_ans.startswith("yes"):
+                        await self.capability_worker.speak(self._format_offer(offers[2], 3))
+                    else:
+                        offers = offers[:2]
+
                 option_range = "1 or 2" if len(offers) == 2 else "1, 2, or 3"
                 choice_raw = await self.capability_worker.run_io_loop(
-                    f"{options_text} Which option — {option_range}? Or say none to change something."
+                    f"Which option — {option_range}? Or say none to change something."
                 )
 
-                if any(w in choice_raw.lower() for w in ["none", "no", "neither", "change", "different"]):
-                    what = await self.capability_worker.run_io_loop(
-                        "Sure. What would you like to change — the date, destination, or cabin class?"
+                change_answer = self._llm_classify(
+                    f"The user said: '{choice_raw}'. "
+                    "Do they want to change something instead of choosing a flight option? "
+                    "Reply ONLY with YES or NO."
+                )
+                if change_answer.startswith("yes"):
+                    date_str, dest_city, dest_iata, cabin = await self._ask_and_apply_change(
+                        date_str, dest_city, dest_iata, cabin
                     )
-                    wl = what.lower()
-                    if "date" in wl:
-                        date_raw = await self.capability_worker.run_io_loop("What date would you prefer?")
-                        date_str = self._parse_date(date_raw)
-                    elif any(w in wl for w in ["dest", "where", "to", "fly"]):
-                        dest_city = await self.capability_worker.run_io_loop("Where would you like to fly?")
-                        dest_iata = self._resolve_airport(dest_city)
-                    elif any(w in wl for w in ["cabin", "class", "business", "first", "economy"]):
-                        cabin_raw = await self.capability_worker.run_io_loop(
-                            "Economy, business, or first class?"
-                        )
-                        cabin = ("business" if "business" in cabin_raw.lower() else
-                                 "first" if "first" in cabin_raw.lower() else "economy")
-                    continue  # re-search with updated params
+                    continue
 
                 # Extract choice number via LLM
                 num_prompt = (
@@ -538,7 +636,9 @@ class FlightBookingCapability(MatchingCapability):
                     "Return ONLY the number 1, 2, or 3. Nothing else."
                 )
                 num_str = self.capability_worker.text_to_text_response(num_prompt).strip()
-                self.worker.editor_logging_handler.info(f"[FlightBooking] User chose: '{choice_raw}' → '{num_str}'")
+                self.worker.editor_logging_handler.info(
+                    f"[FlightBooking] User chose: '{choice_raw}' → '{num_str}'"
+                )
 
                 try:
                     idx = int(num_str) - 1
@@ -550,9 +650,9 @@ class FlightBookingCapability(MatchingCapability):
                     return
 
                 selected_offer = offers[idx]
-                break  # valid choice made
+                break
+
             offer_id = selected_offer.get("id", "")
-            # Get passenger ID from offer
             offer_passengers = selected_offer.get("passengers", [])
             passenger_id = offer_passengers[0].get("id", "") if offer_passengers else ""
 
@@ -562,45 +662,66 @@ class FlightBookingCapability(MatchingCapability):
             )
             passenger_details = await self._collect_passenger_details(passenger_id)
 
-            # Step 8: Confirmation (irreversible — use run_confirmation_loop)
+            # Step 8: Confirmation (~28 words, TTS-friendly)
             slice0 = selected_offer.get("slices", [{}])[0]
             segments = slice0.get("segments", [])
-            carrier = segments[0].get("operating_carrier", {}).get("name", "the airline") if segments else "the airline"
+            carrier = (
+                segments[0].get("operating_carrier", {}).get("name", "the airline")
+                if segments else "the airline"
+            )
             price = selected_offer.get("total_amount", "?")
             currency = selected_offer.get("total_currency", "USD")
             pax_name = f"{passenger_details['given_name']} {passenger_details['family_name']}"
 
             confirmed = await self.capability_worker.run_confirmation_loop(
-                f"Booking {carrier} from {origin_city} to {dest_city} "
-                f"on {self._format_date_natural(date_str)} for {pax_name}. "
-                f"Total {currency} {price}. "
-                f"This holds the seat — payment must be completed before the airline's deadline. Confirm?"
+                f"Confirm: {carrier}, {origin_city} to {dest_city}, "
+                f"{self._format_date_natural(date_str)}, {currency} {price} for {pax_name}. "
+                f"This is a hold — you'll pay later. Shall I book it?"
             )
 
             if not confirmed:
-                await self.capability_worker.speak("Booking cancelled. Let me know if you want to search again.")
-                self.capability_worker.resume_normal_flow()
-                return
-
-            # Step 9: Book
-            await self.capability_worker.speak("Placing your hold booking now.")
-            try:
-                order = self._book_flight(offer_id, [passenger_details])
-            except Exception as e:
-                self.worker.editor_logging_handler.error(f"[FlightBooking] Booking error: {e}")
                 await self.capability_worker.speak(
-                    "Sorry, the booking didn't go through. The flight may no longer be available. "
-                    "Please try again."
+                    "Booking cancelled. Let me know if you want to search again."
                 )
                 self.capability_worker.resume_normal_flow()
                 return
 
+            # Step 9: Book (with one retry on failure)
+            await self.capability_worker.speak("Placing your hold booking now.")
+            order = None
+            for attempt in range(2):
+                try:
+                    order = self._book_flight(offer_id, [passenger_details])
+                    break
+                except Exception as e:
+                    self.worker.editor_logging_handler.error(
+                        f"[FlightBooking] Booking error (attempt {attempt + 1}): {e}"
+                    )
+                    if attempt == 0:
+                        retry_ans = await self.capability_worker.run_io_loop(
+                            "Sorry, I couldn't complete that booking. Want me to try again?"
+                        )
+                        retry_classify = self._llm_classify(
+                            f"The user said: '{retry_ans}'. Do they want to retry? "
+                            "Reply ONLY with YES or NO."
+                        )
+                        if not retry_classify.startswith("yes"):
+                            self.capability_worker.resume_normal_flow()
+                            return
+                    else:
+                        await self.capability_worker.speak(
+                            "Sorry, the booking still didn't go through. Please try again later."
+                        )
+                        self.capability_worker.resume_normal_flow()
+                        return
+
             # Step 10: Save and confirm
             booking_ref = order.get("booking_reference", "")
             await self._save_booking(order, origin_iata, dest_iata, date_str)
-            self.worker.editor_logging_handler.info(f"[FlightBooking] ✓ Booking complete ref={booking_ref}")
+            self.worker.editor_logging_handler.info(
+                f"[FlightBooking] ✓ Booking complete ref={booking_ref}"
+            )
 
-            # Extract payment deadline from order if present
             pay_by_raw = (
                 order.get("payment_required_by")
                 or order.get("payment_status", {}).get("payment_required_by", "")
@@ -617,7 +738,7 @@ class FlightBookingCapability(MatchingCapability):
             )
             await self.capability_worker.speak(
                 f"Done! Your booking reference is {ref_spoken}.{deadline_str} "
-                f"A payment link will be sent to {passenger_details['email']}. "
+                f"A payment link will be sent to your email address. "
                 f"Please complete payment before the deadline to confirm your seat."
             )
             self.capability_worker.resume_normal_flow()
