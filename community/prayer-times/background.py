@@ -208,8 +208,8 @@ class PrayerTimesBackground(MatchingCapability):
                         sent_today[reminder_key] = True
                         mins = int(diff_minutes)
                         await self._safe_interrupt(
-                            f"{name} is in {mins} minute{'s' if mins != 1 else ''}. "
-                            f"Time to prepare."
+                            f"{name} in {mins} minute{'s' if mins != 1 else ''}"
+                            f" — time to get ready."
                         )
 
                     # Adhan time notification (within 1 min window)

@@ -23,31 +23,42 @@ PRAYER_NAMES = ["Fajr", "Sunrise", "Dhuhr", "Asr", "Maghrib", "Isha"]
 DEFAULT_METHOD = 2
 
 SYSTEM_PROMPT = """You are a prayer-times voice assistant.
-Your ONLY job is to understand the user's intent about Islamic prayer times.
+Your ONLY job is to classify the user's intent about Islamic prayer times.
 
-Respond with EXACTLY one JSON object (no extra text):
+Respond ONLY with valid JSON. No extra text, no markdown, no bullet points, no questions.
 
-1. Query next prayer:
+Return EXACTLY one JSON object:
+
+1. User asks about the next prayer ("what's next", "when should I pray"):
    {"intent": "next_prayer"}
 
-2. Query all today's prayer times:
+2. User wants all today's times ("what are my times today", "full schedule"):
    {"intent": "all_times"}
 
-3. Query a specific prayer:
+3. User asks about a specific prayer ("what time is fajr", "when is maghrib"):
    {"intent": "specific", "prayer": "<Fajr|Sunrise|Dhuhr|Asr|Maghrib|Isha>"}
 
-4. Set up location (user mentions a city/country):
+4. User mentions a city or country ("I'm in Chicago, Illinois"):
    {"intent": "setup", "city": "<city>", "country": "<country>"}
 
-5. Change calculation method:
+5. User wants to change calculation method ("switch to Diyanet", "use ISNA"):
    {"intent": "method", "method": <number>}
    Methods: 1=Karachi, 2=ISNA, 3=MWL, 4=Makkah, 5=Egypt, 13=Diyanet
 
-6. Cannot understand:
+6. Cannot classify:
    {"intent": "unknown"}
 
-IMPORTANT: Prayer names must be exactly one of: Fajr, Sunrise, Dhuhr, Asr, Maghrib, Isha (capitalize first letter).
+Prayer names must be exactly one of: Fajr, Sunrise, Dhuhr, Asr, Maghrib, Isha (capitalize first letter).
 """
+
+METHOD_NAMES = {
+    1: "Karachi",
+    2: "ISNA",
+    3: "MWL",
+    4: "Makkah",
+    5: "Egypt",
+    13: "Diyanet",
+}
 
 
 class PrayerTimesCapability(MatchingCapability):
@@ -146,12 +157,17 @@ class PrayerTimesCapability(MatchingCapability):
                 return name, self._clean_time(t)
         return None
 
-    def _format_all_times(self, timings: dict) -> str:
-        parts = []
-        for name in PRAYER_NAMES:
+    def _format_times_split(self, timings: dict) -> tuple[str, str]:
+        """Split prayer times into two groups for natural spoken delivery."""
+        first_half = []
+        second_half = []
+        for i, name in enumerate(PRAYER_NAMES):
             t = self._clean_time(timings.get(name, "N/A"))
-            parts.append(f"{name}: {t}")
-        return ", ".join(parts)
+            if i < 3:
+                first_half.append(f"{name} at {t}")
+            else:
+                second_half.append(f"{name} at {t}")
+        return ", ".join(first_half), ", ".join(second_half)
 
     def _get_timings(self, data: dict, now: datetime) -> dict | None:
         """Return today's timings — use cache if fresh, otherwise fetch."""
@@ -180,11 +196,9 @@ class PrayerTimesCapability(MatchingCapability):
     # Setup flow
     # ------------------------------------------------------------------
     async def _setup(self, existing_data: dict | None = None) -> dict | None:
-        await self.capability_worker.speak(
-            "I need your location to get accurate prayer times. "
+        user_input = await self.capability_worker.run_io_loop(
             "What city and country are you in?"
         )
-        user_input = await self.capability_worker.user_response()
 
         extraction = self.capability_worker.text_to_text_response(
             user_input,
@@ -204,7 +218,8 @@ class PrayerTimesCapability(MatchingCapability):
 
         if not city:
             await self.capability_worker.speak(
-                "Sorry, I couldn't determine your location. Please try again."
+                "Didn't catch that — try saying your city and country, "
+                "like 'Dallas, United States'."
             )
             return None
 
@@ -216,7 +231,7 @@ class PrayerTimesCapability(MatchingCapability):
         }
         await self._write_data(data)
         await self.capability_worker.speak(
-            f"Location set to {city}, {country}. You can change this anytime."
+            f"Got it, location set to {city}."
         )
         return data
 
@@ -244,8 +259,7 @@ class PrayerTimesCapability(MatchingCapability):
             )
         else:
             await self.capability_worker.speak(
-                "All prayers for today have passed. "
-                "Fajr will be the next prayer tomorrow."
+                "All done for today. Fajr is next, tomorrow morning."
             )
 
     # ------------------------------------------------------------------
@@ -290,8 +304,9 @@ class PrayerTimesCapability(MatchingCapability):
                 method = intent_data.get("method", DEFAULT_METHOD)
                 data["method"] = method
                 await self._write_data(data)
+                method_name = METHOD_NAMES.get(method, str(method))
                 await self.capability_worker.speak(
-                    f"Calculation method updated to {method}."
+                    f"Calculation method set to {method_name}."
                 )
                 return
 
@@ -313,9 +328,12 @@ class PrayerTimesCapability(MatchingCapability):
                 await self._speak_next_prayer(timings, now)
 
             elif intent == "all_times":
-                formatted = self._format_all_times(timings)
+                first, second = self._format_times_split(timings)
                 await self.capability_worker.speak(
-                    f"Today's prayer times for {data['city']}: {formatted}"
+                    f"Prayer times for {data['city']}: {first}."
+                )
+                await self.capability_worker.speak(
+                    f"And {second}."
                 )
 
             elif intent == "specific":
@@ -327,8 +345,8 @@ class PrayerTimesCapability(MatchingCapability):
                     )
                 else:
                     await self.capability_worker.speak(
-                        f"I couldn't find the time for {prayer}. "
-                        f"Available prayers are: {', '.join(PRAYER_NAMES)}."
+                        f"I don't have a time for {prayer}. "
+                        f"Try asking for Fajr, Dhuhr, or another prayer by name."
                     )
 
             else:
@@ -339,7 +357,7 @@ class PrayerTimesCapability(MatchingCapability):
                 f"[PrayerTimes] Error: {e}"
             )
             await self.capability_worker.speak(
-                "Sorry, something went wrong. Please try again."
+                "Something went wrong. Try asking again."
             )
         finally:
             self.capability_worker.resume_normal_flow()
