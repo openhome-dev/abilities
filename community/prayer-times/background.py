@@ -107,9 +107,10 @@ class PrayerTimesBackground(MatchingCapability):
         except Exception:
             return None
 
-    def _safe_interrupt(self, message: str) -> None:
+    async def _safe_interrupt(self, message: str) -> None:
         try:
-            self.capability_worker.send_interrupt_signal(message)
+            await self.capability_worker.send_interrupt_signal()
+            await self.capability_worker.speak(message)
         except Exception as e:
             self.worker.editor_logging_handler.error(
                 f"[PrayerBG] Interrupt failed: {e}"
@@ -206,7 +207,7 @@ class PrayerTimesBackground(MatchingCapability):
                     ):
                         sent_today[reminder_key] = True
                         mins = int(diff_minutes)
-                        self._safe_interrupt(
+                        await self._safe_interrupt(
                             f"{name} is in {mins} minute{'s' if mins != 1 else ''}. "
                             f"Time to prepare."
                         )
@@ -217,7 +218,7 @@ class PrayerTimesBackground(MatchingCapability):
                         and adhan_key not in sent_today
                     ):
                         sent_today[adhan_key] = True
-                        self._safe_interrupt(f"It's time for {name}.")
+                        await self._safe_interrupt(f"It's time for {name}.")
 
                 await self.worker.session_tasks.sleep(CHECK_INTERVAL)
 
@@ -226,8 +227,6 @@ class PrayerTimesBackground(MatchingCapability):
                     f"[PrayerBG] Loop error: {e}"
                 )
                 await self.worker.session_tasks.sleep(CHECK_INTERVAL)
-
-        self.capability_worker.resume_normal_flow()
 
     def call(self, worker: AgentWorker, background_daemon_mode: bool):
         self.worker = worker
