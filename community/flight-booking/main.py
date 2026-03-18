@@ -1,5 +1,6 @@
 import json
 import re
+import time
 import requests
 from datetime import datetime
 from typing import ClassVar
@@ -27,6 +28,13 @@ class FlightBookingCapability(MatchingCapability):
     DUFFEL_BASE: ClassVar[str] = "https://api.duffel.com"
     DUFFEL_API_KEY: ClassVar[str] = "duffel_test_YOUR_KEY_HERE"
     HISTORY_FILE: ClassVar[str] = "flight_booking_history.json"
+
+    # Quick-exit keywords — checked before calling LLM to save ~1s per turn
+    EXIT_KEYWORDS: ClassVar[set] = {
+        "stop", "cancel", "quit", "exit", "nevermind", "never mind",
+        "forget it", "forget that", "no thanks", "nope", "nah", "abort",
+        "end", "leave", "bye", "that's all", "thats all",
+    }
 
     IATA_MAP: ClassVar[dict] = {
         "new york": "JFK", "london": "LHR", "dubai": "DXB",
@@ -64,7 +72,15 @@ class FlightBookingCapability(MatchingCapability):
     # -------------------------------------------------------------------------
 
     def _is_exit_intent(self, response: str) -> bool:
-        """Return True if the user wants to cancel or exit the current task."""
+        """Return True if the user wants to cancel or exit.
+        Checks obvious keywords first to avoid an unnecessary LLM call."""
+        lower = response.lower().strip()
+        # Fast path — exact or contained keyword match
+        if lower in self.EXIT_KEYWORDS:
+            return True
+        if any(kw in lower for kw in self.EXIT_KEYWORDS):
+            return True
+        # LLM for ambiguous phrasing ("I think I'll leave it", "not now", etc.)
         prompt = (
             f"The user said: '{response}'. "
             "Are they trying to cancel, stop, or exit the current task? "
@@ -87,7 +103,7 @@ class FlightBookingCapability(MatchingCapability):
         return self.capability_worker.text_to_text_response(prompt).strip().title()
 
     def _parse_phone(self, user_input: str) -> str:
-        """Convert spoken phone number (words or digits) to E.164 format via LLM."""
+        """Convert spoken or typed phone number to E.164 format via LLM."""
         prompt = (
             f"The user said: '{user_input}'. "
             "This is a phone number including a country code spoken with a US/international accent. "
@@ -100,6 +116,10 @@ class FlightBookingCapability(MatchingCapability):
             clean = "+" + clean
         self.worker.editor_logging_handler.info(f"[FlightBooking] Phone parsed: '{user_input}' → '{clean}'")
         return clean
+
+    def _validate_phone(self, phone: str) -> bool:
+        """Return True if phone looks like a valid E.164 number (+digits, 7–15 digits)."""
+        return bool(re.match(r'^\+\d{7,15}$', phone))
 
     def _format_date_natural(self, date_str: str) -> str:
         """Convert '2026-04-25' → 'April 25th' for voice readback."""
@@ -158,14 +178,15 @@ class FlightBookingCapability(MatchingCapability):
         return match.group() if match else result
 
     def _extract_flight_details_from_utterance(self, utterance: str) -> dict:
-        """Try to extract origin, destination, and date from the trigger sentence."""
+        """Try to extract origin, destination, dates, trip type, cabin from the trigger sentence."""
         today = datetime.now().strftime("%Y-%m-%d")
         prompt = (
             f"Today is {today}. The user said: '{utterance}'.\n"
             "Extract flight details. Return ONLY valid JSON with these fields (use null if not mentioned):\n"
             '{"origin": "city or airport", "destination": "city or airport", '
             '"date": "YYYY-MM-DD or null", "return_date": "YYYY-MM-DD or null", '
-            '"trip_type": "one-way or round-trip or null", "cabin": "economy or business or first or null"}'
+            '"trip_type": "one-way or round-trip or null", '
+            '"cabin": "economy or business or first or premium_economy or null"}'
         )
         raw = self.capability_worker.text_to_text_response(prompt).strip()
         if raw.startswith("```"):
@@ -196,6 +217,17 @@ class FlightBookingCapability(MatchingCapability):
         except Exception:
             return {f: None for f in fields}
 
+    def _duffel_request_with_retry(self, method: str, url: str, **kwargs) -> requests.Response:
+        """Make a Duffel API request with one retry on 429/5xx errors."""
+        resp = requests.request(method, url, headers=self._duffel_headers(), **kwargs)
+        if resp.status_code in (429, 500, 502, 503, 504):
+            self.worker.editor_logging_handler.info(
+                f"[FlightBooking] Duffel {resp.status_code} — retrying in 2s"
+            )
+            time.sleep(2)
+            resp = requests.request(method, url, headers=self._duffel_headers(), **kwargs)
+        return resp
+
     def _search_flights(self, origin: str, dest: str, date: str,
                         return_date: str, cabin: str) -> list:
         """Create Duffel offer request, return top 3 holdable offers sorted by price."""
@@ -210,11 +242,9 @@ class FlightBookingCapability(MatchingCapability):
             "return_offers": True,
         }}
         self.worker.editor_logging_handler.info(f"[FlightBooking] Search: {origin}→{dest} on {date}")
-        resp = requests.post(
-            f"{self.DUFFEL_BASE}/air/offer_requests",
-            headers=self._duffel_headers(),
-            json=payload,
-            timeout=30,
+        resp = self._duffel_request_with_retry(
+            "POST", f"{self.DUFFEL_BASE}/air/offer_requests",
+            json=payload, timeout=30,
         )
         resp.raise_for_status()
         offers = resp.json().get("data", {}).get("offers", [])
@@ -262,11 +292,9 @@ class FlightBookingCapability(MatchingCapability):
             "passengers": passengers,
         }}
         self.worker.editor_logging_handler.info(f"[FlightBooking] Booking offer {offer_id}")
-        resp = requests.post(
-            f"{self.DUFFEL_BASE}/air/orders",
-            headers=self._duffel_headers(),
-            json=payload,
-            timeout=30,
+        resp = self._duffel_request_with_retry(
+            "POST", f"{self.DUFFEL_BASE}/air/orders",
+            json=payload, timeout=30,
         )
         if not resp.ok:
             self.worker.editor_logging_handler.error(
@@ -299,36 +327,54 @@ class FlightBookingCapability(MatchingCapability):
         self.worker.editor_logging_handler.info(f"[FlightBooking] Saved booking {entry['booking_ref']}")
 
     # -------------------------------------------------------------------------
-    # Change routing helper (deduplicates the 3 copy-pasted change blocks)
+    # Change routing helper
     # -------------------------------------------------------------------------
 
-    async def _ask_and_apply_change(self, date_str, dest_city, dest_iata, cabin):
-        """Ask what the user wants to change and return updated (date_str, dest_city, dest_iata, cabin).
+    async def _ask_and_apply_change(self, date_str, origin_city, origin_iata,
+                                    dest_city, dest_iata, cabin, trip_type, return_date_str):
+        """Ask what the user wants to change and return an updated state dict.
         Returns None if the user wants to exit."""
         what = await self.capability_worker.run_io_loop(
-            "What would you like to change — the date, destination, or cabin class?"
+            "What would you like to change — the date, origin, destination, or cabin class?"
         )
         if self._is_exit_intent(what):
             return None
 
         change_prompt = (
             f"The user said: '{what}'. They want to change something about their flight search. "
-            "Reply with exactly one of: DATE, DESTINATION, CABIN, OTHER"
+            "Reply with exactly one of: DATE, ORIGIN, DESTINATION, CABIN, OTHER"
         )
         change_intent = self.capability_worker.text_to_text_response(change_prompt).strip().upper()
         self.worker.editor_logging_handler.info(f"[FlightBooking] Change intent: '{what}' → {change_intent}")
 
         if change_intent == "DATE":
-            date_raw = await self.capability_worker.run_io_loop("What date would you prefer?")
+            date_raw = await self.capability_worker.run_io_loop("What departure date would you prefer?")
             if self._is_exit_intent(date_raw):
                 return None
             date_str = self._parse_date(date_raw)
+            # For round-trips, also update the return date
+            if trip_type == "round-trip":
+                ret_raw = await self.capability_worker.run_io_loop(
+                    "And the return date?"
+                )
+                if self._is_exit_intent(ret_raw):
+                    return None
+                return_date_str = self._parse_date(ret_raw)
+
+        elif change_intent == "ORIGIN":
+            new_origin = await self.capability_worker.run_io_loop("Where would you like to fly from?")
+            if self._is_exit_intent(new_origin):
+                return None
+            origin_iata = self._resolve_airport(new_origin)
+            origin_city = self._normalize_city_name(new_origin, origin_iata)
+
         elif change_intent == "DESTINATION":
-            new_dest = await self.capability_worker.run_io_loop("Where would you like to fly?")
+            new_dest = await self.capability_worker.run_io_loop("Where would you like to fly to?")
             if self._is_exit_intent(new_dest):
                 return None
             dest_iata = self._resolve_airport(new_dest)
             dest_city = self._normalize_city_name(new_dest, dest_iata)
+
         elif change_intent == "CABIN":
             cabin_raw = await self.capability_worker.run_io_loop("Economy, business, or first class?")
             if self._is_exit_intent(cabin_raw):
@@ -338,7 +384,15 @@ class FlightBookingCapability(MatchingCapability):
                      "first" if "first" in cabin_lower else
                      "premium_economy" if "premium" in cabin_lower else "economy")
 
-        return date_str, dest_city, dest_iata, cabin
+        return {
+            "date_str": date_str,
+            "origin_city": origin_city,
+            "origin_iata": origin_iata,
+            "dest_city": dest_city,
+            "dest_iata": dest_iata,
+            "cabin": cabin,
+            "return_date_str": return_date_str,
+        }
 
     # -------------------------------------------------------------------------
     # Passenger Details Collection
@@ -408,7 +462,9 @@ class FlightBookingCapability(MatchingCapability):
 
         g2 = self._extract_passenger_fields(group2_raw, ["email", "phone_number"])
         email = g2.get("email") or ""
-        phone_clean = g2.get("phone_number") or ""
+        # Always run extracted phone through _parse_phone to guarantee E.164
+        raw_phone = g2.get("phone_number") or ""
+        phone_clean = self._parse_phone(raw_phone) if raw_phone else ""
 
         # Validate email — re-ask once if invalid or missing
         email_clean = re.sub(r"[^\x00-\x7F]", "", email).strip().lower()
@@ -421,8 +477,8 @@ class FlightBookingCapability(MatchingCapability):
             email_clean = re.sub(r"[^\x00-\x7F]", "", email_raw).strip().lower()
         email = email_clean
 
-        # Validate phone — re-ask once if blank after LLM extraction
-        if not phone_clean:
+        # Validate phone — re-ask once if missing or malformed
+        if not self._validate_phone(phone_clean):
             phone_raw = await self.capability_worker.run_io_loop(
                 "And the phone number with country code? For example, plus 44 7700 900 123."
             )
@@ -447,6 +503,15 @@ class FlightBookingCapability(MatchingCapability):
             f"[FlightBooking] Passenger: {details['given_name']} {details['family_name']} ({title})"
         )
         return details
+
+    # -------------------------------------------------------------------------
+    # Shared exit helper
+    # -------------------------------------------------------------------------
+
+    async def _exit(self, msg: str = "No problem. Let me know if you need anything else."):
+        """Speak exit message and resume normal flow."""
+        await self.capability_worker.speak(msg)
+        self.capability_worker.resume_normal_flow()
 
     # -------------------------------------------------------------------------
     # Main Flow
@@ -478,15 +543,13 @@ class FlightBookingCapability(MatchingCapability):
             if not origin_city:
                 origin_city = await self.capability_worker.run_io_loop("Where are you flying from?")
                 if self._is_exit_intent(origin_city):
-                    await self.capability_worker.speak("No problem. Let me know if you need anything else.")
-                    self.capability_worker.resume_normal_flow()
+                    await self._exit()
                     return
 
             if not dest_city:
                 dest_city = await self.capability_worker.run_io_loop("Where are you flying to?")
                 if self._is_exit_intent(dest_city):
-                    await self.capability_worker.speak("No problem. Let me know if you need anything else.")
-                    self.capability_worker.resume_normal_flow()
+                    await self._exit()
                     return
 
             if not date_str:
@@ -494,8 +557,7 @@ class FlightBookingCapability(MatchingCapability):
                     "What date are you travelling? For example, March 20th."
                 )
                 if self._is_exit_intent(date_raw):
-                    await self.capability_worker.speak("No problem. Let me know if you need anything else.")
-                    self.capability_worker.resume_normal_flow()
+                    await self._exit()
                     return
                 date_str = self._parse_date(date_raw)
 
@@ -506,8 +568,7 @@ class FlightBookingCapability(MatchingCapability):
                         f"{self._format_date_natural(date_str)} is in the past. What date did you mean?"
                     )
                     if self._is_exit_intent(date_raw):
-                        await self.capability_worker.speak("No problem. Let me know if you need anything else.")
-                        self.capability_worker.resume_normal_flow()
+                        await self._exit()
                         return
                     date_str = self._parse_date(date_raw)
             except Exception:
@@ -516,8 +577,7 @@ class FlightBookingCapability(MatchingCapability):
             if not trip_type:
                 trip_raw = await self.capability_worker.run_io_loop("Is that one-way or round trip?")
                 if self._is_exit_intent(trip_raw):
-                    await self.capability_worker.speak("No problem. Let me know if you need anything else.")
-                    self.capability_worker.resume_normal_flow()
+                    await self._exit()
                     return
                 trip_type = "round-trip" if any(
                     w in trip_raw.lower() for w in ["round", "return", "both"]
@@ -526,16 +586,14 @@ class FlightBookingCapability(MatchingCapability):
             if trip_type == "round-trip" and not return_date_str:
                 return_raw = await self.capability_worker.run_io_loop("When are you returning?")
                 if self._is_exit_intent(return_raw):
-                    await self.capability_worker.speak("No problem. Let me know if you need anything else.")
-                    self.capability_worker.resume_normal_flow()
+                    await self._exit()
                     return
                 return_date_str = self._parse_date(return_raw)
 
             if cabin not in ("economy", "business", "first", "premium_economy"):
                 cabin_raw = await self.capability_worker.run_io_loop("Economy, business, or first class?")
                 if self._is_exit_intent(cabin_raw):
-                    await self.capability_worker.speak("No problem. Let me know if you need anything else.")
-                    self.capability_worker.resume_normal_flow()
+                    await self._exit()
                     return
                 cabin_lower = cabin_raw.lower()
                 cabin = ("business" if "business" in cabin_lower else
@@ -574,7 +632,7 @@ class FlightBookingCapability(MatchingCapability):
 
             self.worker.editor_logging_handler.info(
                 f"[FlightBooking] Route: {origin_iata}→{dest_iata}, date={date_str}, "
-                f"return={return_date_str}, cabin={cabin}"
+                f"return={return_date_str}, cabin={cabin}, trip={trip_type}"
             )
 
             # Steps 5–8: Search + select + confirm (retryable loop)
@@ -582,7 +640,12 @@ class FlightBookingCapability(MatchingCapability):
             passenger_details = None
 
             while True:
-                await self.capability_worker.speak("Let me search for flights, one moment.")
+                # Confirm trip details aloud before searching
+                trip_label = "round-trip" if trip_type == "round-trip" else "one-way"
+                await self.capability_worker.speak(
+                    f"Searching {trip_label} {cabin} flights from {origin_city} to {dest_city} "
+                    f"on {self._format_date_natural(date_str)}. One moment."
+                )
                 try:
                     offers = self._search_flights(
                         origin_iata, dest_iata, date_str,
@@ -605,15 +668,20 @@ class FlightBookingCapability(MatchingCapability):
                     if self._is_exit_intent(retry) or not any(
                         w in retry.lower() for w in ["yes", "sure", "ok", "try", "change", "different"]
                     ):
-                        await self.capability_worker.speak("No problem. Let me know if you need anything else.")
-                        self.capability_worker.resume_normal_flow()
+                        await self._exit()
                         return
-                    result = await self._ask_and_apply_change(date_str, dest_city, dest_iata, cabin)
-                    if result is None:
-                        await self.capability_worker.speak("No problem. Let me know if you need anything else.")
-                        self.capability_worker.resume_normal_flow()
+                    state = await self._ask_and_apply_change(
+                        date_str, origin_city, origin_iata,
+                        dest_city, dest_iata, cabin, trip_type, return_date_str
+                    )
+                    if state is None:
+                        await self._exit()
                         return
-                    date_str, dest_city, dest_iata, cabin = result
+                    date_str = state["date_str"]
+                    origin_city, origin_iata = state["origin_city"], state["origin_iata"]
+                    dest_city, dest_iata = state["dest_city"], state["dest_iata"]
+                    cabin = state["cabin"]
+                    return_date_str = state["return_date_str"]
                     continue
 
                 # ── Single offer: skip selection, ask yes/no directly ──────────
@@ -624,8 +692,7 @@ class FlightBookingCapability(MatchingCapability):
                         "Would you like to book it? Or say no to change something."
                     )
                     if self._is_exit_intent(confirm_search):
-                        await self.capability_worker.speak("No problem. Let me know if you need anything else.")
-                        self.capability_worker.resume_normal_flow()
+                        await self._exit()
                         return
                     yes_prompt = (
                         f"The user said: '{confirm_search}'. "
@@ -634,24 +701,31 @@ class FlightBookingCapability(MatchingCapability):
                     if self.capability_worker.text_to_text_response(yes_prompt).strip().upper().startswith("Y"):
                         selected_offer = offers[0]
                     else:
-                        result = await self._ask_and_apply_change(date_str, dest_city, dest_iata, cabin)
-                        if result is None:
-                            await self.capability_worker.speak("No problem. Let me know if you need anything else.")
-                            self.capability_worker.resume_normal_flow()
+                        state = await self._ask_and_apply_change(
+                            date_str, origin_city, origin_iata,
+                            dest_city, dest_iata, cabin, trip_type, return_date_str
+                        )
+                        if state is None:
+                            await self._exit()
                             return
-                        date_str, dest_city, dest_iata, cabin = result
+                        date_str = state["date_str"]
+                        origin_city, origin_iata = state["origin_city"], state["origin_iata"]
+                        dest_city, dest_iata = state["dest_city"], state["dest_iata"]
+                        cabin = state["cabin"]
+                        return_date_str = state["return_date_str"]
                         continue
 
                 else:
-                    # ── Multiple offers: present numbered list ──────────────────
+                    # ── Multiple offers: present with count intro ───────────────
+                    count_word = {2: "two", 3: "three"}.get(len(offers), str(len(offers)))
+                    await self.capability_worker.speak(f"I found {count_word} options.")
                     options_text = " ".join(self._format_offer(o, i + 1) for i, o in enumerate(offers))
                     option_range = "1 or 2" if len(offers) == 2 else "1, 2, or 3"
                     choice_raw = await self.capability_worker.run_io_loop(
                         f"{options_text} Which option — {option_range}? Or say none to change something."
                     )
                     if self._is_exit_intent(choice_raw):
-                        await self.capability_worker.speak("No problem. Let me know if you need anything else.")
-                        self.capability_worker.resume_normal_flow()
+                        await self._exit()
                         return
 
                     none_prompt = (
@@ -660,12 +734,18 @@ class FlightBookingCapability(MatchingCapability):
                         "Reply ONLY with YES or NO."
                     )
                     if self.capability_worker.text_to_text_response(none_prompt).strip().upper().startswith("Y"):
-                        result = await self._ask_and_apply_change(date_str, dest_city, dest_iata, cabin)
-                        if result is None:
-                            await self.capability_worker.speak("No problem. Let me know if you need anything else.")
-                            self.capability_worker.resume_normal_flow()
+                        state = await self._ask_and_apply_change(
+                            date_str, origin_city, origin_iata,
+                            dest_city, dest_iata, cabin, trip_type, return_date_str
+                        )
+                        if state is None:
+                            await self._exit()
                             return
-                        date_str, dest_city, dest_iata, cabin = result
+                        date_str = state["date_str"]
+                        origin_city, origin_iata = state["origin_city"], state["origin_iata"]
+                        dest_city, dest_iata = state["dest_city"], state["dest_iata"]
+                        cabin = state["cabin"]
+                        return_date_str = state["return_date_str"]
                         continue
 
                     num_prompt = (
@@ -693,8 +773,7 @@ class FlightBookingCapability(MatchingCapability):
                 passenger_details = await self._collect_passenger_details(passenger_id)
 
                 if passenger_details is None:
-                    await self.capability_worker.speak("No problem. Let me know if you need anything else.")
-                    self.capability_worker.resume_normal_flow()
+                    await self._exit()
                     return
 
                 # ── Step 8: Confirmation with change routing ────────────────────
@@ -707,9 +786,14 @@ class FlightBookingCapability(MatchingCapability):
                 pax_name = f"{passenger_details['given_name']} {passenger_details['family_name']}"
                 offer_id = selected_offer.get("id", "")
 
+                # Build confirmation — include return date for round-trips
+                route_str = (
+                    f"from {origin_city} to {dest_city} on {self._format_date_natural(date_str)}"
+                    + (f", returning {self._format_date_natural(return_date_str)}"
+                       if trip_type == "round-trip" and return_date_str else "")
+                )
                 confirm_raw = await self.capability_worker.run_io_loop(
-                    f"Booking {carrier} from {origin_city} to {dest_city} "
-                    f"on {self._format_date_natural(date_str)} for {pax_name}. "
+                    f"Booking {carrier} {route_str} for {pax_name}. "
                     f"Total {currency} {price}. "
                     "This holds the seat — payment must be completed before the airline's deadline. "
                     "Say confirm to book, cancel to stop, or tell me what you'd like to change."
@@ -733,44 +817,42 @@ class FlightBookingCapability(MatchingCapability):
                     break  # proceed to booking
 
                 if intent == "CANCEL":
-                    await self.capability_worker.speak(
-                        "Booking cancelled. Let me know if you'd like to search again."
-                    )
-                    self.capability_worker.resume_normal_flow()
+                    await self._exit("Booking cancelled. Let me know if you'd like to search again.")
                     return
 
                 if intent == "CHANGE_PASSENGER":
-                    # Re-collect passenger details without re-searching
                     passenger_details = await self._collect_passenger_details(passenger_id)
                     if passenger_details is None:
-                        await self.capability_worker.speak("No problem. Let me know if you need anything else.")
-                        self.capability_worker.resume_normal_flow()
+                        await self._exit()
                         return
                     continue  # loop back to confirmation with updated details
 
                 # CHANGE_DATE / CHANGE_DESTINATION / CHANGE_CABIN → re-search
                 if intent == "CHANGE_DATE":
-                    date_raw = await self.capability_worker.run_io_loop("What date would you prefer?")
+                    date_raw = await self.capability_worker.run_io_loop("What departure date would you prefer?")
                     if self._is_exit_intent(date_raw):
-                        await self.capability_worker.speak("No problem. Let me know if you need anything else.")
-                        self.capability_worker.resume_normal_flow()
+                        await self._exit()
                         return
                     date_str = self._parse_date(date_raw)
+                    if trip_type == "round-trip":
+                        ret_raw = await self.capability_worker.run_io_loop("And the return date?")
+                        if self._is_exit_intent(ret_raw):
+                            await self._exit()
+                            return
+                        return_date_str = self._parse_date(ret_raw)
                 elif intent == "CHANGE_DESTINATION":
                     dest_city = await self.capability_worker.run_io_loop(
                         "Where would you like to fly instead?"
                     )
                     if self._is_exit_intent(dest_city):
-                        await self.capability_worker.speak("No problem. Let me know if you need anything else.")
-                        self.capability_worker.resume_normal_flow()
+                        await self._exit()
                         return
                     dest_iata = self._resolve_airport(dest_city)
                     dest_city = self._normalize_city_name(dest_city, dest_iata)
                 elif intent == "CHANGE_CABIN":
                     cabin_raw = await self.capability_worker.run_io_loop("Economy, business, or first class?")
                     if self._is_exit_intent(cabin_raw):
-                        await self.capability_worker.speak("No problem. Let me know if you need anything else.")
-                        self.capability_worker.resume_normal_flow()
+                        await self._exit()
                         return
                     cabin_lower = cabin_raw.lower()
                     cabin = ("business" if "business" in cabin_lower else
@@ -802,20 +884,24 @@ class FlightBookingCapability(MatchingCapability):
                 order.get("payment_required_by")
                 or order.get("payment_status", {}).get("payment_required_by", "")
             )
+            ref_spoken = ", ".join(list(booking_ref)) if booking_ref else "unavailable"
+
             if pay_by_raw:
                 pay_by_date = self._format_date_natural(pay_by_raw[:10])
-                deadline_str = f" You must complete payment by {pay_by_date}."
+                success_msg = (
+                    f"Done! Your booking reference is {ref_spoken}. "
+                    f"You must complete payment by {pay_by_date} to confirm your seat."
+                )
             else:
-                deadline_str = ""
+                success_msg = (
+                    f"Done! Your booking reference is {ref_spoken}. "
+                    "Please complete payment with the airline to confirm your seat."
+                )
 
-            ref_spoken = ", ".join(list(booking_ref)) if booking_ref else "unavailable"
             self.worker.editor_logging_handler.info(
-                f"[FlightBooking] pay_by_raw={pay_by_raw!r} deadline_str={deadline_str!r}"
+                f"[FlightBooking] pay_by_raw={pay_by_raw!r}"
             )
-            await self.capability_worker.speak(
-                f"Done! Your booking reference is {ref_spoken}.{deadline_str} "
-                f"Please complete payment before the deadline to confirm your seat."
-            )
+            await self.capability_worker.speak(success_msg)
             self.capability_worker.resume_normal_flow()
 
         except Exception as e:
