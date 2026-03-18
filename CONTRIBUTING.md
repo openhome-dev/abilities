@@ -1,6 +1,6 @@
 # Contributing to OpenHome Abilities
 
-Thanks for wanting to contribute! This guide will get you from idea to merged PR as smoothly as possible. If you're building great abilities with real, high-impact use cases, also check out [Building Great OpenHome Abilities](https://github.com/openhome-dev/abilities/blob/dev/docs/Building_Great_OpenHome_Abilities.md).
+Thanks for wanting to contribute! This guide will get you from idea to merged PR as smoothly as possible. If you're building great abilities with real, high-impact use cases, also check out [What Makes a Good Ability](https://github.com/openhome-dev/abilities/blob/dev/docs/What_Makes_a_Good_Ability.md).
 
 ---
 
@@ -128,7 +128,6 @@ Edit `main.py`. Every Ability must:
 | `print()` | Bypasses structured logging | `self.worker.editor_logging_handler` |
 | `open()` (raw) | Unmanaged filesystem access | `self.capability_worker.read_file()` / `write_file()` |
 | `redis` | Direct datastore coupling | Platform-provided helpers |
-| `connection_manager` | Breaks isolation & multi-tenant safety | `CapabilityWorker` APIs |
 | `user_config` | Can leak/mutate global state | `CapabilityWorker` / `worker` APIs |
 | `exec()` | Insecure dynamic code execution | ❌ Not allowed |
 | `pickle/dill/shelve/marshal` | Insecure deserialization | ❌ Not allowed |
@@ -234,7 +233,7 @@ Every community PR is reviewed for:
 - [ ] `README.md` is present with description, suggested trigger words, and setup instructions
 - [ ] `resume_normal_flow()` is called on every exit path
 - [ ] No `print()` statements (use `editor_logging_handler`)
-- [ ] No blocked imports (`redis`, `connection_manager`, `user_config`, `open()`)
+- [ ] No blocked imports (`redis`, `user_config`, `open()`)
 - [ ] No `asyncio.sleep()` or `asyncio.create_task()` (use `session_tasks` helpers)
 - [ ] No hardcoded API keys (use `"YOUR_API_KEY_HERE"` placeholders)
 - [ ] Error handling on all API calls and external operations
@@ -267,7 +266,7 @@ Every community PR is reviewed for:
 | Hardcode API keys | Use placeholders + document in README |
 | Forget `resume_normal_flow()` | Call it on every exit path — loops, breaks, errors |
 | Write long spoken responses | Keep it short — 1-2 sentences per speak() call |
-| Import `redis`, `connection_manager`, etc. | Use CapabilityWorker APIs |
+| Import `redis`, `user_config`, etc. | Use CapabilityWorker APIs |
 | Push directly to `dev` or `main` | Push to your ability branch, open a PR |
 
 ---
