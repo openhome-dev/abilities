@@ -435,6 +435,7 @@ Respond with ONLY the intent name, nothing else."""
 
         try:
             yesterday = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
+
             async def fetch_yesterday():
                 return await self._api_call(
                     f"energy_lifetime?start_date={yesterday}&end_date={yesterday}"
