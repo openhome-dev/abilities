@@ -45,24 +45,24 @@ _SKIP_KEYS = {"rssi", "time", "relayDeviceType"}
 
 # Human-readable labels and units for known sensor keys
 _LABEL_MAP = {
-    "co2": ("CO2", "ppm"),
-    "voc": ("VOC", "ppb"),
-    "pm1": ("PM1", "µg/m³"),
-    "pm25": ("PM2.5", "µg/m³"),
+    "co2":               ("CO2",                "ppm"),
+    "voc":               ("VOC",                "ppb"),
+    "pm1":               ("PM1",                "µg/m³"),
+    "pm25":              ("PM2.5",              "µg/m³"),
     "radonShortTermAvg": ("Radon (short-term)", "Bq/m³"),
-    "temp": ("Temperature", "°C"),
-    "humidity": ("Humidity", "%"),
-    "pressure": ("Pressure", "hPa"),
+    "temp":              ("Temperature",        "°C"),
+    "humidity":          ("Humidity",           "%"),
+    "pressure":          ("Pressure",           "hPa"),
 }
 
 # Health thresholds: key -> (low_warn or None, high_warn or None)
 # Sources: WHO guidelines, EPA annual standard, EU Radon Directive
 _THRESHOLDS = {
-    "co2": (None, 1000),  # ppm  — above 1000 is concerning
-    "voc": (None, 250),   # ppb  — above 250 is concerning
-    "pm25": (None, 12.0),  # µg/m³ — EPA annual standard
+    "co2":               (None, 1000),  # ppm  — above 1000 is concerning
+    "voc":               (None, 250),   # ppb  — above 250 is concerning
+    "pm25":              (None, 12.0),  # µg/m³ — EPA annual standard
     "radonShortTermAvg": (None, 100),   # Bq/m³ — EU reference level
-    "humidity": (30, 60),    # %    — below 30 dry, above 60 humid
+    "humidity":          (30,   60),    # %    — below 30 dry, above 60 humid
 }
 
 # Timezone prefixes that indicate a Fahrenheit-preference user
@@ -74,7 +74,7 @@ class AirthingsCapability(MatchingCapability):
     capability_worker: CapabilityWorker = None
 
     # Do not change following tag of register capability
-    # {{register capability}}
+    #{{register capability}}
 
     def call(self, worker: AgentWorker):
         self.worker = worker
@@ -144,25 +144,22 @@ class AirthingsCapability(MatchingCapability):
         return AIRTHINGS_CLIENT_ID, AIRTHINGS_CLIENT_SECRET
 
     # -------------------------------------------------------------------------
-    # API helpers (all async, non-blocking via run_in_executor)
+    # API helpers (all async, non-blocking via asyncio.to_thread)
     # -------------------------------------------------------------------------
 
     async def _get_access_token(self, client_id: str, client_secret: str) -> Optional[str]:
         """Exchange client credentials for a short-lived access token."""
         try:
-            loop = asyncio.get_running_loop()
-            response = await loop.run_in_executor(
-                None,
-                lambda: requests.post(
-                    AIRTHINGS_TOKEN_URL,
-                    data={
-                        "grant_type": "client_credentials",
-                        "client_id": client_id,
-                        "client_secret": client_secret,
-                        "scope": "read:device:current_values",
-                    },
-                    timeout=REQUEST_TIMEOUT,
-                ),
+            response = await asyncio.to_thread(
+                requests.post,
+                AIRTHINGS_TOKEN_URL,
+                data={
+                    "grant_type": "client_credentials",
+                    "client_id": client_id,
+                    "client_secret": client_secret,
+                    "scope": "read:device:current_values",
+                },
+                timeout=REQUEST_TIMEOUT,
             )
             if response.status_code == 401:
                 self.worker.editor_logging_handler.error(
@@ -197,14 +194,11 @@ class AirthingsCapability(MatchingCapability):
     async def _get_devices(self, token: str) -> list:
         """Return a list of device dicts from the account."""
         try:
-            loop = asyncio.get_running_loop()
-            response = await loop.run_in_executor(
-                None,
-                lambda: requests.get(
-                    AIRTHINGS_DEVICES_URL,
-                    headers={"Authorization": f"Bearer {token}"},
-                    timeout=REQUEST_TIMEOUT,
-                ),
+            response = await asyncio.to_thread(
+                requests.get,
+                AIRTHINGS_DEVICES_URL,
+                headers={"Authorization": f"Bearer {token}"},
+                timeout=REQUEST_TIMEOUT,
             )
             if response.status_code == 401:
                 self.worker.editor_logging_handler.error(
@@ -238,15 +232,12 @@ class AirthingsCapability(MatchingCapability):
             )
             return None
         try:
-            loop = asyncio.get_running_loop()
             url = f"{AIRTHINGS_DEVICES_URL}/{serial_number}/latest-samples"
-            response = await loop.run_in_executor(
-                None,
-                lambda: requests.get(
-                    url,
-                    headers={"Authorization": f"Bearer {token}"},
-                    timeout=REQUEST_TIMEOUT,
-                ),
+            response = await asyncio.to_thread(
+                requests.get,
+                url,
+                headers={"Authorization": f"Bearer {token}"},
+                timeout=REQUEST_TIMEOUT,
             )
             if response.status_code == 401:
                 self.worker.editor_logging_handler.error(
@@ -344,8 +335,7 @@ class AirthingsCapability(MatchingCapability):
         """Prompt the user to choose a device (or 'all'), with preferred-device memory."""
         device_names = ", ".join(self._device_display_name(d) for d in devices)
         reply = await self.capability_worker.run_io_loop(
-            f"I found {len(devices)} devices: {device_names}. "
-            "Which one would you like, or say 'all' for all of them?"
+            f"Found {len(devices)} devices: {device_names}. Which one, or all of them?"
         )
         reply_lower = (reply or "").strip().lower()
 
@@ -356,7 +346,12 @@ class AirthingsCapability(MatchingCapability):
             )
             return [devices[0]]
 
-        if "all" in reply_lower:
+        exit_words = ["never mind", "forget it", "stop", "cancel", "exit", "quit"]
+        if any(w in reply_lower for w in exit_words):
+            self.capability_worker.resume_normal_flow()
+            return []
+
+        if any(w in reply_lower for w in ["all", "both", "every", "all of them", "all devices", "everything"]):
             return devices
 
         matched = [
@@ -366,7 +361,7 @@ class AirthingsCapability(MatchingCapability):
         if not matched:
             first_name = self._device_display_name(devices[0])
             await self.capability_worker.speak(
-                f"I couldn't find a device matching that name, so I'll use {first_name}."
+                f"Didn't catch that, using {first_name}."
             )
             return [devices[0]]
 
@@ -385,8 +380,7 @@ class AirthingsCapability(MatchingCapability):
         credentials = await self._load_credentials()
         if not credentials:
             await self.capability_worker.speak(
-                "Airthings isn't set up yet. "
-                "Please add your Client ID and Client Secret to the main.py file and try again."
+                "Airthings isn't set up yet. You'll need to add your credentials first."
             )
             self.capability_worker.resume_normal_flow()
             return
@@ -417,13 +411,15 @@ class AirthingsCapability(MatchingCapability):
             chosen_devices = devices
         else:
             chosen_devices = await self._ask_device_selection(devices)
+            if not chosen_devices:
+                return  # resume_normal_flow already called inside _ask_device_selection
 
-        # 6. Fetch all samples in parallel
+        # 6. Fetch samples sequentially
         use_fahrenheit = self._is_fahrenheit_user()
-        sample_results = await asyncio.gather(*[
-            self._get_latest_samples(token, d.get("id", ""))
-            for d in chosen_devices
-        ])
+        sample_results = []
+        for d in chosen_devices:
+            result = await self._get_latest_samples(token, d.get("id", ""))
+            sample_results.append(result)
 
         # 7. Classify results
         good_summaries = []
@@ -451,7 +447,8 @@ class AirthingsCapability(MatchingCapability):
                 f"clearly. Reassure the user if everything looks fine. Data: {combined}",
                 system_prompt=(
                     "You are a helpful home assistant reporting indoor air quality. "
-                    "Be concise and speak naturally. Never use bullet points or formatting."
+                    "Be concise and speak naturally. Respond in 1-2 sentences, maximum 30 words. "
+                    "Plain spoken English only. Never use bullet points or formatting."
                 ),
             )
             await self.capability_worker.speak(response)
@@ -463,8 +460,8 @@ class AirthingsCapability(MatchingCapability):
 
         if stale_names:
             await self.capability_worker.speak(
-                f"Note: the readings for {', '.join(stale_names)} are more than an hour old "
-                "and may not reflect current conditions."
+                f"Heads up — readings for {', '.join(stale_names)} are over an hour old, "
+                "so they might be off."
             )
 
         if failed_names:
