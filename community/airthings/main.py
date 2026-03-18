@@ -45,24 +45,24 @@ _SKIP_KEYS = {"rssi", "time", "relayDeviceType"}
 
 # Human-readable labels and units for known sensor keys
 _LABEL_MAP = {
-    "co2":               ("CO2",                "ppm"),
-    "voc":               ("VOC",                "ppb"),
-    "pm1":               ("PM1",                "µg/m³"),
-    "pm25":              ("PM2.5",              "µg/m³"),
+    "co2": ("CO2", "ppm"),
+    "voc": ("VOC", "ppb"),
+    "pm1": ("PM1", "µg/m³"),
+    "pm25": ("PM2.5", "µg/m³"),
     "radonShortTermAvg": ("Radon (short-term)", "Bq/m³"),
-    "temp":              ("Temperature",        "°C"),
-    "humidity":          ("Humidity",           "%"),
-    "pressure":          ("Pressure",           "hPa"),
+    "temp": ("Temperature", "°C"),
+    "humidity": ("Humidity", "%"),
+    "pressure": ("Pressure", "hPa"),
 }
 
 # Health thresholds: key -> (low_warn or None, high_warn or None)
 # Sources: WHO guidelines, EPA annual standard, EU Radon Directive
 _THRESHOLDS = {
-    "co2":               (None, 1000),  # ppm  — above 1000 is concerning
-    "voc":               (None, 250),   # ppb  — above 250 is concerning
-    "pm25":              (None, 12.0),  # µg/m³ — EPA annual standard
+    "co2": (None, 1000),  # ppm  — above 1000 is concerning
+    "voc": (None, 250),   # ppb  — above 250 is concerning
+    "pm25": (None, 12.0),  # µg/m³ — EPA annual standard
     "radonShortTermAvg": (None, 100),   # Bq/m³ — EU reference level
-    "humidity":          (30,   60),    # %    — below 30 dry, above 60 humid
+    "humidity": (30, 60),    # %    — below 30 dry, above 60 humid
 }
 
 # Timezone prefixes that indicate a Fahrenheit-preference user
@@ -74,7 +74,7 @@ class AirthingsCapability(MatchingCapability):
     capability_worker: CapabilityWorker = None
 
     # Do not change following tag of register capability
-    #{{register capability}}
+    # {{register capability}}
 
     def call(self, worker: AgentWorker):
         self.worker = worker
