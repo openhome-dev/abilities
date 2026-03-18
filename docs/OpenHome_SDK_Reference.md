@@ -1043,7 +1043,7 @@ Being explicit about limitations saves developers hours of guessing:
 | Use `print()` | ❌ Blocked — use `editor_logging_handler` |
 | Use `asyncio.sleep()` or `asyncio.create_task()` | ❌ Blocked — use `session_tasks` |
 | Use `open()` for raw file access | ❌ Blocked — use File Storage API |
-| Import `redis`, `connection_manager`, `user_config` | ❌ Blocked |
+| Import `redis`, `user_config` | ❌ Blocked |
 
 ---
 
@@ -1054,8 +1054,6 @@ These will cause your Ability to be rejected by the sandbox:
 | Import | Why | Use Instead |
 |--------|-----|-------------|
 | `redis` | Direct datastore coupling | File Storage API |
-| `RedisHandler` | Bypasses platform abstractions | File Storage API |
-| `connection_manager` | Breaks isolation | CapabilityWorker APIs |
 | `user_config` | Can leak global state | File Storage API |
 
 Also avoid: `exec()`, `eval()`, `pickle`, `dill`, `shelve`, `marshal`, hardcoded secrets, MD5, ECB cipher mode.
