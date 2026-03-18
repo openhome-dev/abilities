@@ -92,8 +92,12 @@ class EnphaseSolarMonitorCapability(MatchingCapability):
         return {}
 
     async def _save_prefs(self, prefs):
-        """Save preferences using OpenHome File Storage API."""
+        """Save preferences using OpenHome File Storage API with delete-then-write pattern."""
         try:
+            # SDK requirement: delete file before writing
+            if await self.capability_worker.check_if_file_exists(PREFS_FILE, False):
+                await self.capability_worker.delete_file(PREFS_FILE, False)
+
             await self.capability_worker.write_file(
                 PREFS_FILE,
                 json.dumps(prefs, indent=2),
@@ -431,7 +435,6 @@ Respond with ONLY the intent name, nothing else."""
 
         try:
             yesterday = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
-
             async def fetch_yesterday():
                 return await self._api_call(
                     f"energy_lifetime?start_date={yesterday}&end_date={yesterday}"
