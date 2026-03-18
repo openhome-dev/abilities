@@ -269,9 +269,10 @@ Regardless of which category you select in the dashboard, every ability is built
 AlarmAbility/
 ├── main.py        # Interactive — set an alarm
 ├── background.py     # Background — fire the alarm
-├── config.json    # Required
 └── alarm.mp3      # Supporting files
 ```
+
+Trigger words and the ability's unique name are configured in the OpenHome dashboard.
 
 > ⚠️ The background file **must** be named exactly `background.py`. No other filename will be detected by the platform.
 
@@ -731,7 +732,7 @@ Run through this before shipping any ability:
 - [ ] Multi-turn flows allow cancellation at any point (`"never mind"`, `"cancel"`)
 - [ ] Filler speech plays before any API call that takes more than 1 second
 - [ ] API keys are placeholder constants, not hardcoded real keys
-- [ ] No blocked imports (`redis`, `connection_manager`, `user_config`, `open`)
+- [ ] No blocked imports (`redis`, `user_config`, `open`)
 - [ ] File names namespaced to your ability (e.g., `smarthub_prefs.json` not `data.json`)
 - [ ] Tested by reading all `speak()` strings out loud
 

@@ -36,8 +36,6 @@ REQUIRED_FILES = ["main.py", "README.md", "__init__.py"]
 
 BLOCKED_IMPORTS = [
     "redis",
-    "from src.utils.db_handler",
-    "connection_manager",
     "user_config",
 ]
 

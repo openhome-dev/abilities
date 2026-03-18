@@ -72,17 +72,10 @@ Find the OpenClaw template ability from:
 ### Step 2: Customize for Your Use Case
 This template provides the basic structure. Modify it to:
 
-1. **Define your trigger words** in `config.json`:
-   ```json
-   {
-     "unique_name": "my_custom_openclaw_ability",
-     "matching_hotwords": [
-       "open my development environment",
-       "start coding session",
-       "check system health"
-     ]
-   }
-   ```
+1. **Define your trigger words** in the OpenHome dashboard:
+   - `open my development environment`
+   - `start coding session`
+   - `check system health`
 
 2. **Customize the command logic** in `main.py`:
    ```python
@@ -353,16 +346,10 @@ async def first_function(self):
 ## Best Practices for Building with This Template
 
 ### 1. Define Clear Trigger Words
-Choose specific, unambiguous trigger phrases in `config.json`:
-```json
-{
-  "matching_hotwords": [
-    "start development session",
-    "open my coding setup",
-    "launch dev environment"
-  ]
-}
-```
+Choose specific, unambiguous trigger phrases in the OpenHome dashboard:
+- `start development session`
+- `open my coding setup`
+- `launch dev environment`
 
 Avoid overly generic triggers that might conflict with other abilities.
 
@@ -613,7 +600,7 @@ Voice Input → OpenHome Ability → exec_local_command()
 
 ### Template Usage
 - [ ] Get template from OpenHome dashboard or GitHub
-- [ ] Define your trigger words in `config.json`
+- [ ] Define your trigger words in the OpenHome dashboard
 - [ ] Customize `first_function()` for your use case
 - [ ] Add command validation and safety checks
 - [ ] Test with safe commands first

@@ -190,6 +190,17 @@ timezone = self.capability_worker.get_timezone()
 
 Synchronous. Returns a string like `America/Chicago` or `None` if unavailable.
 
+### `get_token(linked_platform)`
+
+Returns the linked account access token for the current user.
+
+```python
+token = self.capability_worker.get_token("google")
+self.worker.editor_logging_handler.info(token)
+```
+
+Synchronous. `linked_platform` must be one of: Google (`"google"`), Slack (`"slack"`), Discord (`"discord"`).
+
 ### `get_full_message_history()`
 
 Returns the full conversation history from the current session.
