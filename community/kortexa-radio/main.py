@@ -94,7 +94,7 @@ class KortexaRadioCapability(MatchingCapability):
                             break
 
                         while self.worker.music_mode_pause_event.is_set():
-                            await asyncio.sleep(0.1)
+                            await self.worker.session_tasks.sleep(0.1)
 
                         await self.capability_worker.send_audio_data_in_stream(chunk)
 
