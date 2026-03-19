@@ -39,10 +39,10 @@ JINA_API_KEY = ""  # only needed for Qdrant
 # Serper web fallback (optional — leave empty to disable)
 SERPER_API_KEY = ""  # free key at serper.dev (2,500 searches/month)
 
-# Similarity threshold: Weaviate uses certainty (0–1), Qdrant uses cosine score.
-# Both are normalised to distance = 1 - score before comparison.
-# Qdrant distances may differ slightly — tune between 0.60 and 0.65 if needed.
-DISTANCE_THRESHOLD = 0.70
+# Similarity threshold — compared against normalised distance (lower = better match).
+# Weaviate cosine distance = 2 * (1 - certainty), so 0.80 ≈ certainty 0.60.
+# Qdrant distance = 1 - cosine_score.
+DISTANCE_THRESHOLD = 0.85
 
 # -----------------------------------------------------------------------------
 
@@ -53,34 +53,16 @@ JINA_DIMENSIONS = 1024
 SERPER_SEARCH_URL = "https://google.serper.dev/search"
 
 MAX_RESULTS = 5
+MAX_DISPLAY = 3
 MAX_TURNS = 20
 IDLE_REPROMPT = 2
 IDLE_EXIT = 3
+HTTP_TIMEOUT = 15
+SUMMARY_TRUNCATE = 150
+DESCRIPTION_TRUNCATE = 300
+FIELD_TRUNCATE = 200
+GUESS_MAX_LEN = 60
 
-EXIT_WORDS = {
-    "stop",
-    "exit",
-    "quit",
-    "done",
-    "bye",
-    "goodbye",
-    "cancel",
-    "no thanks",
-    "no thank you",
-    "that's all",
-    "that's it",
-    "never mind",
-    "nevermind",
-    "all done",
-    "i'm done",
-    "im done",
-    "thank you",
-    "thanks",
-    "cheers",
-    "great thanks",
-    "ok thanks",
-    "okay thanks",
-}
 
 _ORDINAL_TO_IDX = {"first": 0, "second": 1, "third": 2, "fourth": 3, "fifth": 4}
 
@@ -176,7 +158,6 @@ _HEALTH_KEYWORDS = {
 }
 
 _DETAIL_TRIGGERS = (
-    "more",
     "detail",
     "tell me about",
     "ingredients",
@@ -186,8 +167,6 @@ _DETAIL_TRIGGERS = (
     "yep",
     "yeah",
     "sure",
-    "ok",
-    "okay",
     "give me",
     "show me",
     "that one",
@@ -260,7 +239,7 @@ class HealthSupplementSearchCapability(MatchingCapability):
             self._err("Jina API key missing")
             return []
         try:
-            async with httpx.AsyncClient(timeout=15) as client:
+            async with httpx.AsyncClient(timeout=HTTP_TIMEOUT) as client:
                 resp = await client.post(
                     JINA_EMBED_URL,
                     headers={
@@ -295,7 +274,7 @@ class HealthSupplementSearchCapability(MatchingCapability):
 
     async def _qdrant_search(self, query_vector: list, limit: int) -> list:
         try:
-            async with httpx.AsyncClient(timeout=15) as client:
+            async with httpx.AsyncClient(timeout=HTTP_TIMEOUT) as client:
                 resp = await client.post(
                     f"{QDRANT_URL.rstrip('/')}/collections/{QDRANT_COLLECTION}/points/search",
                     headers={
@@ -329,7 +308,7 @@ class HealthSupplementSearchCapability(MatchingCapability):
         )
         try:
             url = WEAVIATE_URL.rstrip("/")
-            async with httpx.AsyncClient(timeout=15) as client:
+            async with httpx.AsyncClient(timeout=HTTP_TIMEOUT) as client:
                 resp = await client.post(
                     f"{url}/v1/graphql",
                     headers={
@@ -368,7 +347,7 @@ class HealthSupplementSearchCapability(MatchingCapability):
             return []
         search_q = f"{query} supplement benefits reviews site:examine.com OR site:iherb.com OR site:webmd.com"
         try:
-            async with httpx.AsyncClient(timeout=15) as client:
+            async with httpx.AsyncClient(timeout=HTTP_TIMEOUT) as client:
                 resp = await client.post(
                     SERPER_SEARCH_URL,
                     headers={
@@ -411,28 +390,29 @@ class HealthSupplementSearchCapability(MatchingCapability):
 
     async def _summarize_curated(self, user_query: str, results: list) -> str:
         products_text = ""
-        for i, r in enumerate(results[:3], 1):
+        for i, r in enumerate(results[:MAX_DISPLAY], 1):
             p = r["payload"]
             positives = []
             for part in str(p.get("effects", "")).split(","):
                 part = part.strip().strip("[]'\"")
                 if part.startswith("POSITIVE on "):
                     positives.append(part.replace("POSITIVE on ", "").replace("_", " "))
-            effects_str = ", ".join(positives[:3]) if positives else "general wellness"
+            effects_str = (
+                ", ".join(positives[:MAX_DISPLAY]) if positives else "general wellness"
+            )
             products_text += (
                 f"{i}. {p.get('name', 'Unknown')} by {p.get('brand', 'Unknown')} "
                 f"(rating: {p.get('rating', 0)}/5). "
                 f"Key benefits: {effects_str}. "
-                f"Summary: {p.get('summary', '')[:150]}\n"
+                f"Summary: {p.get('summary', '')[:SUMMARY_TRUNCATE]}\n"
             )
         prompt = (
             f'The user asked: "{user_query}"\n\n'
             f"Top matching supplements from a curated database:\n{products_text}\n"
-            "Give a friendly, conversational voice response recommending the most relevant products. "
-            "Mention product names, ratings, and key benefits listed above. "
-            "IMPORTANT: Only mention benefits explicitly stated in the data above — do NOT infer, "
-            "add, or speculate about any benefits not listed. Keep it to 3-4 sentences. "
-            "End by asking if they want more details on any product. No markdown. Not medical advice."
+            "Give a SHORT voice response under 40 words. Mention the top 1-2 product names and ratings. "
+            "Only mention benefits explicitly listed above — do NOT infer or add any. "
+            "End with 'Want details on any of these?' "
+            "Plain spoken English only. No lists, no formatting. Not medical advice."
         )
         return await asyncio.to_thread(
             self.capability_worker.text_to_text_response, prompt
@@ -445,9 +425,9 @@ class HealthSupplementSearchCapability(MatchingCapability):
         prompt = (
             f'The user asked about: "{user_query}"\n\n'
             f"Not found in curated database. Web results:\n{snippets}\n"
-            "Give a brief, helpful 2-3 sentence voice response. Make clear this is from web results, "
-            "not a curated product database. Remind the user to consult a healthcare provider. "
-            "No markdown or URLs."
+            "Give a SHORT voice response under 30 words. Mention this is from web results, not a curated database. "
+            "Remind them to consult a healthcare provider. "
+            "Plain spoken English only. No lists, no formatting, no URLs."
         )
         return await asyncio.to_thread(
             self.capability_worker.text_to_text_response, prompt
@@ -457,7 +437,7 @@ class HealthSupplementSearchCapability(MatchingCapability):
         p = product_payload
         reviews = p.get("reviews", [])
         review_sample = (
-            _strip_html(reviews[0])[:150]
+            _strip_html(reviews[0])[:SUMMARY_TRUNCATE]
             if isinstance(reviews, list) and reviews
             else "No reviews available."
         )
@@ -466,11 +446,12 @@ class HealthSupplementSearchCapability(MatchingCapability):
             f"Name: {p.get('name', '')}\n"
             f"Brand: {p.get('brand', '')}\n"
             f"Rating: {p.get('rating', 0)}/5\n"
-            f"Description: {p.get('description', '')[:300]}\n"
-            f"Ingredients: {p.get('ingredients', '')[:200]}\n"
-            f"Effects: {p.get('effects', '')[:200]}\n"
+            f"Description: {p.get('description', '')[:DESCRIPTION_TRUNCATE]}\n"
+            f"Ingredients: {p.get('ingredients', '')[:FIELD_TRUNCATE]}\n"
+            f"Effects: {p.get('effects', '')[:FIELD_TRUNCATE]}\n"
             f"Sample review: {review_sample}\n"
-            "4 sentences max. Friendly, informative. No markdown. Not medical advice."
+            "Keep it under 40 words. Friendly, informative. "
+            "Plain spoken English only. No lists, no formatting. Not medical advice."
         )
         return await asyncio.to_thread(
             self.capability_worker.text_to_text_response, prompt
@@ -481,27 +462,14 @@ class HealthSupplementSearchCapability(MatchingCapability):
     # -------------------------------------------------------------------------
 
     def _wants_exit(self, user_input: str) -> bool:
-        lowered = user_input.lower().strip()
-        word_count = len(lowered.split())
-        # Short inputs: substring match is safe; exit words won't appear accidentally.
-        if word_count <= 5:
-            if any(phrase in lowered for phrase in EXIT_WORDS):
-                return True
-            # LLM catches STT garbles of farewell phrases.
-            result = (
-                self.capability_worker.text_to_text_response(
-                    f"Does this mean the user wants to stop or say goodbye?\n"
-                    f'Input: "{user_input}"\nReply YES or NO only.'
-                )
-                .strip()
-                .upper()
-            )
-            return result.startswith("YES")
-        # Longer inputs: exit words can appear inside unrelated sentences; use LLM only.
         result = (
             self.capability_worker.text_to_text_response(
-                f"Does this input primarily mean the user wants to stop or say goodbye? "
-                f"Ignore incidental words like 'thanks' if the sentence has other content.\n"
+                f"Does this input mean the user wants to stop, leave, or say goodbye? "
+                f"YES examples: 'bye', 'thanks', 'im done', 'all set', 'i am good', "
+                f"'that is all', 'nothing else', 'ok thanks', 'cheers', 'sounds good thanks'. "
+                f"NO examples: 'joint pain', 'headache relief', 'no I need something for sleep', "
+                f"'tell me more about the first one'. "
+                f"If the sentence contains a health question or supplement request, reply NO. "
                 f'Input: "{user_input}"\nReply YES or NO only.'
             )
             .strip()
@@ -540,6 +508,27 @@ class HealthSupplementSearchCapability(MatchingCapability):
         result = self.capability_worker.text_to_text_response(prompt).strip().upper()
         return result.startswith("YES")
 
+    def _normalize_query(self, user_input: str) -> str:
+        """
+        Extract a clean health search phrase from raw (possibly garbled) STT input.
+        e.g. "I need something for joint bean" -> "joint pain supplements"
+        Returns the original input if normalization fails.
+        """
+        raw = self.capability_worker.text_to_text_response(
+            f"Extract the core health or supplement search phrase from this voice input. "
+            f"Fix any garbled words to their most likely health-related meaning. "
+            f"Examples: 'I need something for joint bean' -> 'joint pain', "
+            f"'search for something for headache' -> 'headache relief', "
+            f"'find supplements for sleep iz shoes' -> 'sleep issues'. "
+            f"Reply with ONLY the 2-5 word search phrase, nothing else.\n"
+            f'Input: "{user_input}"'
+        ).strip()
+        cleaned = raw.strip("'\".")
+        if not cleaned or len(cleaned) > GUESS_MAX_LEN:
+            return user_input
+        self._log(f"Normalized query: '{user_input[:GUESS_MAX_LEN]}' -> '{cleaned}'")
+        return cleaned
+
     def _guess_health_intent(self, user_input: str) -> str:
         """
         Return the most likely health phrase the user meant (e.g. 'joint pain'),
@@ -549,12 +538,13 @@ class HealthSupplementSearchCapability(MatchingCapability):
         raw = self.capability_worker.text_to_text_response(
             f"This voice input may be garbled by speech recognition. "
             f"If it seems like the user was trying to ask about a health concern or supplement, "
-            f"reply with only the most likely 2-4 word health phrase they meant "
-            f"(e.g. 'joint pain', 'sleep issues', 'headache relief'). "
+            f"reply with only the most likely 2-4 word health phrase they meant. "
+            f"Examples: 'join te pin' -> 'joint pain', 'sleep iz shoes' -> 'sleep issues', "
+            f"'some senga for gently being' -> 'joint pain'. "
             f"If you cannot detect any health intent, reply with exactly: NONE\n"
             f'Input: "{user_input}"'
         ).strip()
-        if not raw or raw.upper() == "NONE" or len(raw) > 60:
+        if not raw or raw.upper() == "NONE" or len(raw) > GUESS_MAX_LEN:
             return ""
         return raw
 
@@ -587,10 +577,20 @@ class HealthSupplementSearchCapability(MatchingCapability):
         return {}
 
     def _wants_rerank(self, user_input: str) -> str:
-        lowered = user_input.lower()
-        if any(w in lowered for w in ("best rated", "highest rated", "top rated")):
+        result = (
+            self.capability_worker.text_to_text_response(
+                f"The user said: '{user_input}'. Are they asking to sort or rank results "
+                f"by rating, popularity, or reviews? "
+                f"Examples: 'best rated' = RATING_HIGH, 'most popular' = RATING_HIGH, "
+                f"'which has the best reviews' = RATING_HIGH, 'lowest rated' = RATING_LOW.\n"
+                f"Reply ONLY with: RATING_HIGH, RATING_LOW, or NO."
+            )
+            .strip()
+            .upper()
+        )
+        if "RATING_HIGH" in result:
             return "rating_high"
-        if any(w in lowered for w in ("lowest rated", "worst rated")):
+        if "RATING_LOW" in result:
             return "rating_low"
         return ""
 
@@ -603,8 +603,7 @@ class HealthSupplementSearchCapability(MatchingCapability):
             if not self._config_ok():
                 await self.capability_worker.speak(
                     "Health Supplement Search isn't configured yet. "
-                    "Please fill in your API keys in main.py and re-upload. "
-                    "Check the README for setup instructions."
+                    "Please add your API keys and re-upload the ability."
                 )
                 self.capability_worker.resume_normal_flow()
                 return
@@ -621,15 +620,13 @@ class HealthSupplementSearchCapability(MatchingCapability):
 
             if pending_input:
                 await self.capability_worker.speak(
-                    "Welcome to Health Supplement Search. This is informational only — not medical advice. "
-                    "Let me search for that..."
+                    "Welcome to Health Supplement Search — informational only, not medical advice. "
+                    "Let me search for that."
                 )
             else:
                 await self.capability_worker.speak(
-                    "Welcome to Health Supplement Search. "
-                    "I can help you find supplements for specific health concerns using a curated database "
-                    "of 100 reviewed products. This is informational only — not medical advice. "
-                    "What health concern can I help you with today?"
+                    "Welcome to Health Supplement Search — informational only, not medical advice. "
+                    "What health concern can I help you with?"
                 )
 
             idle_count = 0
@@ -677,11 +674,17 @@ class HealthSupplementSearchCapability(MatchingCapability):
                             "yes",
                             "yep",
                             "yeah",
+                            "yup",
                             "sure",
                             "ok",
                             "okay",
                             "correct",
                             "right",
+                            "absolutely",
+                            "go ahead",
+                            "do it",
+                            "sounds good",
+                            "for sure",
                         )
                     ):
                         pending_input = pending_guess
@@ -748,7 +751,9 @@ class HealthSupplementSearchCapability(MatchingCapability):
                             )
                         continue
                     if not health_check:
-                        self._log(f"Off-topic input rejected: {user_input[:60]}")
+                        self._log(
+                            f"Off-topic input rejected: {user_input[:GUESS_MAX_LEN]}"
+                        )
                         guess = self._guess_health_intent(user_input)
                         if guess:
                             pending_guess = guess
@@ -764,18 +769,19 @@ class HealthSupplementSearchCapability(MatchingCapability):
                             )
                         continue
 
+                search_query = self._normalize_query(user_input)
                 await self.capability_worker.speak("Let me search for that...")
-                results, source = await self._search_with_fallback(user_input)
+                results, source = await self._search_with_fallback(search_query)
                 self._last_results = results
                 self._last_source = source
 
                 if source == "curated":
                     await self.capability_worker.speak(
-                        await self._summarize_curated(user_input, results)
+                        await self._summarize_curated(search_query, results)
                     )
                 elif source == "web":
                     await self.capability_worker.speak(
-                        await self._summarize_web(user_input, results)
+                        await self._summarize_web(search_query, results)
                     )
                 else:
                     await self.capability_worker.speak(
