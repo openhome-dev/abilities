@@ -55,8 +55,8 @@ class RingSecurityAbility(MatchingCapability):
     motion detection toggle, chime test/volume, and motion history.
     """
 
-    worker: AgentWorker | None = None
-    capability_worker: CapabilityWorker | None = None
+    worker: AgentWorker = None
+    capability_worker: CapabilityWorker = None
 
     # --- session state fields (must be declared for sandbox) ---
     devices: dict[str, dict] = {}

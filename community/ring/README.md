@@ -18,6 +18,8 @@ It handles:
 
 This ability is structured for deterministic control, safe device actions, and fault-tolerant API interaction.
 
+> **Current testing status:** This ability has only been tested in `mock_mode` so far, and has not yet been fully validated against live Ring APIs/devices.
+
 ---
 
 ## Supported Commands
@@ -204,6 +206,8 @@ Behavior:
 ## Mock Mode
 
 `mock_mode = True` by default.
+
+Current status: the ability has only been tested in mock mode so far.
 
 Provides:
 
