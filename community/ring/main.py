@@ -47,6 +47,7 @@ SIREN_DURATION_SECONDS = 30
 # Generic OpenHome Ability Template
 # =============================================================================
 
+
 class RingSecurityAbility(MatchingCapability):
     """
     Ring Security OpenHome Ability (V1).
@@ -72,7 +73,6 @@ class RingSecurityAbility(MatchingCapability):
     mock_mode: bool = True
     mock_history: dict[str, list] = {}
     mock_health: dict[str, dict] = {}
-
 
     # =========================================================================
     # Registration
