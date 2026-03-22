@@ -44,7 +44,7 @@ class KortexaRadioCapability(MatchingCapability):
                             return
 
                         while self.worker.music_mode_pause_event.is_set():
-                            await asyncio.sleep(0.1)
+                            await self.worker.session_tasks.sleep(0.1)
 
                         await self.capability_worker.send_audio_data_in_stream(chunk)
 
@@ -68,7 +68,7 @@ class KortexaRadioCapability(MatchingCapability):
                     self.worker.editor_logging_handler.error(f"{TAG} SSE error: {e}")
                     pass
 
-                await asyncio.sleep(5)
+                await self.worker.session_tasks.sleep(5)
         except asyncio.CancelledError as e:
             self.worker.editor_logging_handler.error(f"{TAG} SSE cancelled: {e}")
 
@@ -82,28 +82,12 @@ class KortexaRadioCapability(MatchingCapability):
         is_stopping = False
         events_task = None
 
-        # await self.capability_worker.wait_for_complete_transcription()
-
-        # self.worker.music_mode_event.set()
-        # await self.capability_worker.send_data_over_websocket("music-mode", {"mode": "on"})
-
-        # await asyncio.sleep(5)
-
-        # await self.capability_worker.send_data_over_websocket("music-mode", {"mode": "off"})
-        # self.worker.music_mode_event.clear()
-
-        # await self.capability_worker.speak("Nope, don't want to")
-
-        # await asyncio.sleep(1)
-
-        # self.capability_worker.resume_normal_flow()
-
         try:
             while True:
                 if is_stopping:
                     self.worker.editor_logging_handler.info(f"{TAG} Waiting for stream to finish")
 
-                    await asyncio.sleep(0.1)
+                    await self.worker.session_tasks.sleep(0.1)
 
                     if not events_task:
                         self.worker.editor_logging_handler.info(f"{TAG} No events task")
@@ -201,7 +185,7 @@ class KortexaRadioCapability(MatchingCapability):
 
             self.worker.editor_logging_handler.info(f"{TAG} Radio OFF")
 
-            await asyncio.sleep(1)
+            await self.worker.session_tasks.sleep(1)
             self.capability_worker.resume_normal_flow()
 
     def call(self, worker: AgentWorker):
