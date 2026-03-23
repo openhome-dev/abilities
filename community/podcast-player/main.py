@@ -58,7 +58,7 @@ class PodcastPlayerCapability(MatchingCapability):
         response = requests.get(url, headers=self._headers(), timeout=10)
         response.raise_for_status()
         return response.json()
-    
+
     def get_podcast_episodes(self, podcast_id: str):
         url = f"{BASE_URL}/podcasts/{podcast_id}"
         params = {"sort": "recent_first"}
@@ -97,6 +97,7 @@ class PodcastPlayerCapability(MatchingCapability):
     # -------------------------------------------------------------------------
     # Main Flow
     # -------------------------------------------------------------------------
+
     async def run(self):
         try:
             state = {
@@ -167,7 +168,7 @@ class PodcastPlayerCapability(MatchingCapability):
                         continue
 
                     index_map = {"1": 0, "2": 1, "3": 2,
-                                "first": 0, "second": 1, "third": 2}
+                                 "first": 0, "second": 1, "third": 2}
 
                     selected_index = None
                     for key, value in index_map.items():
@@ -259,7 +260,7 @@ class PodcastPlayerCapability(MatchingCapability):
                         continue
 
                     for key, index in {"1": 0, "2": 1, "3": 2,
-                                    "first": 0, "second": 1, "third": 2}.items():
+                                       "first": 0, "second": 1, "third": 2}.items():
                         if key in choice.lower():
                             if index < len(results):
                                 await self.play_episode(results[index], state)
@@ -274,4 +275,3 @@ class PodcastPlayerCapability(MatchingCapability):
             )
 
         self.capability_worker.resume_normal_flow()
-    
