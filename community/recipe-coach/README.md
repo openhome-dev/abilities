@@ -7,7 +7,7 @@
 
 A voice-guided cooking assistant that generates recipes on the fly and walks you through them step by step. Name a dish or ingredient — Recipe Coach builds a recipe, reads the ingredients, then guides you through each step at your own pace.
 
-No API keys required. Uses the Personality's built-in LLM for recipe generation.
+No API keys required. Uses the Agent's built-in LLM for recipe generation.
 
 ## Suggested Trigger Words
 
@@ -19,7 +19,7 @@ No API keys required. Uses the Personality's built-in LLM for recipe generation.
 
 ## Setup
 
-No setup required. Recipe Coach uses the Personality's built-in LLM — no external APIs or keys needed. Just upload, set your trigger words, and go.
+No setup required. Recipe Coach uses the Agent's built-in LLM — no external APIs or keys needed. Just upload, set your trigger words, and go.
 
 ## How It Works
 

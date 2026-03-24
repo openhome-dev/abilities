@@ -36,7 +36,7 @@ The ability uses Python's standard `random` library for logic and supports a 1% 
 
 - `speak()` — Text-to-speech output for results and prompts.
 - `run_io_loop()` — Handles the core interaction: speaking a prompt and immediately opening the microphone to capture user intent.
-- `resume_normal_flow()` — Cleanly exits the ability loop and returns control to the main Personality.
+- `resume_normal_flow()` — Cleanly exits the ability loop and returns control to the main Agent.
 
 ## Example Conversation
 

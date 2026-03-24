@@ -7,14 +7,14 @@
 
 ## Why Build This as an Ability
 
-Every OpenHome Personality already has an LLM that can draft emails conversationally. **But the LLM can't actually send emails on its own.** This template shows you how to:
+Every OpenHome Agent already has an LLM that can draft emails conversationally. **But the LLM can't actually send emails on its own.** This template shows you how to:
 
 - **Actually send emails** — not just draft them in conversation
 - **Automate email workflows** — send reports, alerts, confirmations
 - **Integrate with external systems** — trigger emails based on API data or user actions
 - **Attach files** — send documents, images, or generated reports
 
-**Key insight:** If all you need is help writing an email, use the Personality's LLM. If you need to *actually send* an email automatically, build an ability.
+**Key insight:** If all you need is help writing an email, use the Agent's LLM. If you need to *actually send* an email automatically, build an ability.
 
 ## What You Can Build
 
@@ -135,7 +135,7 @@ else:
 3. Calls `send_email()` with all parameters
 4. Checks return status (`True` = success, `False` = failure)
 5. Speaks confirmation or error message
-6. Calls `resume_normal_flow()` to return control to Personality
+6. Calls `resume_normal_flow()` to return control to Agent
 
 ### Template Code Walkthrough
 
@@ -228,8 +228,8 @@ async def email_with_generated_report(self):
 ```python
 async def send_configured_email(self):
     # Load email configuration from persistent storage
-    if await self.capability_worker.check_if_file_exists("email_config.json", False):
-        raw = await self.capability_worker.read_file("email_config.json", False)
+    if await self.capability_worker.check_if_file_exists("email_settings.json", False):
+        raw = await self.capability_worker.read_file("email_settings.json", False)
         config = json.loads(raw)
     else:
         await self.capability_worker.speak("Email not configured. Please set up your email first.")
@@ -432,7 +432,7 @@ ATTACHMENTS = ["testfile.txt"]  # Just filename, not full path
 - [ ] Test with a simple email to yourself
 
 ### Building Your Ability
-- [ ] Customize trigger words in `config.json`
+- [ ] Customize trigger words in the OpenHome dashboard
 - [ ] Replace hardcoded values with dynamic inputs or file storage
 - [ ] Add email address validation
 - [ ] Implement error handling with try-catch
