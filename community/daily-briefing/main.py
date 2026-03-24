@@ -106,17 +106,7 @@ class DailyBriefingCapability(MatchingCapability):
     worker: AgentWorker = None
     capability_worker: CapabilityWorker = None
 
-    @classmethod
-    def register_capability(cls) -> "MatchingCapability":
-        with open(
-            os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.json")
-        ) as file:
-            data = json.load(file)
-        return cls(
-            unique_name=data["unique_name"],
-            matching_hotwords=data["matching_hotwords"],
-            category=data.get("category", "normal"),
-        )
+    #{{register_capability}}
 
     # ── API helpers ──────────────────────────────────────────────────
 

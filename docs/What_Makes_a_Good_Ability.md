@@ -573,7 +573,7 @@ Files are scoped to the user, not to your specific Ability. This means if your A
 
 # Risky — generic name might collide with another ability
 "data.json"
-"config.json"
+"settings.json"
 ```
 
 ---
@@ -633,7 +633,7 @@ Before submitting an Ability, run through this list:
 | ☐ | Multi-turn flows allow cancellation at any point ("never mind", "cancel") |
 | ☐ | Filler speech ("One sec") plays before any API call that takes > 1 second |
 | ☐ | API keys are placeholder constants with comments, not hardcoded real keys |
-| ☐ | No blocked imports (redis, connection_manager, user_config, open()) |
+| ☐ | No blocked imports (redis, user_config, open()) |
 | ☐ | For `background.py` daemons: file is named exactly `background.py` and uses `call(self, worker, background_daemon_mode)` |
 | ☐ | For `background.py` daemons: loop uses `while True` + `session_tasks.sleep()` (not `asyncio.sleep()`) |
 | ☐ | For `background.py` daemons: call `send_interrupt_signal()` before daemon `speak()`/audio playback |

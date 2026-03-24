@@ -17,7 +17,7 @@ Examples of abilities you could create with this template:
 ## Template Trigger Words
 This template uses generic triggers - **customize these** for your specific ability:
 - Any Mac terminal command request
-- Configure your own trigger words in `config.json`
+- Configure your own trigger words in the OpenHome dashboard
 
 ## Requirements
 
@@ -594,7 +594,7 @@ Use **OpenClaw** when you need robust automation with LLM-powered intelligence.
 - [ ] Verify response is spoken correctly
 - [ ] Customize system prompt for your use case
 - [ ] Add safety validations
-- [ ] Define custom trigger words in `config.json`
+- [ ] Define custom trigger words in the OpenHome dashboard
 
 ## Links & Resources
 
