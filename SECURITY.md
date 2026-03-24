@@ -45,7 +45,7 @@ Every community Ability PR is reviewed against these criteria before merge:
 ### Required Patterns
 
 - All Abilities must use the `CapabilityWorker` SDK — direct platform internals access is forbidden
-- `register_capability()` must load from `config.json` only (no custom config file paths)
+- #{{register_capability}} This line is required boilerplate — copy it exactly.
 - `resume_normal_flow()` must be called on every exit path to return control to the Agent
 
 ## Security Best Practices for Contributors

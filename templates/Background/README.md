@@ -237,7 +237,7 @@ response = self.capability_worker.text_to_text_response("Analyze this...")
 ### File Operations
 ```python
 await self.capability_worker.write_file("log.txt", data, False)
-data = await self.capability_worker.read_file("config.json", False)
+data = await self.capability_worker.read_file("settings.json", False)
 exists = await self.capability_worker.check_if_file_exists("data.txt", False)
 await self.capability_worker.delete_file("temp.txt", False)
 ```
