@@ -18,17 +18,7 @@ class BedtimeWindDownCapability(MatchingCapability):
     capability_worker: CapabilityWorker = None
 
     # --- BOILERPLATE REGISTRATION ---
-    @classmethod
-    def register_capability(cls) -> "MatchingCapability":
-        """Registers the capability and loads hotwords from config.json."""
-        with open(
-            os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.json")
-        ) as file:
-            data = json.load(file)
-        return cls(
-            unique_name=data["unique_name"],
-            matching_hotwords=data["matching_hotwords"],
-        )
+    #{{register_capability}}
 
     # --- KEYS AND CONSTANTS ---
     CALM_VOICE_ID: ClassVar[str] = "GBv7mTt0atIp3Br8iCZE"

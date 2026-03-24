@@ -68,7 +68,7 @@ X_API_BEARER_TOKEN = "your_bearer_token_here"
 
 1. Create a new ability in your OpenHome dashboard
 2. Upload the `main.py` file
-3. Set trigger words (suggestions in `config.json`)
+3. Set trigger words in the OpenHome dashboard
 4. Test using "Start Live Test"
 
 ## How It Works
@@ -299,7 +299,7 @@ Replace with live data when ready by adding your API key.
 - Check network connectivity in OpenHome settings
 
 **Ability doesn't trigger**
-- Verify trigger words in dashboard match `config.json`
+- Verify the trigger words are saved correctly in the OpenHome dashboard
 - Try more specific phrases: "What's trending on X" vs just "trending"
 - Check ability is enabled and saved
 

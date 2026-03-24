@@ -1,22 +1,22 @@
-# Watcher Template — Background Monitoring Ability
+# Background Monitoring Ability Template
 ![Community](https://img.shields.io/badge/OpenHome-Community-orange?style=flat-square)
 ![Template](https://img.shields.io/badge/Type-Template-blue?style=flat-square)
 ![Advanced](https://img.shields.io/badge/Level-Advanced-red?style=flat-square)
 
 ## What This Is
-**This is a background ability template** that runs continuously in an endless loop. Unlike normal abilities that respond once and exit, watcher abilities stay active throughout the agent session, monitoring conditions and triggering actions automatically.
+**This is a background ability template** that runs continuously in an endless loop. Unlike normal abilities that respond once and exit, background abilities stay active throughout the agent session, monitoring conditions and triggering actions automatically.
 
 ## Key Characteristics
 
 ### Background Execution
-- **Runs automatically** — Watcher abilities are auto-triggered when your agent starts
+- **Runs automatically** — Background abilities are auto-triggered when your agent starts
 - **Endless loop** — The `while True` keeps the ability running continuously
 - **Background operation** — Runs silently alongside the normal conversation flow
-- **All CapabilityWorker functions available** — Full SDK access within the watcher
+- **All CapabilityWorker functions available** — Full SDK access within the background
 
-### What Makes Watchers Different
+### What Makes Backgrounds Different
 
-| Normal Ability | Watcher Ability |
+| Normal Ability | Background Ability |
 |----------------|-----------------|
 | User triggers with voice command | Auto-starts when agent initializes |
 | Speak → Listen → Respond → Exit | Continuous loop: Monitor → Act → Sleep → Repeat |
@@ -25,7 +25,7 @@
 
 ## Template Features
 
-This basic watcher template demonstrates:
+This basic background template demonstrates:
 
 1. **Continuous monitoring** — Endless `while True` loop
 2. **Message history access** — Reads last 10 messages from normal conversation
@@ -39,7 +39,7 @@ This basic watcher template demonstrates:
 ```
 Agent Starts
     ↓
-Watcher Auto-Triggers
+Background Auto-Triggers
     ↓
 Enter while True Loop
     ↓
@@ -55,24 +55,24 @@ Enter while True Loop
 
 ### Code Walkthrough
 
-**1. Watcher Mode Initialization:**
+**1. Background Mode Initialization:**
 ```python
-def call(self, worker: AgentWorker, watcher_mode: bool):
+def call(self, worker: AgentWorker, background_daemon_mode: bool)
     self.worker = worker
-    self.watcher_mode = watcher_mode  # ← Background mode flag
+    self.background_daemon_mode = background_daemon_mode
     self.capability_worker = CapabilityWorker(self)
     self.worker.session_tasks.create(self.first_function())
 ```
-- `watcher_mode=True` indicates this is a background ability
+- `background_daemon_mode=True` indicates this is a background ability
 - Auto-creates async task that runs in background
 
 **2. Endless Loop:**
 ```python
 async def first_function(self):
-    self.worker.editor_logging_handler.info("%s: Watcher Called" % time())
+    self.worker.editor_logging_handler.info("%s: Background Called" % time())
     
     while True:  # ← Never exits
-        self.worker.editor_logging_handler.info("%s: watcher watching" % time())
+        self.worker.editor_logging_handler.info("%s: background watching" % time())
         
         # Your monitoring logic here
         ...
@@ -113,7 +113,7 @@ await self.worker.session_tasks.sleep(20.0)
 # await self.capability_worker.speak("watching")
 # await self.capability_worker.play_from_audio_file("alarm.mp3")
 ```
-- Shows how to trigger audio/speech from watcher
+- Shows how to trigger audio/speech from background
 - Uncomment to test capabilities
 
 ## Message History Structure
@@ -161,7 +161,7 @@ if len(user_messages) > 5:
     self.worker.editor_logging_handler.info("High conversation activity detected")
 ```
 
-## Audio Playback in Watchers
+## Audio Playback in Backgrounds
 
 ### Play Files from Ability Directory
 ```python
@@ -171,9 +171,9 @@ await self.capability_worker.play_from_audio_file("alarm.mp3")
 **Setup:**
 1. Place audio file in your ability's folder (e.g., `alarm.mp3`)
 2. Supported formats: `.mp3`, `.wav`, `.ogg`
-3. Call from anywhere in the watcher loop
+3. Call from anywhere in the background loop
 
-**Example watcher with audio alerts:**
+**Example background with audio alerts:**
 ```python
 async def first_function(self):
     alert_count = 0
@@ -192,7 +192,7 @@ async def first_function(self):
         await self.worker.session_tasks.sleep(10.0)
 ```
 
-### Speak from Watcher
+### Speak from Background
 ```python
 await self.capability_worker.speak("I'm monitoring in the background!")
 ```
@@ -220,7 +220,7 @@ async def first_function(self):
 
 ## All CapabilityWorker Functions Available
 
-Watchers have **full SDK access**. You can use:
+Backgrounds have **full SDK access**. You can use:
 
 ### Conversation Functions
 ```python
@@ -237,7 +237,7 @@ response = self.capability_worker.text_to_text_response("Analyze this...")
 ### File Operations
 ```python
 await self.capability_worker.write_file("log.txt", data, False)
-data = await self.capability_worker.read_file("config.json", False)
+data = await self.capability_worker.read_file("settings.json", False)
 exists = await self.capability_worker.check_if_file_exists("data.txt", False)
 await self.capability_worker.delete_file("temp.txt", False)
 ```
@@ -254,7 +254,7 @@ await self.capability_worker.send_devkit_action("led_on")
 await self.capability_worker.send_notification_to_ios("Title", "Body")
 ```
 
-**Example watcher using multiple SDK functions:**
+**Example background using multiple SDK functions:**
 ```python
 async def first_function(self):
     while True:
@@ -280,7 +280,7 @@ async def first_function(self):
         await self.worker.session_tasks.sleep(10.0)
 ```
 
-## Common Watcher Patterns
+## Common Background Patterns
 
 ### Pattern 1: Keyword Monitor
 Watch conversation for specific words/phrases:
@@ -325,7 +325,7 @@ async def first_function(self):
         await self.worker.session_tasks.sleep(60.0)
 ```
 
-### Pattern 3: File Watcher
+### Pattern 3: File Background
 Monitor for new files and process them:
 
 ```python
@@ -422,12 +422,12 @@ await self.worker.session_tasks.sleep(600.0)
 ### 3. Use editor_logging_handler (Not print)
 ```python
 # ✅ CORRECT
-self.worker.editor_logging_handler.info("Watcher started")
+self.worker.editor_logging_handler.info("background started")
 self.worker.editor_logging_handler.warning("Unusual activity")
 self.worker.editor_logging_handler.error(f"Error: {e}")
 
 # ❌ WRONG — Won't appear in logs
-print("Watcher started")
+print("Background started")
 ```
 
 ### 4. Wrap Loop in Try-Catch
@@ -439,7 +439,7 @@ async def first_function(self):
             ...
             
         except Exception as e:
-            self.worker.editor_logging_handler.error(f"Watcher error: {e}")
+            self.worker.editor_logging_handler.error(f"Background error: {e}")
             await self.worker.session_tasks.sleep(5.0)  # Brief pause before retry
 ```
 
@@ -485,7 +485,7 @@ for message in message_history:
 
 ## What You Can Build
 
-Examples of watcher abilities:
+Examples of background abilities:
 
 - **Conversation monitors** — Track keywords, sentiment, activity
 - **Periodic reminders** — "Take a break" every 30 minutes
@@ -498,7 +498,7 @@ Examples of watcher abilities:
 
 ## Troubleshooting
 
-### Watcher Stops Running
+### Background Stops Running
 **Problem:** Loop exits unexpectedly
 
 **Solutions:**
@@ -515,7 +515,7 @@ Examples of watcher abilities:
 - Try different format (.mp3 vs .wav)
 
 ### High CPU Usage
-**Problem:** Watcher consumes too many resources
+**Problem:** Background consumes too many resources
 
 **Solutions:**
 - Increase sleep interval
@@ -537,10 +537,10 @@ if not message_history:
 
 ## Limitations
 
-### What Watchers Cannot Do
+### What Backgrounds Cannot Do
 
 **No Cross-Session Persistence:**
-- Watcher stops when agent session ends
+- Background stops when agent session ends
 - Cannot fire events after user logs out
 - Not suitable for true background tasks (24/7 monitoring)
 
@@ -576,13 +576,13 @@ self.worker.editor_logging_handler.info(f"Message count: {len(message_history)}"
 
 ## Quick Start Checklist
 
-### Understanding Watchers
-- [ ] Understand watchers run automatically in background
+### Understanding Backgrounds
+- [ ] Understand Backgrounds run automatically in background
 - [ ] Know `while True` never exits (intentional)
 - [ ] Recognize `resume_normal_flow()` is unreachable
 - [ ] Understand session-scoped nature (not 24/7)
 
-### Building Your Watcher
+### Building Your Background
 - [ ] Define what to monitor (messages, files, time, etc.)
 - [ ] Set appropriate sleep interval (10-60 seconds typical)
 - [ ] Add try-catch around entire loop
@@ -607,20 +607,20 @@ self.worker.editor_logging_handler.info(f"Message count: {len(message_history)}"
 
 ## Support & Contribution
 
-If you build something with watcher mode:
+If you build something with background mode:
 - 🎉 Share your implementation
 - 💡 Contribute improvements
-- 🤝 Help others understand watchers
+- 🤝 Help others understand backgrounds
 - 📝 Document your use case
 
 ## Final Reminder
 
 ⚠️ **Key Takeaways:**
-- ✅ Watchers run automatically in endless loops
+- ✅ Backgrounds run automatically in endless loops
 - ✅ Access full conversation history (last 50 messages)
 - ✅ Play audio and use all CapabilityWorker functions
 - ✅ Background monitoring during active agent sessions
 - ❌ Not truly 24/7 background tasks (session-scoped)
 - ❌ Never calls `resume_normal_flow()` (by design)
 
-Use watchers for real-time monitoring, periodic checks, and automated responses during active sessions! 🔄🚀
+Use backgrounds for real-time monitoring, periodic checks, and automated responses during active sessions! 🔄🚀

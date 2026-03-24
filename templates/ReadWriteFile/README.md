@@ -264,14 +264,14 @@ await self.capability_worker.write_file("tasks.txt", "Buy milk\nCall dentist", F
 import json
 
 try:
-    data = await self.capability_worker.read_file("config.json", False)
-    config = json.loads(data)
+    data = await self.capability_worker.read_file("settings.json", False)
+    settings = json.loads(data)
 except json.JSONDecodeError:
     # Corrupted file — reset to defaults
-    config = {"default": "value"}
+    settings = {"default": "value"}
     await self.capability_worker.write_file(
-        "config.json",
-        json.dumps(config),
+        "settings.json",
+        json.dumps(settings),
         False
     )
 ```
@@ -322,7 +322,7 @@ await self.capability_worker.write_file("log.txt", "\n".join(lines), False)
 ```python
 # Good: Unique names prevent conflicts with other abilities
 await self.capability_worker.write_file("myability_notes.txt", data, False)
-await self.capability_worker.write_file("myability_config.json", config, False)
+await self.capability_worker.write_file("myability_settings.json", settings, False)
 
 # Avoid: Generic names might conflict
 await self.capability_worker.write_file("notes.txt", data, False)  # Risk of collision
@@ -361,23 +361,23 @@ async def get_recent_entries(self, filename: str, count: int = 5):
 
 ### Pattern 3: Update JSON Field
 ```python
-async def update_config(self, key: str, value):
-    config_file = "config.json"
+async def update_settings(self, key: str, value):
+    settings_file = "settings.json"
     
-    # Load existing config
-    if await self.capability_worker.check_if_file_exists(config_file, False):
-        data = await self.capability_worker.read_file(config_file, False)
-        config = json.loads(data)
+    # Load existing settings
+    if await self.capability_worker.check_if_file_exists(settings_file, False):
+        data = await self.capability_worker.read_file(settings_file, False)
+        settings = json.loads(data)
     else:
-        config = {}
+        settings = {}
     
     # Update field
-    config[key] = value
+    settings[key] = value
     
     # Save back
     await self.capability_worker.write_file(
-        config_file,
-        json.dumps(config, indent=2),
+        settings_file,
+        json.dumps(settings, indent=2),
         False
     )
 ```
@@ -422,11 +422,11 @@ await self.capability_worker.write_file("shared.txt", data, True)
 **Solution:** Always wrap JSON operations in try-except:
 ```python
 try:
-    data = await self.capability_worker.read_file("config.json", False)
-    config = json.loads(data)
+    data = await self.capability_worker.read_file("settings.json", False)
+    settings = json.loads(data)
 except (json.JSONDecodeError, Exception):
     # Reset to default on error
-    config = {"default": "settings"}
+    settings = {"default": "settings"}
 ```
 
 ### Appending Creates Duplicates

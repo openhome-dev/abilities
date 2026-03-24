@@ -30,8 +30,8 @@ A voice-first trivia game with category selection, multi-question rounds, answer
 ## Installation
 
 1. Place this folder under `community/vibe-trivia/`.
-2. Ensure `config.json` exists alongside `main.py` with `unique_name` and `matching_hotwords`.
-3. Install/enable the Ability in the OpenHome dashboard and set trigger words if needed.
+2. Install or enable the ability in the OpenHome dashboard.
+3. Set the ability's unique name and trigger words in the OpenHome dashboard.
 
 ---
 
@@ -98,7 +98,7 @@ resume_normal_flow()
 
 ## Trigger Words
 
-Recommended triggers (from `config.json`):
+Recommended triggers:
 
 - `start vibe trivia`
 - `vibe trivia`
