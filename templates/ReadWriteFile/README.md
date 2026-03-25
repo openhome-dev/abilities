@@ -47,7 +47,7 @@ The template demonstrates all 4 essential file operations:
 
 ### 1. Check If File Exists
 ```python
-exists = await self.capability_worker.check_if_file_exists("temp_data.txt", False)
+exists = await self.capability_worker.check_if_file_exists("temp_data.txt", in_ability_directory=False)
 ```
 
 **Parameters:**
@@ -65,7 +65,7 @@ exists = await self.capability_worker.check_if_file_exists("temp_data.txt", Fals
 
 ### 2. Write to File
 ```python
-await self.capability_worker.write_file("temp_data.txt", "content here", False)
+await self.capability_worker.write_file("temp_data.txt", "content here", in_ability_directory=False)
 ```
 
 **Parameters:**
@@ -80,7 +80,7 @@ await self.capability_worker.write_file("temp_data.txt", "content here", False)
 
 **Template's append pattern:**
 ```python
-if await self.capability_worker.check_if_file_exists("temp_data.txt", False):
+if await self.capability_worker.check_if_file_exists("temp_data.txt", in_ability_directory=False):
     # File exists — append new line
     await self.capability_worker.write_file(
         "temp_data.txt", 
@@ -100,7 +100,7 @@ else:
 
 ### 3. Read from File
 ```python
-file_data = await self.capability_worker.read_file("temp_data.txt", False)
+file_data = await self.capability_worker.read_file("temp_data.txt", in_ability_directory=False)
 ```
 
 **Parameters:**
@@ -116,7 +116,7 @@ file_data = await self.capability_worker.read_file("temp_data.txt", False)
 
 **Template's parsing example:**
 ```python
-file_data = await self.capability_worker.read_file("temp_data.txt", False)
+file_data = await self.capability_worker.read_file("temp_data.txt", in_ability_directory=False)
 # File contains lines like: "1234567890.123: Some text here"
 
 # Extract last line
@@ -130,7 +130,7 @@ last_written_text = last_line.split(":")[1]
 
 ### 4. Delete File
 ```python
-await self.capability_worker.delete_file("temp_data.txt", False)
+await self.capability_worker.delete_file("temp_data.txt", in_ability_directory=False)
 ```
 
 **Parameters:**
@@ -150,7 +150,7 @@ confirmed = await self.capability_worker.run_confirmation_loop(
     "Delete all your notes? This can't be undone."
 )
 if confirmed:
-    await self.capability_worker.delete_file("notes.txt", False)
+    await self.capability_worker.delete_file("notes.txt", in_ability_directory=False)
     await self.capability_worker.speak("All notes deleted.")
 ```
 
@@ -177,7 +177,7 @@ user_response = await self.capability_worker.wait_for_complete_transcription()
 
 **3. Check File Exists:**
 ```python
-if await self.capability_worker.check_if_file_exists("temp_data.txt", False):
+if await self.capability_worker.check_if_file_exists("temp_data.txt", in_ability_directory=False):
     # File exists — append
 else:
     # File doesn't exist — create
@@ -198,7 +198,7 @@ await self.capability_worker.write_file(
 
 **5. Read and Parse:**
 ```python
-file_data = await self.capability_worker.read_file("temp_data.txt", False)
+file_data = await self.capability_worker.read_file("temp_data.txt", in_ability_directory=False)
 last_written_line = file_data.split("\n")[-1].split(":")[1]
 ```
 - Reads entire file
@@ -226,7 +226,7 @@ self.capability_worker.resume_normal_flow()
 - **Example:** Todo lists, journal entries, saved settings
 
 ```python
-await self.capability_worker.write_file("my_notes.txt", "Private note", False)
+await self.capability_worker.write_file("my_notes.txt", "Private note", in_ability_directory=False)
 ```
 
 ### Public Files (`is_public=True`)
@@ -235,7 +235,7 @@ await self.capability_worker.write_file("my_notes.txt", "Private note", False)
 - **Example:** Community wish lists, group polls, shared calendars
 
 ```python
-await self.capability_worker.write_file("community_board.txt", "Public message", True)
+await self.capability_worker.write_file("community_board.txt", "Public message", in_ability_directory=True)
 ```
 
 **Security Note:** Public files are readable/writable by all users. Don't store sensitive data!
@@ -253,10 +253,14 @@ data = {
         {"id": 2, "text": "Call dentist", "done": True}
     ]
 }
-await self.capability_worker.write_file("tasks.json", json.dumps(data), False)
+await self.capability_worker.write_file(
+    "tasks.json",
+    json.dumps(data),
+    in_ability_directory=False
+)
 
 # Avoid: Plain text requires manual parsing
-await self.capability_worker.write_file("tasks.txt", "Buy milk\nCall dentist", False)
+await self.capability_worker.write_file("tasks.txt", "Buy milk\nCall dentist", in_ability_directory=False)
 ```
 
 ### 2. Always Use Try-Except for JSON Parsing
@@ -264,7 +268,7 @@ await self.capability_worker.write_file("tasks.txt", "Buy milk\nCall dentist", F
 import json
 
 try:
-    data = await self.capability_worker.read_file("settings.json", False)
+    data = await self.capability_worker.read_file("settings.json", in_ability_directory=False)
     settings = json.loads(data)
 except json.JSONDecodeError:
     # Corrupted file — reset to defaults
@@ -283,7 +287,7 @@ if "delete all" in user_response.lower():
         "Delete all your notes? This can't be undone. Say yes to confirm."
     )
     if confirmed:
-        await self.capability_worker.delete_file("notes.txt", False)
+        await self.capability_worker.delete_file("notes.txt", in_ability_directory=False)
         await self.capability_worker.speak("All notes deleted.")
     else:
         await self.capability_worker.speak("Cancelled. Your notes are safe.")
@@ -307,7 +311,7 @@ entry = f"{readable}: {user_input}"
 ### 5. Limit File Size
 ```python
 # Read existing data
-data = await self.capability_worker.read_file("log.txt", False)
+data = await self.capability_worker.read_file("log.txt", in_ability_directory=False)
 lines = data.split("\n")
 
 # Keep only last 100 entries
@@ -315,17 +319,21 @@ if len(lines) > 100:
     lines = lines[-100:]
 
 # Write back trimmed data
-await self.capability_worker.write_file("log.txt", "\n".join(lines), False)
+await self.capability_worker.write_file(
+    "log.txt",
+    "\n".join(lines),
+    in_ability_directory=False
+)
 ```
 
 ### 6. Namespace Your Files
 ```python
 # Good: Unique names prevent conflicts with other abilities
-await self.capability_worker.write_file("myability_notes.txt", data, False)
-await self.capability_worker.write_file("myability_settings.json", settings, False)
+await self.capability_worker.write_file("myability_notes.txt", data, in_ability_directory=False)
+await self.capability_worker.write_file("myability_settings.json", settings, in_ability_directory=False)
 
 # Avoid: Generic names might conflict
-await self.capability_worker.write_file("notes.txt", data, False)  # Risk of collision
+await self.capability_worker.write_file("notes.txt", data, in_ability_directory=False)  # Risk of collision
 ```
 
 ## Common Patterns
@@ -337,24 +345,24 @@ async def append_log(self, entry: str):
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     line = f"{timestamp}: {entry}"
     
-    if await self.capability_worker.check_if_file_exists(log_file, False):
+    if await self.capability_worker.check_if_file_exists(log_file, in_ability_directory=False):
         # Read, append, write
-        existing = await self.capability_worker.read_file(log_file, False)
+        existing = await self.capability_worker.read_file(log_file, in_ability_directory=False)
         new_content = existing + f"\n{line}"
     else:
         # First entry
         new_content = line
     
-    await self.capability_worker.write_file(log_file, new_content, False)
+    await self.capability_worker.write_file(log_file, new_content, in_ability_directory=False)
 ```
 
 ### Pattern 2: Read Last N Lines
 ```python
 async def get_recent_entries(self, filename: str, count: int = 5):
-    if not await self.capability_worker.check_if_file_exists(filename, False):
+    if not await self.capability_worker.check_if_file_exists(filename, in_ability_directory=False):
         return []
     
-    data = await self.capability_worker.read_file(filename, False)
+    data = await self.capability_worker.read_file(filename, in_ability_directory=False)
     lines = [line for line in data.split("\n") if line.strip()]
     return lines[-count:]  # Last N lines
 ```
@@ -365,8 +373,8 @@ async def update_settings(self, key: str, value):
     settings_file = "settings.json"
     
     # Load existing settings
-    if await self.capability_worker.check_if_file_exists(settings_file, False):
-        data = await self.capability_worker.read_file(settings_file, False)
+    if await self.capability_worker.check_if_file_exists(settings_file, in_ability_directory=False):
+        data = await self.capability_worker.read_file(settings_file, in_ability_directory=False)
         settings = json.loads(data)
     else:
         settings = {}
@@ -387,10 +395,10 @@ async def update_settings(self, key: str, value):
 async def search_notes(self, query: str):
     notes_file = "notes.txt"
     
-    if not await self.capability_worker.check_if_file_exists(notes_file, False):
+    if not await self.capability_worker.check_if_file_exists(notes_file, in_ability_directory=False):
         return []
     
-    data = await self.capability_worker.read_file(notes_file, False)
+    data = await self.capability_worker.read_file(notes_file, in_ability_directory=False)
     lines = data.split("\n")
     
     # Search for query (case-insensitive)
@@ -408,10 +416,10 @@ async def search_notes(self, query: str):
 **Solution:** Verify the correct `is_public` parameter:
 ```python
 # Private file (user-specific, persists)
-await self.capability_worker.write_file("notes.txt", data, False)
+await self.capability_worker.write_file("notes.txt", data, in_ability_directory=False)
 
 # Public file (shared, persists)
-await self.capability_worker.write_file("shared.txt", data, True)
+await self.capability_worker.write_file("shared.txt", data, in_ability_directory=True)
 ```
 
 ### JSON Parsing Errors
@@ -422,7 +430,7 @@ await self.capability_worker.write_file("shared.txt", data, True)
 **Solution:** Always wrap JSON operations in try-except:
 ```python
 try:
-    data = await self.capability_worker.read_file("settings.json", False)
+    data = await self.capability_worker.read_file("settings.json", in_ability_directory=False)
     settings = json.loads(data)
 except (json.JSONDecodeError, Exception):
     # Reset to default on error
@@ -436,9 +444,9 @@ except (json.JSONDecodeError, Exception):
 
 **Solution:** Check before appending:
 ```python
-existing = await self.capability_worker.read_file("list.txt", False)
+existing = await self.capability_worker.read_file("list.txt", in_ability_directory=False)
 if new_item not in existing:
-    await self.capability_worker.write_file("list.txt", existing + f"\n{new_item}", False)
+    await self.capability_worker.write_file("list.txt", existing + f"\n{new_item}", in_ability_directory=False)
 ```
 
 ### File Size Growing Too Large
@@ -450,11 +458,11 @@ lines = data.split("\n")
 if len(lines) > MAX_LINES:
     # Archive old data (optional)
     archive = "\n".join(lines[:-MAX_LINES])
-    await self.capability_worker.write_file("archive.txt", archive, False)
+    await self.capability_worker.write_file("archive.txt", archive, in_ability_directory=False)
     
     # Keep only recent
     recent = "\n".join(lines[-MAX_LINES:])
-    await self.capability_worker.write_file("log.txt", recent, False)
+    await self.capability_worker.write_file("log.txt", recent, in_ability_directory=False)
 ```
 
 ## Quick Start Checklist
