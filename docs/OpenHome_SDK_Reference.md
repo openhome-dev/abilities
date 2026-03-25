@@ -951,6 +951,4 @@ These will cause your Ability to be rejected by the sandbox:
 Also avoid: `exec()`, `eval()`, `pickle`, `dill`, `shelve`, `marshal`, hardcoded secrets, MD5, ECB cipher mode.
 
 ---
-
-*Last updated: March 2026*
 *Found an undocumented method? Report it on [Discord](https://discord.gg/openhome) so we can add it here.*
