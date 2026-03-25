@@ -19,6 +19,31 @@ EXIT_WORDS = {
     "goodbye",
     "that's all",
     "thats all",
+    "forget it",
+    "never mind",
+    "nevermind",
+    "leave it",
+    "i'm good",
+    "im good",
+    "that's it",
+    "thats it",
+    "all done",
+    "no thanks",
+    "actually",
+}
+
+AFFIRMATIVE_WORDS = {
+    "ready",
+    "ok",
+    "okay",
+    "go ahead",
+    "yep",
+    "yeah",
+    "sure",
+    "done",
+    "good to go",
+    "alright",
+    "all right",
 }
 
 VOICE_COLORS = {
@@ -58,7 +83,7 @@ VOICE_TEMPS = {
 PREFS_FILE = "philips_hue_control_prefs.json"
 
 CLASSIFY_PROMPT = """You are a voice command router for Philips Hue smart lights.
-Return ONLY valid JSON, no markdown.
+Return only valid JSON, no markdown, no preamble, no explanation.
 
 Available rooms: {room_names}
 Available lights: {light_names}
@@ -77,6 +102,11 @@ JSON schema:
   "color_temp": "warm|cool|daylight|candlelight|warm white|cool white|soft white|neutral|bright white" or null,
   "scene_name": "scene name" or null
 }}
+"""
+
+EXIT_CLASSIFY_PROMPT = """Is the user trying to stop or exit this Philips Hue ability?
+User said: "{user_input}"
+Return YES or NO only.
 """
 
 
@@ -110,6 +140,23 @@ class PhilipsHueControlCapability(MatchingCapability):
 
     async def _safe_exit(self, text: str):
         await self.capability_worker.speak(text)
+
+    def _looks_affirmative(self, text: str) -> bool:
+        lower = (text or "").lower().strip()
+        return any(phrase in lower for phrase in AFFIRMATIVE_WORDS)
+
+    async def _is_exit_intent(self, user_input: str) -> bool:
+        raw = self.capability_worker.text_to_text_response(
+            EXIT_CLASSIFY_PROMPT.format(user_input=user_input)
+        )
+        decision = (raw or "").strip().lower()
+        if decision.startswith("yes"):
+            return True
+        if decision.startswith("no"):
+            return False
+        # Fallback when model output is malformed.
+        lower = user_input.lower().strip()
+        return any(phrase in lower for phrase in EXIT_WORDS)
 
     def _extract_ipv4(self, text: str) -> Optional[str]:
         if not text:
@@ -326,7 +373,7 @@ class PhilipsHueControlCapability(MatchingCapability):
                     bridge_ip = parsed_ip
                     break
                 await self.capability_worker.speak(
-                    "I did not catch a valid IP. Please say numbers only, like 192 dot 168 dot 1 dot 45."
+                    "Didn't catch that IP. Try something like 192 dot 168 dot 1 dot 45."
                 )
             if not bridge_ip:
                 await self._safe_exit("Setup cancelled. I still need a valid bridge IP.")
@@ -341,16 +388,16 @@ class PhilipsHueControlCapability(MatchingCapability):
 
         bridge_id = details.get("bridge_id") or bridge_id
         await self.capability_worker.speak(
-            "Press the round button on your Hue Bridge, then say ready."
+            "Go ahead and press the button on your Hue Bridge, then say ready."
         )
         readiness = (await self.capability_worker.user_response() or "").lower()
-        if "ready" not in readiness:
-            await self.capability_worker.speak("I will try pairing now.")
+        if not self._looks_affirmative(readiness):
+            await self.capability_worker.speak("I'll try pairing now.")
 
         pair_result = self._create_app_key(bridge_ip)
         if pair_result.get("error") == "link_button_not_pressed":
             await self.capability_worker.speak(
-                "I did not detect the button press. Press it once more and say ready."
+                "Didn't catch the button press. Try once more and say ready."
             )
             await self.capability_worker.user_response()
             pair_result = self._create_app_key(bridge_ip)
@@ -477,15 +524,8 @@ class PhilipsHueControlCapability(MatchingCapability):
         return "", None
 
     async def _classify_intent(self, user_input: str) -> Dict[str, Any]:
-        lower = user_input.lower().strip()
-        if any(word in lower for word in EXIT_WORDS):
+        if await self._is_exit_intent(user_input):
             return {"intent": "exit", "confidence": 1.0}
-        if "help" in lower:
-            return {"intent": "help", "confidence": 1.0}
-        if "all" in lower and "off" in lower:
-            return {"intent": "all_off", "confidence": 0.9, "target_type": "all"}
-        if "all" in lower and "on" in lower:
-            return {"intent": "all_on", "confidence": 0.9, "target_type": "all"}
 
         prompt = CLASSIFY_PROMPT.format(
             room_names=list(self.room_cache.keys()),
@@ -811,7 +851,7 @@ class PhilipsHueControlCapability(MatchingCapability):
             else:
                 if err == "color_not_supported":
                     await self.capability_worker.speak(
-                        "That light doesn't support color. I can set brightness and white temperature."
+                        "That light doesn't do color - try brightness or white temperature instead."
                     )
                 elif err == "temp_not_supported":
                     await self.capability_worker.speak(
