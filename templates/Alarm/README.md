@@ -180,12 +180,12 @@ async def first_function(self):
 async def first_function(self):
     while True:
         # Read some condition from file storage
-        if await self.capability_worker.check_if_file_exists("alert_flag.txt", False):
+        if await self.capability_worker.check_if_file_exists("alert_flag.txt", in_ability_directory=False):
             await self.capability_worker.speak("Alert condition detected!")
             await self.capability_worker.play_from_audio_file("alert.mp3")
             
             # Clear the flag
-            await self.capability_worker.delete_file("alert_flag.txt", False)
+            await self.capability_worker.delete_file("alert_flag.txt", in_ability_directory=False)
         
         await self.worker.session_tasks.sleep(10.0)
 ```
@@ -289,10 +289,10 @@ print("Background started")
 ```python
 async def _read_data_safe(self):
     try:
-        if not await self.capability_worker.check_if_file_exists("data.json", False):
+        if not await self.capability_worker.check_if_file_exists("data.json", in_ability_directory=False):
             return {}
         
-        raw = await self.capability_worker.read_file("data.json", False)
+        raw = await self.capability_worker.read_file("data.json", in_ability_directory=False)
         return json.loads(raw)
         
     except json.JSONDecodeError:
@@ -421,8 +421,8 @@ await self._save_alarms(alarms)  # Write back to file
 **Solution:** Always delete-then-write:
 ```python
 # Delete first
-if await self.capability_worker.check_if_file_exists("alarms.json", False):
-    await self.capability_worker.delete_file("alarms.json", False)
+if await self.capability_worker.check_if_file_exists("alarms.json", in_ability_directory=False):
+    await self.capability_worker.delete_file("alarms.json", in_ability_directory=False)
 
 # Write fresh
 await self.capability_worker.write_file(
