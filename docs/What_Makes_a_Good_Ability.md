@@ -1,4 +1,3 @@
-
 > For product design philosophy, ability archetypes, and 170+ ideas for what to build, see [Designing OpenHome Abilities](/Designing_OpenHome_Abilities).
 
 ## What Makes a Good Ability
@@ -475,7 +474,7 @@ The `in_ability_directory` flag controls where the file is accessed:
 
 Allowed file types: `.txt`, `.csv`, `.json`, `.md`, `.log`, `.yaml`, `.yml`
 
-### Capability Context Storage (Key-Value)
+### Capability Context Storage API (Key-Value)
 
 For structured context (preferences, workflow state, feature flags), use CapabilityWorker's key-value storage:
 
