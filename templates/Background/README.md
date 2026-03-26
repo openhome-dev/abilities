@@ -236,10 +236,10 @@ response = self.capability_worker.text_to_text_response("Analyze this...")
 
 ### File Operations
 ```python
-await self.capability_worker.write_file("log.txt", data, False)
-data = await self.capability_worker.read_file("settings.json", False)
-exists = await self.capability_worker.check_if_file_exists("data.txt", False)
-await self.capability_worker.delete_file("temp.txt", False)
+await self.capability_worker.write_file("log.txt", data, in_ability_directory=False)
+data = await self.capability_worker.read_file("settings.json", in_ability_directory=False)
+exists = await self.capability_worker.check_if_file_exists("data.txt", in_ability_directory=False)
+await self.capability_worker.delete_file("temp.txt", in_ability_directory=False)
 ```
 
 ### Audio
@@ -259,9 +259,9 @@ await self.capability_worker.send_notification_to_ios("Title", "Body")
 async def first_function(self):
     while True:
         # Check for new data file
-        if await self.capability_worker.check_if_file_exists("trigger.txt", False):
+        if await self.capability_worker.check_if_file_exists("trigger.txt", in_ability_directory=False):
             # Read trigger data
-            data = await self.capability_worker.read_file("trigger.txt", False)
+            data = await self.capability_worker.read_file("trigger.txt", in_ability_directory=False)
             
             # Use LLM to analyze
             analysis = self.capability_worker.text_to_text_response(
@@ -275,7 +275,7 @@ async def first_function(self):
             await self.capability_worker.play_from_audio_file("notification.mp3")
             
             # Clean up trigger file
-            await self.capability_worker.delete_file("trigger.txt", False)
+            await self.capability_worker.delete_file("trigger.txt", in_ability_directory=False)
         
         await self.worker.session_tasks.sleep(10.0)
 ```
@@ -334,8 +334,8 @@ async def first_function(self):
     
     while True:
         # Check for new data file
-        if await self.capability_worker.check_if_file_exists("inbox.txt", False):
-            content = await self.capability_worker.read_file("inbox.txt", False)
+        if await self.capability_worker.check_if_file_exists("inbox.txt", in_ability_directory=False):
+            content = await self.capability_worker.read_file("inbox.txt", in_ability_directory=False)
             
             # Create unique ID for this content
             content_hash = hash(content)
