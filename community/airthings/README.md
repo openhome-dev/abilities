@@ -11,7 +11,7 @@ Reads CO2, VOC, radon, PM2.5, temperature, humidity, and pressure from any Airth
 - **Health threshold flagging** — CO2, VOC, PM2.5, radon, and humidity are pre-checked against WHO/EPA/EU guidelines before being passed to the LLM
 - **Fahrenheit support** — temperature is automatically converted from Celsius for users in US/America timezones
 - **Stale data warning** — if a device hasn't synced in over an hour, you'll be told the readings may be outdated
-- **Parallel fetching** — readings for multiple devices are fetched at the same time
+- **Multi-device fetching** — readings for multiple devices are fetched sequentially, one after the other
 
 ## Setup
 
