@@ -228,8 +228,8 @@ async def email_with_generated_report(self):
 ```python
 async def send_configured_email(self):
     # Load email configuration from persistent storage
-    if await self.capability_worker.check_if_file_exists("email_settings.json", False):
-        raw = await self.capability_worker.read_file("email_settings.json", False)
+    if await self.capability_worker.check_if_file_exists("email_settings.json", in_ability_directory=False):
+        raw = await self.capability_worker.read_file("email_settings.json", in_ability_directory=False)
         config = json.loads(raw)
     else:
         await self.capability_worker.speak("Email not configured. Please set up your email first.")
@@ -300,8 +300,8 @@ async def send_ai_composed_email(self):
 SENDER_PASSWORD = "mypassword123"
 
 # ✅ GOOD — Load from secure file storage
-if await self.capability_worker.check_if_file_exists("email_creds.json", False):
-    raw = await self.capability_worker.read_file("email_creds.json", False)
+if await self.capability_worker.check_if_file_exists("email_creds.json", in_ability_directory=False):
+    raw = await self.capability_worker.read_file("email_creds.json", in_ability_directory=False)
     creds = json.loads(raw)
     SENDER_PASSWORD = creds["app_password"]
 ```
