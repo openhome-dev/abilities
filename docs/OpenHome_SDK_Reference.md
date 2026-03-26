@@ -115,7 +115,7 @@ full_input = await self.capability_worker.wait_for_complete_transcription()
 
 When a trigger word starts an ability immediately, this method still returns the full spoken sentence, including both the trigger phrase and the actual request.
 
-Example trigger word: `remind`  
+Example trigger word: `remind`
 User says: `remind me to call Alex tomorrow at 6 PM`
 
 ```python
@@ -951,6 +951,4 @@ These will cause your Ability to be rejected by the sandbox:
 Also avoid: `exec()`, `eval()`, `pickle`, `dill`, `shelve`, `marshal`, hardcoded secrets, MD5, ECB cipher mode.
 
 ---
-
-*Last updated: March 2026*  
 *Found an undocumented method? Report it on [Discord](https://discord.gg/openhome) so we can add it here.*
