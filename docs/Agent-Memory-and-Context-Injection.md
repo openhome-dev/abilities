@@ -15,7 +15,7 @@ The background runs sequentially every ~60-90 seconds:
 
 1. `save_user_summary()` updates `user_summary.md`.
 2. `save_user_profile()` updates `user_profile.md`.
-3. `update_agent_prompt()` scans persistent storage (`temp=False`) and injects all `.md` files into the live Agent prompt.
+3. `update_agent_prompt()` scans persistent storage (`in_ability_directory=False`) and injects all `.md` files into the live Agent prompt.
 
 Latency from file write to Agent behavior change is typically 60-90 seconds.
 
@@ -32,7 +32,7 @@ If an ability writes a persistent `.md` file, the Agent will see it on the next 
 await self.capability_worker.write_file(
     "audio_emotion.md",
     "## Current Audio Emotion\nUser sounds stressed (detected at 3:24 PM)",
-    False  # temp=False → persistent storage
+    in_ability_directory=False
 )
 ```
 
@@ -44,10 +44,10 @@ await self.capability_worker.write_file(
 
 ```python
 async def write_context_file(self, filename: str, content: str):
-    exists = await self.capability_worker.check_if_file_exists(filename, False)
+    exists = await self.capability_worker.check_if_file_exists(filename, in_ability_directory=False)
     if exists:
-        await self.capability_worker.delete_file(filename, False)
-    await self.capability_worker.write_file(filename, content, False)
+        await self.capability_worker.delete_file(filename, in_ability_directory=False)
+    await self.capability_worker.write_file(filename, content, in_ability_directory=False)
 ```
 
 ### When to Use This Pattern
@@ -123,9 +123,9 @@ For ephemeral daemon context, clear stale `.md` state at daemon startup before f
 async def first_function(self):
     """Daemon startup: clear stale context from previous session."""
     # Remove old emotion state to prevent stale context injection
-    exists = await self.capability_worker.check_if_file_exists("audio_emotion.md", False)
+    exists = await self.capability_worker.check_if_file_exists("audio_emotion.md", in_ability_directory=False)
     if exists:
-        await self.capability_worker.delete_file("audio_emotion.md", False)
+        await self.capability_worker.delete_file("audio_emotion.md", in_ability_directory=False)
     
     # Now start fresh monitoring
     while True:
@@ -212,18 +212,18 @@ class AudioEmotionDaemon(MatchingCapability):
 
     async def write_context_file(self, filename: str, content: str):
         """Safe write pattern for replaceable .md context files."""
-        exists = await self.capability_worker.check_if_file_exists(filename, False)
+        exists = await self.capability_worker.check_if_file_exists(filename, in_ability_directory=False)
         if exists:
-            await self.capability_worker.delete_file(filename, False)
-        await self.capability_worker.write_file(filename, content, False)
+            await self.capability_worker.delete_file(filename, in_ability_directory=False)
+        await self.capability_worker.write_file(filename, content, in_ability_directory=False)
 
     async def first_function(self):
         self.worker.editor_logging_handler.info("Audio Emotion Daemon started")
         
         # CLEANUP: Clear stale context from previous session
-        exists = await self.capability_worker.check_if_file_exists("audio_emotion.md", False)
+        exists = await self.capability_worker.check_if_file_exists("audio_emotion.md", in_ability_directory=False)
         if exists:
-            await self.capability_worker.delete_file("audio_emotion.md", False)
+            await self.capability_worker.delete_file("audio_emotion.md", in_ability_directory=False)
         
         while True:
             try:
@@ -284,12 +284,12 @@ Detected {int(time())} seconds ago.
 
 ### Agent doesn't reflect my .md file changes
 **Possible causes:**
-1. File not in persistent storage (`temp=True` instead of `temp=False`)
+1. File not in persistent storage (`in_ability_directory=True` instead of `in_ability_directory=False`)
 2. Watcher cycle hasn't run yet (wait 60-90 seconds)
 3. File is not `.md` extension (only `.md` files are injected)
 
 **Solutions:**
-- Verify: `await write_file(filename, content, False)` (last param is `False`)
+- Verify: `await write_file(filename, content, in_ability_directory=False)`
 - Wait at least 90 seconds before testing
 - Ensure filename ends with `.md`
 
@@ -298,8 +298,8 @@ Detected {int(time())} seconds ago.
 
 **Solution:** Use the delete-then-write pattern:
 ```python
-await self.capability_worker.delete_file("state.md", False)
-await self.capability_worker.write_file("state.md", content, False)
+await self.capability_worker.delete_file("state.md", in_ability_directory=False)
+await self.capability_worker.write_file("state.md", content, in_ability_directory=False)
 ```
 
 ### Old context appears after reconnect
@@ -309,8 +309,8 @@ await self.capability_worker.write_file("state.md", content, False)
 ```python
 async def first_function(self):
     # Clear stale context
-    if await self.capability_worker.check_if_file_exists("my_state.md", False):
-        await self.capability_worker.delete_file("my_state.md", False)
+    if await self.capability_worker.check_if_file_exists("my_state.md", in_ability_directory=False):
+        await self.capability_worker.delete_file("my_state.md", in_ability_directory=False)
     
     # Now start fresh
     while True:
@@ -323,7 +323,7 @@ async def first_function(self):
 
 - [Building Great OpenHome Abilities](https://docs.openhome.com/Building_Great_OpenHome_Abilities) — Runtime model and best practices
 - [SDK Reference](https://docs.openhome.com/OpenHome_SDK_Reference) — Complete CapabilityWorker API
-- [File Storage Guide](https://docs.openhome.com/OpenHome_SDK_Reference#8-file-storage-persistent-+-temporary) — Persistent vs temp storage
+- [File Storage Guide](https://docs.openhome.com/OpenHome_SDK_Reference#8-file-storage-user-data--ability-directory) — File storage scopes and helpers
 
 ---
 
