@@ -399,7 +399,7 @@ class MTANextTrainCapability(MatchingCapability):
     capability_worker: CapabilityWorker = None
     prefs: Dict = None
 
-    #{{register capability}}
+    # {{register capability}}
 
     def call(self, worker: AgentWorker):
         self.worker = worker
