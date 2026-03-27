@@ -255,9 +255,8 @@ class FlightBookingCapability(MatchingCapability):
         resp = requests.request(method, url, headers=self._duffel_headers(), **kwargs)
         if resp.status_code in (429, 500, 502, 503, 504):
             self.worker.editor_logging_handler.info(
-                f"[FlightBooking] Duffel {resp.status_code} — retrying in 2s"
+                f"[FlightBooking] Duffel {resp.status_code} — retrying"
             )
-            time.sleep(2)
             resp = requests.request(method, url, headers=self._duffel_headers(), **kwargs)
         return resp
 
