@@ -9,8 +9,18 @@ from src.agent.capability_worker import CapabilityWorker
 
 EVENTS_FILE = "scheduled_events.json"
 SCHEDULE_MD = "upcoming_schedule.md"
-QUIT_WORDS = {"quit", "exit", "never mind", "go back", "goodbye", "bye"}
-EXIT_WORDS = {"no", "nope", "nah", "done", "all done", "nothing", "that's it", "thats it", "i'm good", "im good"}
+
+QUIT_WORDS = {
+    "quit", "exit", "never mind", "go back", "goodbye", "bye",
+    "stop", "cancel", "forget it", "i'm done", "im done", "end", "no thanks"
+}
+
+EXIT_WORDS = {
+    "no", "nope", "nah", "done", "all done", "nothing", "that's it", "thats it",
+    "i'm good", "im good", "stop", "no more", "that'll do", "thatll do",
+    "we're good", "were good", "that's all", "thats all", "i'm set", "im set",
+    "i'm fine", "im fine"
+}
 
 
 def _strip_punctuation(text):
@@ -192,12 +202,12 @@ EXISTING SCHEDULED EVENTS:
 TASK: Classify the user's intent and extract structured data.
 
 INTENT TYPES:
-1. CREATE_TIMER - duration-based ("set a timer for 20 minutes")
-2. CREATE_ALARM - clock-based ("wake me up at 7am", "set an alarm for 7am")
-3. CREATE_REMINDER - message + time ("remind me to call Sarah at 3pm")
-4. LIST_EVENTS - user wants to see scheduled events ("what timers do I have?")
-5. CANCEL_EVENT - user wants to cancel a specific event ("cancel my 7am alarm")
-6. DELETE_ALL - user wants to clear everything ("delete all timers")
+1. CREATE_TIMER - duration-based ("set a timer for 20 minutes", "give me 10 minutes", "start a timer", "timer for an hour")
+2. CREATE_ALARM - clock-based ("wake me up at 7am", "set an alarm for 7am", "alarm at seven", "I need to be up by 6")
+3. CREATE_REMINDER - message + time ("remind me to call Sarah at 3pm", "don't let me forget to take my meds at noon", "remind me about the meeting at two")
+4. LIST_EVENTS - user wants to see scheduled events ("are there any timers going?", "what's on my schedule?", "read me my reminders", "what have I got set?", "do I have anything coming up?", "what did I set?")
+5. CANCEL_EVENT - user wants to cancel a specific event ("cancel my 7am alarm", "turn off my morning alarm", "get rid of the three o'clock reminder", "I don't need that reminder anymore", "delete the one at three")
+6. DELETE_ALL - user wants to clear everything ("get rid of all my timers", "cancel everything on my schedule", "wipe my reminders", "scrap all my alarms", "clear everything", "reset my schedule")
 
 RULES:
 - For CREATE_TIMER: convert duration to absolute target time. Example: "20 minutes" from current time = current time + 20 minutes.
@@ -211,6 +221,10 @@ RULES:
 - For DELETE_ALL: determine scope - all events, or just timers/alarms/reminders.
 - If critical info is missing, respond with EXACTLY: QUESTION:<your clarifying question>
   Only ask ONE question at a time.
+  QUESTION responses must be plain spoken English, one short sentence, 10 words or fewer.
+  No symbols, abbreviations, formatting, colons, or parentheses in QUESTION responses.
+  Good example: QUESTION: What time did you want that alarm for?
+  Bad example: QUESTION: Could you please specify the exact time (HH:MM) and whether it is AM or PM?
 - You may ONLY respond with one of:
   * QUESTION:<clarifying question>
   * Valid JSON (when you have all required info)
@@ -250,7 +264,6 @@ Output ONLY the JSON or QUESTION line. No extra text.""" % (
     async def _handle_create(
         self, parsed: dict, original_request: str, tz_name: str
     ) -> str:
-        """Returns confirmation message, or None if error already spoken."""
         intent = parsed.get("intent", "")
         type_map = {
             "CREATE_TIMER": "timer",
@@ -263,7 +276,6 @@ Output ONLY the JSON or QUESTION line. No extra text.""" % (
         if not target_iso:
             return "I couldn't figure out the time. Could you try again?"
 
-        # Check if target is in the past
         try:
             tz = ZoneInfo(tz_name)
         except Exception:
@@ -276,10 +288,8 @@ Output ONLY the JSON or QUESTION line. No extra text.""" % (
                 target_dt = target_dt.replace(tzinfo=tz)
             if target_dt < now:
                 if etype == "reminder":
-                    # Reminders in the past never make sense — reject
                     return "That time has already passed. Could you give me a future time?"
                 else:
-                    # Alarms/timers: auto-advance to tomorrow
                     target_dt = target_dt + timedelta(days=1)
                     target_iso = target_dt.isoformat()
                     parsed["target_iso"] = target_iso
@@ -318,7 +328,6 @@ Output ONLY the JSON or QUESTION line. No extra text.""" % (
         return "Done."
 
     async def _handle_list(self, parsed: dict) -> str:
-        """Returns summary message."""
         filter_type = parsed.get("filter_type", "all")
         events = await self._read_events()
         scheduled = [e for e in events if e.get("status") == "scheduled"]
@@ -328,11 +337,10 @@ Output ONLY the JSON or QUESTION line. No extra text.""" % (
 
         if not scheduled:
             if filter_type == "all":
-                return "You don't have anything scheduled right now. You can set a timer, alarm, or reminder."
+                return "Nothing scheduled. Want to set a timer, alarm, or reminder?"
             else:
-                return "You don't have any %ss scheduled. Want to set one?" % filter_type
+                return "No %ss scheduled. Want to set one?" % filter_type
 
-        # Build a spoken summary
         parts = []
         for e in scheduled:
             etype = e.get("type", "event")
@@ -350,14 +358,18 @@ Output ONLY the JSON or QUESTION line. No extra text.""" % (
                 parts.append("A %s at %s" % (etype, human))
 
         count = len(parts)
+        MAX_SPOKEN = 3
+        spoken_parts = parts[:MAX_SPOKEN]
+        tail = ""
+        if count > MAX_SPOKEN:
+            tail = " Plus %d more." % (count - MAX_SPOKEN)
+
         if count == 1:
             return "You have one thing scheduled. %s." % parts[0]
         else:
-            summary = ". ".join(parts)
-            return "You have %d things scheduled. %s." % (count, summary)
+            return "You have %d scheduled. %s.%s" % (count, ". ".join(spoken_parts), tail)
 
     async def _handle_cancel(self, parsed: dict) -> str:
-        """Returns confirmation message."""
         cancel_id = parsed.get("cancel_id")
         if not cancel_id:
             return "I couldn't figure out which one to cancel. Could you be more specific?"
@@ -381,10 +393,9 @@ Output ONLY the JSON or QUESTION line. No extra text.""" % (
 
         etype = target.get("type", "event")
         human = target.get("human_time", "")
-        return "Done. Your %s %s has been cancelled." % (human, etype)
+        return "Done. Your %s at %s has been cancelled." % (etype, human)
 
     async def _handle_delete_all(self, parsed: dict) -> str:
-        """Returns confirmation message."""
         filter_type = parsed.get("filter_type", "all")
 
         if filter_type == "all":
@@ -409,67 +420,6 @@ Output ONLY the JSON or QUESTION line. No extra text.""" % (
     # ------------------------------------------------------------------
     # Main flow
     # ------------------------------------------------------------------
-    def _is_bare_trigger(self, text: str) -> str:
-        """Return the event category if user only said a bare trigger word, else empty string."""
-        bare = text.strip().lower().rstrip("s")  # "alarms" -> "alarm", "timers" -> "timer"
-        if bare in ("alarm", "timer", "reminder", "schedule"):
-            return bare
-        return ""
-
-    def _build_summary(self, scheduled: list, filter_type: str = "all") -> str:
-        """Build a spoken summary string for scheduled events."""
-        items = scheduled
-        if filter_type != "all":
-            items = [e for e in items if e.get("type") == filter_type]
-
-        if not items:
-            return ""
-
-        parts = []
-        for e in items:
-            etype = e.get("type", "event")
-            human = e.get("human_time", "")
-            msg = e.get("message")
-            dur = e.get("duration_label")
-
-            if etype == "timer" and dur:
-                parts.append("a %s timer firing at %s" % (dur, human))
-            elif etype == "alarm":
-                parts.append("an alarm at %s" % human)
-            elif etype == "reminder" and msg:
-                parts.append("a reminder about %s at %s" % (msg, human))
-            else:
-                parts.append("a %s at %s" % (etype, human))
-
-        if len(parts) == 1:
-            return "You have %s." % parts[0]
-        return "You have %d things scheduled. %s." % (len(parts), ". ".join(parts))
-
-    async def _ask_followup(self, category: str) -> str:
-        """If user said a bare trigger, show existing events of that type then ask what to do."""
-        events = await self._read_events()
-        scheduled = [e for e in events if e.get("status") == "scheduled"]
-
-        if category == "schedule":
-            if scheduled:
-                summary = self._build_summary(scheduled, "all")
-                return await self.capability_worker.run_io_loop(
-                    "%s What would you like to do?" % summary
-                )
-            return await self.capability_worker.run_io_loop(
-                "You don't have anything scheduled. Want to set a timer, alarm, or reminder?"
-            )
-
-        type_events = [e for e in scheduled if e.get("type") == category]
-        if type_events:
-            summary = self._build_summary(scheduled, category)
-            return await self.capability_worker.run_io_loop(
-                "%s What would you like to do?" % summary
-            )
-        return await self.capability_worker.run_io_loop(
-            "You don't have any %ss. Want to set one?" % category
-        )
-
     async def _process_request(self, user_text: str, category: str = "") -> str:
         """Process a single user request.
         Returns:
@@ -479,43 +429,21 @@ Output ONLY the JSON or QUESTION line. No extra text.""" % (
         original_request = user_text
         lower = user_text.strip().lower()
 
-        # Fast-path: delete / clear / remove commands
-        if "delete" in lower or "clear" in lower or "remove" in lower:
-            if "timer" in lower:
-                return await self._handle_delete_all({"filter_type": "timer"})
-            elif "alarm" in lower:
-                return await self._handle_delete_all({"filter_type": "alarm"})
-            elif "reminder" in lower:
-                return await self._handle_delete_all({"filter_type": "reminder"})
-            elif "all" in lower or "everything" in lower:
-                return await self._handle_delete_all({"filter_type": "all"})
-            elif category in ("alarm", "timer", "reminder"):
-                return await self._handle_delete_all({"filter_type": category})
-            else:
-                return await self._handle_delete_all({"filter_type": "all"})
-
-        # Fast-path: list commands
-        if any(phrase in lower for phrase in ("list all", "list everything", "what do i have", "show all", "show everything", "show me everything")):
-            return await self._handle_list({"filter_type": "all"})
-        for etype in ("timer", "alarm", "reminder"):
-            if ("list" in lower or "show" in lower) and etype in lower:
-                return await self._handle_list({"filter_type": etype})
-
-        # Handle bare affirmatives with category context (e.g. "yes" after "Want to set one?")
-        affirmatives = {"yes", "yeah", "yep", "sure", "ok", "okay", "yea", "ya"}
+        affirmatives = {
+            "yes", "yeah", "yep", "sure", "ok", "okay", "yea", "ya",
+            "please", "go ahead", "do it", "sounds good", "absolutely",
+            "definitely", "let's do it", "lets do it"
+        }
         if lower in affirmatives and category:
             user_text = "set a %s" % category
             lower = user_text.lower()
 
-        # If we have category context, prepend it for the LLM
         if category and category != "schedule":
-            # Don't add context if user says "all", "everything", or mentions a different type
             if category not in lower and "all" not in lower and "everything" not in lower:
                 other_types = {"timer", "alarm", "reminder"} - {category}
                 if not any(t in lower for t in other_types):
                     user_text = "%s (context: user is working with %ss)" % (user_text, category)
 
-        # Get timezone
         tz_name = self.capability_worker.get_timezone()
         if not tz_name:
             tz_name = "UTC"
@@ -535,19 +463,14 @@ Output ONLY the JSON or QUESTION line. No extra text.""" % (
                 user_text, history, system_prompt
             )
 
-            self.worker.editor_logging_handler.info(
-                "[TAR] user: %s" % user_text
-            )
-            self.worker.editor_logging_handler.info(
-                "[TAR] llm: %s" % llm_response
-            )
+            self.worker.editor_logging_handler.info("[TAR] user: %s" % user_text)
+            self.worker.editor_logging_handler.info("[TAR] llm: %s" % llm_response)
 
             history.append({"role": "user", "content": user_text})
 
             if isinstance(llm_response, str):
                 stripped = llm_response.strip()
 
-                # Handle QUESTION responses
                 if stripped.startswith("QUESTION:"):
                     history.append({"role": "assistant", "content": stripped})
                     question = stripped.split("QUESTION:", 1)[1].strip()
@@ -556,13 +479,11 @@ Output ONLY the JSON or QUESTION line. No extra text.""" % (
                         return None
                     continue
 
-                # Strip markdown fences if present
                 if stripped.startswith("```"):
                     stripped = stripped.strip("`").strip()
                     if stripped.startswith("json"):
                         stripped = stripped[4:].strip()
 
-            # Parse JSON
             try:
                 if isinstance(llm_response, str):
                     parsed = json.loads(stripped)
@@ -584,42 +505,25 @@ Output ONLY the JSON or QUESTION line. No extra text.""" % (
             else:
                 return "I'm not sure what you'd like to do. You can set timers, alarms, or reminders, or ask me to list or cancel them."
 
-        return "I asked too many questions. Let's start over — just tell me what you need."
+        return "I had trouble with that. What do you need?"
 
     async def first_setup(self):
         try:
             user_text = await self.capability_worker.wait_for_complete_transcription()
             if not user_text or not user_text.strip():
                 await self.capability_worker.speak(
-                    "I didn't catch that. You can set timers, alarms, or reminders. Just tell me what you need."
+                    "Sorry, I missed that. What do you need?"
                 )
                 return
             if _wants_to_quit(user_text):
                 await self.capability_worker.speak("Quitting ability.")
                 return
 
-            # If user just said a bare trigger word, ask what they want to do
-            category = ""
-            bare = self._is_bare_trigger(user_text)
-            if bare:
-                category = bare
-                user_text = await self._ask_followup(bare)
-                if not user_text or not user_text.strip():
-                    await self.capability_worker.speak(
-                        "I didn't catch that. Let me know if you need anything."
-                    )
-                    return
-                if _wants_to_quit(user_text):
-                    await self.capability_worker.speak("Quitting ability.")
-                    return
-
-            # Process the first request
-            msg = await self._process_request(user_text, category)
+            msg = await self._process_request(user_text)
             if msg is None:
                 await self.capability_worker.speak("Quitting ability.")
                 return
 
-            # Multi-action loop: combine confirmation with "Anything else?" in one speech act
             while True:
                 user_text = await self.capability_worker.run_io_loop(
                     "%s Anything else?" % msg
