@@ -1,6 +1,5 @@
 import json
 import re
-import time
 import requests
 from datetime import datetime
 from typing import ClassVar
