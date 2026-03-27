@@ -43,3 +43,4 @@ Format: - **@username** — ability-name ([ability-name](community/ability-name/
 - **[@FHLiang221](https://github.com/FHLiang221)** — quiet-company ([quiet-company](community/quiet-company/))
 - **[@harmsolo13](https://github.com/harmsolo13)** — dungeon-master-voice ([dungeon-master-voice](community/dungeon-master-voice/))
 - **[@mahsumaktas](https://github.com/mahsumaktas)** — prayer-times ([prayer-times](community/prayer-times/))
+- **[@brianchilders](https://github.com/brianchilders)** — airthings ([airthings](community/airthings/))
