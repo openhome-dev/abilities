@@ -1,14 +1,6 @@
 #!/usr/bin/env python3
 from __future__ import annotations
-
-import argparse
-import sys
-from pathlib import Path
-
-CURRENT_DIR = Path(__file__).resolve().parent
-if str(CURRENT_DIR) not in sys.path:
-    sys.path.append(str(CURRENT_DIR))
-
+from tests.fixtures import SAMPLE_ARRIVALS_RESPONSE, SAMPLE_STATIONS
 from mta_next_train_core import (
     fetch_arrivals,
     find_station_matches,
@@ -17,7 +9,14 @@ from mta_next_train_core import (
     search_stations,
     station_from_api_item,
 )
-from tests.fixtures import SAMPLE_ARRIVALS_RESPONSE, SAMPLE_STATIONS
+
+import argparse
+import sys
+from pathlib import Path
+
+CURRENT_DIR = Path(__file__).resolve().parent
+if str(CURRENT_DIR) not in sys.path:
+    sys.path.append(str(CURRENT_DIR))
 
 
 def run_fixture_mode(phrase: str) -> int:

@@ -1,15 +1,3 @@
-import os
-import sys
-from typing import Dict, Optional
-
-CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
-if CURRENT_DIR not in sys.path:
-    sys.path.append(CURRENT_DIR)
-
-from src.agent.capability import MatchingCapability
-from src.agent.capability_worker import CapabilityWorker
-from src.main import AgentWorker
-
 from mta_next_train_core import (
     ACTION_HELP,
     ACTION_SET_DEFAULT,
@@ -22,6 +10,16 @@ from mta_next_train_core import (
     search_stations,
     station_from_prefs,
 )
+from src.main import AgentWorker
+from src.agent.capability_worker import CapabilityWorker
+from src.agent.capability import MatchingCapability
+import os
+import sys
+from typing import Dict, Optional
+
+CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
+if CURRENT_DIR not in sys.path:
+    sys.path.append(CURRENT_DIR)
 
 
 PREFS_KEY = "mta_next_train_prefs"
@@ -35,7 +33,7 @@ class MTANextTrainCapability(MatchingCapability):
     capability_worker: CapabilityWorker = None
     prefs: Dict = None
 
-    #{{register_capability}}
+    # {{register_capability}}
 
     def call(self, worker: AgentWorker):
         self.worker = worker
