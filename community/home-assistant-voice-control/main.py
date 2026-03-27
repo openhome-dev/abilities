@@ -7,7 +7,6 @@ LLM-based intent classification with fuzzy entity name matching.
 """
 
 import json
-import os
 import requests
 
 from src.agent.capability import MatchingCapability
@@ -18,8 +17,8 @@ from src.agent.capability_worker import CapabilityWorker
 # Set these environment variables before running:
 #   HA_TOKEN - Long-Lived Access Token (generate at http://YOUR_HA_IP:8123/profile)
 #   HA_URL   - Home Assistant base URL (e.g. http://192.168.1.100:8123)
-HA_TOKEN = os.environ.get("HA_TOKEN", "YOUR_HOME_ASSISTANT_TOKEN_HERE")
-HA_URL = os.environ.get("HA_URL", "http://YOUR_HA_IP:8123")
+HA_TOKEN = "YOUR_HOME_ASSISTANT_TOKEN_HERE"
+HA_URL = "http://YOUR_HA_IP:8123"
 
 ACTIONABLE_DOMAINS = [
     "light", "switch", "cover", "media_player",
@@ -29,7 +28,22 @@ ACTIONABLE_DOMAINS = [
 # Actions requiring voice confirmation before execution
 DANGEROUS_ACTIONS = {"open_cover", "close_cover", "activate_siren", "deactivate_siren"}
 
-EXIT_WORDS = ["done", "stop", "exit", "quit", "nevermind", "never mind", "goodbye", "bye", "that's all"]
+CONFIRMATION_SYSTEM_PROMPT = """You are a voice assistant interpreting a user's response to a yes/no confirmation question.
+The user was asked to confirm a smart home action. Determine if they said yes or no.
+
+Return ONLY a JSON object (no markdown, no explanation):
+{"confirmed": true/false, "spoken_response": "<short response>"}
+
+- confirmed: true if the user is agreeing, affirming, or saying yes in any way.
+- confirmed: false if the user is declining, refusing, cancelling, or saying no in any way.
+
+Examples of YES: "yeah", "yep", "sure", "do it", "go ahead", "go for it", "uh huh", "why not", "absolutely", "please", "sounds good", "that's fine", "yes please", "mm hmm", "hit it"
+Examples of NO: "no", "nah", "nope", "cancel", "don't", "stop", "never mind", "forget it", "hold on", "wait", "not right now", "actually no", "scratch that", "back out"
+
+SPOKEN RESPONSE RULES:
+The spoken_response will be read aloud by a text-to-speech engine. Use plain spoken English only. No markdown, no emojis, no special characters. Keep it under 6 words.
+- If confirmed, spoken_response should be empty string "" (the action result will be spoken separately).
+- If not confirmed, use a short acknowledgement like "Okay, cancelled." or "No problem."."""
 
 INTENT_SYSTEM_PROMPT = """You are a Home Assistant voice controller. Given a user command and entity list, return ONLY a JSON object (no markdown, no explanation).
 
@@ -43,12 +57,38 @@ Valid actions:
 - deactivate_siren → service: siren/turn_off
 - check_state → no API call, just read cached state and report
 - add_shopping → service: todo/add_item (use service_data: {"item": "<item>"}, entity_id: the todo list entity)
+- exit → user wants to stop, leave, end the session, or says they are done
 - unknown → user request doesn't match any smart home action
 
 Fuzzy match entity names. "The floodlight" matches light.camera_1_floodlight. "Front door" matches binary_sensor.front_door_motion. Pick the best match from the entity list.
 
 For check_state, read the entity state from the list and include it in spoken_response.
-For unknown, set entity_id to "" and spoken_response to a helpful message."""
+For exit, set entity_id to "" and spoken_response to a short goodbye like "See ya."
+For unknown, set entity_id to "" and spoken_response to a helpful message.
+
+SPOKEN RESPONSE RULES:
+The spoken_response will be read aloud by a text-to-speech engine on a smart speaker. You must follow these rules strictly:
+- Use plain spoken English only. No markdown, no asterisks, no bullet points, no numbered lists, no emojis, no URLs, no special characters, no stage directions.
+- Keep confirmations and acknowledgements under 10 words (e.g. "Kitchen light is off.").
+- Keep state check responses to 1-2 short sentences, under 15 words total.
+- Keep unknown/help responses to 1-2 short sentences, under 20 words total.
+
+Examples of natural spoken commands and their JSON output:
+
+User: "Hey kill the kitchen lights"
+{"action": "turn_off", "entity_id": "light.kitchen", "service_data": {}, "spoken_response": "Kitchen lights are off."}
+
+User: "What's the garage door doing"
+{"action": "check_state", "entity_id": "cover.garage_door", "service_data": {}, "spoken_response": "The garage door is closed."}
+
+User: "Throw some milk on the shopping list"
+{"action": "add_shopping", "entity_id": "todo.shopping_list", "service_data": {"item": "milk"}, "spoken_response": "Added milk to the list."}
+
+User: "I'm done here"
+{"action": "exit", "entity_id": "", "service_data": {}, "spoken_response": "See ya."}
+
+User: "Flip on the porch light"
+{"action": "turn_on", "entity_id": "light.porch", "service_data": {}, "spoken_response": "Porch light is on."}"""
 
 
 class HomeAssistantAbility(MatchingCapability):
@@ -86,8 +126,7 @@ class HomeAssistantAbility(MatchingCapability):
 
             # Greet
             await self.capability_worker.speak(
-                f"Home Assistant connected. I found {entity_count} devices across "
-                f"{len(registry)} categories. What would you like to do?"
+                "Home Assistant is ready. What would you like to do?"
             )
 
             # Main conversation loop
@@ -97,11 +136,6 @@ class HomeAssistantAbility(MatchingCapability):
                 if not user_input or not user_input.strip():
                     await self.capability_worker.speak("I didn't catch that. Could you repeat?")
                     continue
-
-                # Check for exit
-                if any(word in user_input.lower() for word in EXIT_WORDS):
-                    await self.capability_worker.speak("Home Assistant control ended. Have a good one.")
-                    break
 
                 # Classify intent via LLM
                 intent = self._classify_intent(user_input, registry)
@@ -117,6 +151,11 @@ class HomeAssistantAbility(MatchingCapability):
                 service_data = intent.get("service_data", {})
                 spoken = intent.get("spoken_response", "Done.")
 
+                # Handle exit detected by LLM
+                if action == "exit":
+                    await self.capability_worker.speak(spoken)
+                    break
+
                 # Handle unknown
                 if action == "unknown":
                     await self.capability_worker.speak(spoken)
@@ -127,13 +166,17 @@ class HomeAssistantAbility(MatchingCapability):
                     await self.capability_worker.speak(spoken)
                     continue
 
-                # Safety confirmation for dangerous actions
+                # Safety confirmation for dangerous actions (LLM-classified)
                 if action in DANGEROUS_ACTIONS:
-                    confirmed = await self.capability_worker.run_confirmation_loop(
-                        f"Are you sure you want to {spoken.rstrip('.').lower()}?"
+                    await self.capability_worker.speak(
+                        f"Just to confirm, you want to {spoken.rstrip('.').lower()}?"
                     )
+                    confirm_input = await self.capability_worker.user_response()
+                    if not confirm_input or not confirm_input.strip():
+                        await self.capability_worker.speak("I didn't hear a response. Cancelling.")
+                        continue
+                    confirmed = self._classify_confirmation(confirm_input)
                     if not confirmed:
-                        await self.capability_worker.speak("Cancelled.")
                         continue
 
                 # Execute the action
@@ -247,6 +290,42 @@ class HomeAssistantAbility(MatchingCapability):
         except Exception as e:
             self.worker.editor_logging_handler.error(f"[HomeAssistant] LLM error: {e}")
             return None
+
+    def _classify_confirmation(self, user_input):
+        """Use LLM to classify a yes/no confirmation response."""
+        prompt = (
+            f"The user was asked to confirm a smart home action.\n"
+            f"USER RESPONSE: \"{user_input}\"\n\n"
+            "Return the JSON object."
+        )
+
+        try:
+            raw = self.capability_worker.text_to_text_response(
+                prompt=prompt,
+                history=[],
+                system_prompt=CONFIRMATION_SYSTEM_PROMPT,
+            )
+
+            json_str = raw.strip()
+            if json_str.startswith("```"):
+                parts = json_str.split("\n")
+                parts = [p for p in parts if not p.strip().startswith("```")]
+                json_str = "\n".join(parts).strip()
+
+            result = json.loads(json_str)
+            spoken = result.get("spoken_response", "")
+            if spoken:
+                self.worker.session_tasks.create(self.capability_worker.speak(spoken))
+            return result.get("confirmed", False)
+
+        except Exception as e:
+            self.worker.editor_logging_handler.error(
+                f"[HomeAssistant] Confirmation parse error: {e}"
+            )
+            self.worker.session_tasks.create(
+                self.capability_worker.speak("I couldn't tell. Cancelling to be safe.")
+            )
+            return False
 
     def _execute_action(self, action, entity_id, service_data):
         """Execute a Home Assistant service call."""
