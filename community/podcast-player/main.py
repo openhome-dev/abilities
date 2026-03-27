@@ -42,11 +42,11 @@ class PodcastPlayerCapability(MatchingCapability):
     def _wants(self, text: str, words: set[str]) -> bool:
         t = text.lower()
         return any(w in t for w in words)
-    
+
     # -------------------------------------------------------------------------
     # API Calls
     # -------------------------------------------------------------------------
-   
+
     async def classify_intent(self, user_input: str) -> dict:
         # Надсилаємо user_input LLM і отримуємо відповідь (можеш інтегрувати OpenAI GPT)
         prompt = f"""
@@ -61,14 +61,14 @@ class PodcastPlayerCapability(MatchingCapability):
         User said: "{user_input}"
         """
         llm_response = self.capability_worker.text_to_text_response(prompt_text=prompt)
-        
+
         try:
             data = json.loads(llm_response)
             return data
         except Exception:
             # fallback
             return {"intent": "unknown", "query": None}
-        
+
     def search_episodes(self, query: str):
         url = f"{BASE_URL}/search"
         params = {"q": query, "type": "episode", "sort_by_date": 0, "page_size": 5}
@@ -88,7 +88,7 @@ class PodcastPlayerCapability(MatchingCapability):
         response = requests.get(url, headers=self._headers(), timeout=10)
         response.raise_for_status()
         return response.json()
-    
+
     def get_podcast_episodes(self, podcast_id: str):
         url = f"{BASE_URL}/podcasts/{podcast_id}"
         params = {"sort": "recent_first"}
@@ -99,6 +99,7 @@ class PodcastPlayerCapability(MatchingCapability):
     # -------------------------------------------------------------------------
     # Playback
     # -------------------------------------------------------------------------
+
     def match_choice(self, user_input: str, options: list[dict], key: str):
         text = user_input.lower()
 
@@ -107,7 +108,7 @@ class PodcastPlayerCapability(MatchingCapability):
                 return opt
 
         return options[0] if options else None
-    
+
     async def play_episode(self, episode: dict, state: dict):
         state["current_episode"] = episode
         title = episode["title"]
@@ -128,13 +129,14 @@ class PodcastPlayerCapability(MatchingCapability):
                 for chunk in r.iter_content(chunk_size=4096):
                     if chunk:
                         await self.capability_worker.send_audio_data_in_stream(chunk)
-        except Exception as e:
+        except Exception:
             await self.capability_worker.speak("Had trouble loading that episode. Want to try a different one?")
         finally:
             await self.capability_worker.stream_end()
     # -------------------------------------------------------------------------
     # Main Flow
     # -------------------------------------------------------------------------
+
     async def run(self):
         try:
             state = {
@@ -159,10 +161,10 @@ class PodcastPlayerCapability(MatchingCapability):
                 if intent == "exit":
                     await self.capability_worker.speak("Stopping playback.")
                     break
-                
+
                 elif intent == "pause":
                     await self.capability_worker.speak("Paused.")
-                    continue        
+                    continue
                 # ---------------- RANDOM ----------------
                 elif intent == "play_random":
                     ep = self.random_episode()
@@ -183,72 +185,72 @@ class PodcastPlayerCapability(MatchingCapability):
 
                 # ---------------- PODCAST FLOW ----------------
                 elif intent == "play_podcast":
+                    if not query:
+                        await self.capability_worker.speak("Which podcast do you want to listen to?")
+                        query = await self.capability_worker.user_response()
                         if not query:
-                            await self.capability_worker.speak("Which podcast do you want to listen to?")
-                            query = await self.capability_worker.user_response()
-                            if not query:
-                                continue
-                            
-                        podcasts = self.search_podcasts(query)
-
-                        if not podcasts:
-                            await self.capability_worker.speak(
-                                "Couldn't find any podcasts for that — try another search?"
-                            )
                             continue
 
-                        # ---- TOP PODCASTS ----
-                        top = podcasts[:3]
-                        titles = [p["title_original"] for p in top]
+                    podcasts = self.search_podcasts(query)
 
-                        if len(titles) == 1:
-                            spoken_list = titles[0]
-                        else:
-                            spoken_list = f"{', '.join(titles[:-1])}, and {titles[-1]}"
-
+                    if not podcasts:
                         await self.capability_worker.speak(
-                            f"I found a few podcasts: {spoken_list}. Which one sounds right?"
+                            "Couldn't find any podcasts for that — try another search?"
                         )
-
-                        choice = await self.capability_worker.user_response()
-                        if not choice:
-                            continue
-
-                        # ---- MATCH PODCAST ----
-                        selected_podcast = self.match_choice(choice, top, "title_original")
-
-                        # ---- GET EPISODES ----
-                        episodes = self.get_podcast_episodes(selected_podcast["id"])
-
-                        if not episodes:
-                            await self.capability_worker.speak(
-                                "That podcast doesn't seem to have any episodes available."
-                            )
-                            continue
-
-                        latest_five = episodes[:5]
-                        ep_titles = [ep["title"] for ep in latest_five]
-
-                        if len(ep_titles) == 1:
-                            spoken_eps = ep_titles[0]
-                        else:
-                            spoken_eps = f"{', '.join(ep_titles[:-1])}, and {ep_titles[-1]}"
-
-                        await self.capability_worker.speak(
-                            f"Latest episodes from {selected_podcast['title_original']} include: {spoken_eps}. "
-                            "Which one do you want?"
-                        )
-
-                        ep_choice = await self.capability_worker.user_response()
-                        if not ep_choice:
-                            continue
-
-                        # ---- MATCH EPISODE ----
-                        selected_episode = self.match_choice(ep_choice, latest_five, "title")
-
-                        await self.play_episode(selected_episode, state)
                         continue
-                    
+
+                    # ---- TOP PODCASTS ----
+                    top = podcasts[:3]
+                    titles = [p["title_original"] for p in top]
+
+                    if len(titles) == 1:
+                        spoken_list = titles[0]
+                    else:
+                        spoken_list = f"{', '.join(titles[:-1])}, and {titles[-1]}"
+
+                    await self.capability_worker.speak(
+                        f"I found a few podcasts: {spoken_list}. Which one sounds right?"
+                    )
+
+                    choice = await self.capability_worker.user_response()
+                    if not choice:
+                        continue
+
+                    # ---- MATCH PODCAST ----
+                    selected_podcast = self.match_choice(choice, top, "title_original")
+
+                    # ---- GET EPISODES ----
+                    episodes = self.get_podcast_episodes(selected_podcast["id"])
+
+                    if not episodes:
+                        await self.capability_worker.speak(
+                            "That podcast doesn't seem to have any episodes available."
+                        )
+                        continue
+
+                    latest_five = episodes[:5]
+                    ep_titles = [ep["title"] for ep in latest_five]
+
+                    if len(ep_titles) == 1:
+                        spoken_eps = ep_titles[0]
+                    else:
+                        spoken_eps = f"{', '.join(ep_titles[:-1])}, and {ep_titles[-1]}"
+
+                    await self.capability_worker.speak(
+                        f"Latest episodes from {selected_podcast['title_original']} include: {spoken_eps}. "
+                        "Which one do you want?"
+                    )
+
+                    ep_choice = await self.capability_worker.user_response()
+                    if not ep_choice:
+                        continue
+
+                    # ---- MATCH EPISODE ----
+                    selected_episode = self.match_choice(ep_choice, latest_five, "title")
+
+                    await self.play_episode(selected_episode, state)
+                    continue
+
                 # ---------------- EPISODE SEARCH FLOW ----------------
                 elif intent == "play_episode":
 
@@ -296,7 +298,6 @@ class PodcastPlayerCapability(MatchingCapability):
                     await self.play_episode(selected_episode, state)
                     continue
 
-
         except Exception as e:
             self.worker.editor_logging_handler.error(f"[PodcastPlayer] Error: {e}")
             await self.capability_worker.speak(
@@ -304,4 +305,3 @@ class PodcastPlayerCapability(MatchingCapability):
             )
 
         self.capability_worker.resume_normal_flow()
-    
