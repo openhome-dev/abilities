@@ -1,4 +1,3 @@
-import json
 import requests
 from src.agent.capability import MatchingCapability
 from src.main import AgentWorker
@@ -39,7 +38,7 @@ class SanctuaryCompanionCapability(MatchingCapability):
     session_cookie: str = None
 
     # Do not change following tag of register capability
-    #{{register capability}}
+    # {{register capability}}
 
     def call(self, worker: AgentWorker):
         self.worker = worker
