@@ -9,42 +9,6 @@ from src.agent.capability import MatchingCapability
 from src.agent.capability_worker import CapabilityWorker
 from src.main import AgentWorker
 
-EXIT_WORDS = {
-    "stop",
-    "exit",
-    "quit",
-    "done",
-    "cancel",
-    "bye",
-    "goodbye",
-    "that's all",
-    "thats all",
-    "forget it",
-    "never mind",
-    "nevermind",
-    "leave it",
-    "i'm good",
-    "im good",
-    "that's it",
-    "thats it",
-    "all done",
-    "no thanks",
-    "actually",
-}
-
-AFFIRMATIVE_WORDS = {
-    "ready",
-    "ok",
-    "okay",
-    "go ahead",
-    "yep",
-    "yeah",
-    "sure",
-    "done",
-    "good to go",
-    "alright",
-    "all right",
-}
 
 VOICE_COLORS = {
     "red": (0.675, 0.322),
@@ -91,6 +55,29 @@ Available scenes: {scene_names}
 
 User said: "{user_input}"
 
+Natural speech examples:
+  "dim the bedroom" → set_brightness, target_name=bedroom, brightness=30
+  "make it brighter in here" → set_brightness, brightness=80
+  "kill the lights" → all_off
+  "everything off" → all_off
+  "lights on everywhere" → all_on
+  "chill vibes in the living room" → activate_scene or set_temp (warm)
+  "what's going on with the lights" → status
+  "is anything on" → status
+  "which rooms do I have" → list_rooms
+  "make the office blue" → set_color, target_name=office, color=blue
+  "set a cozy mood" → set_temp, color_temp=warm
+  "reading light in the study" → set_temp, color_temp=cool white
+
+For color: normalize spoken variants to the nearest standard color name.
+  "sky blue" / "light blue" → blue, "teal" → turquoise, "hot pink" / "rose" → pink,
+  "amber" / "golden" → gold, "mint" / "mint green" → lime, "indigo" → purple, "peach" → coral
+
+For color_temp: normalize spoken variants to the nearest standard temp name.
+  "cozy" / "relaxed" / "relaxing" → warm, "reading light" / "bright" → daylight,
+  "soft" → soft white, "natural" → neutral, "dim" / "dimmed" → candlelight,
+  "like a candle" → candlelight
+
 JSON schema:
 {{
   "intent": "turn_on|turn_off|set_brightness|set_color|set_temp|activate_scene|status|list_rooms|list_scenes|all_off|all_on|help|exit|unknown",
@@ -98,7 +85,7 @@ JSON schema:
   "target_name": "room or light name" or null,
   "target_type": "room|light|all" or null,
   "brightness": 1-100 or null,
-  "color": "color name" or null,
+  "color": "red|orange|yellow|green|cyan|blue|purple|violet|magenta|pink|white|sunset|forest|ocean|lavender|coral|turquoise|gold|lime" or null,
   "color_temp": "warm|cool|daylight|candlelight|warm white|cool white|soft white|neutral|bright white" or null,
   "scene_name": "scene name" or null
 }}
@@ -106,6 +93,13 @@ JSON schema:
 
 EXIT_CLASSIFY_PROMPT = """Is the user trying to stop or exit this Philips Hue ability?
 User said: "{user_input}"
+
+YES examples: 'stop', 'I'm done', 'that's all I needed', 'nah I'm good', 'never mind',
+  'bye', 'later', 'see ya', 'that's enough', 'wrap it up', 'peace', 'shut it down'
+NO examples: 'make the bedroom blue', 'turn off the kitchen', 'what about the living room',
+  'set it to 50 percent', 'is anything on'
+
+IMPORTANT: 'actually make it blue' or 'actually turn off the kitchen' are NOT exit — they are commands.
 Return YES or NO only.
 """
 
@@ -142,21 +136,22 @@ class PhilipsHueControlCapability(MatchingCapability):
         await self.capability_worker.speak(text)
 
     def _looks_affirmative(self, text: str) -> bool:
-        lower = (text or "").lower().strip()
-        return any(phrase in lower for phrase in AFFIRMATIVE_WORDS)
+        raw = self.capability_worker.text_to_text_response(
+            f"The user said: \"{text}\"\n"
+            "Are they saying yes, confirming, or indicating readiness?\n"
+            "YES examples: 'yes', 'yeah', 'yep', 'sure', 'ok', 'ready', 'go ahead', "
+            "'do it', 'let's go', 'for sure', 'sounds good', 'I'm ready', 'got it', "
+            "'alright', 'go for it', 'absolutely', 'let's do it', 'yup'\n"
+            "NO examples: 'no', 'nah', 'wait', 'hold on', 'not yet', 'cancel'\n"
+            "Reply with exactly one word: YES or NO."
+        )
+        return (raw or "").strip().upper().startswith("YES")
 
     async def _is_exit_intent(self, user_input: str) -> bool:
         raw = self.capability_worker.text_to_text_response(
             EXIT_CLASSIFY_PROMPT.format(user_input=user_input)
         )
-        decision = (raw or "").strip().lower()
-        if decision.startswith("yes"):
-            return True
-        if decision.startswith("no"):
-            return False
-        # Fallback when model output is malformed.
-        lower = user_input.lower().strip()
-        return any(phrase in lower for phrase in EXIT_WORDS)
+        return (raw or "").strip().upper().startswith("YES")
 
     def _extract_ipv4(self, text: str) -> Optional[str]:
         if not text:
@@ -363,20 +358,25 @@ class PhilipsHueControlCapability(MatchingCapability):
             bridge_id = discovered[0]["id"]
         else:
             await self.capability_worker.speak(
-                "I couldn't auto-discover a bridge. Please say only your bridge IP address."
+                "I couldn't find a bridge on your network. What's your bridge's IP address?"
             )
             bridge_ip = ""
-            for _ in range(3):
+            user_ip = await self.capability_worker.user_response()
+            parsed_ip = self._extract_ipv4((user_ip or "").strip())
+            if parsed_ip:
+                bridge_ip = parsed_ip
+            else:
+                await self.capability_worker.speak(
+                    "Didn't catch that. Try something like 192 dot 168 dot 1 dot 45."
+                )
                 user_ip = await self.capability_worker.user_response()
                 parsed_ip = self._extract_ipv4((user_ip or "").strip())
                 if parsed_ip:
                     bridge_ip = parsed_ip
-                    break
-                await self.capability_worker.speak(
-                    "Didn't catch that IP. Try something like 192 dot 168 dot 1 dot 45."
-                )
             if not bridge_ip:
-                await self._safe_exit("Setup cancelled. I still need a valid bridge IP.")
+                await self._safe_exit(
+                    "I'm having trouble hearing the IP. You can set it up in the app settings."
+                )
                 return False
 
         details = self._validate_bridge(bridge_ip)
@@ -397,10 +397,13 @@ class PhilipsHueControlCapability(MatchingCapability):
         pair_result = self._create_app_key(bridge_ip)
         if pair_result.get("error") == "link_button_not_pressed":
             await self.capability_worker.speak(
-                "Didn't catch the button press. Try once more and say ready."
+                "Didn't catch the button press. Press it now and say ready when done."
             )
-            await self.capability_worker.user_response()
-            pair_result = self._create_app_key(bridge_ip)
+            readiness2 = await self.capability_worker.user_response()
+            if self._looks_affirmative(readiness2 or ""):
+                pair_result = self._create_app_key(bridge_ip)
+            else:
+                pair_result = self._create_app_key(bridge_ip)
 
         if "username" not in pair_result:
             await self._safe_exit("I couldn't pair with the bridge right now.")
@@ -636,7 +639,7 @@ class PhilipsHueControlCapability(MatchingCapability):
         resolved_type, resolved_data = await self.resolve_target(target_name, target_type)
         if not resolved_data:
             await self.capability_worker.speak(
-                f"I don't see {target_name}. Rooms: {self._format_targets()}."
+                f"I don't see {target_name}. Your rooms are {self._format_targets()}."
             )
             return
 
@@ -685,7 +688,7 @@ class PhilipsHueControlCapability(MatchingCapability):
                 / len(room_lights)
             )
             await self.capability_worker.speak(
-                f"{resolved_data['name']}: {on_count} of {len(room_lights)} on, about {avg_bright} percent."
+                f"{resolved_data['name']} has {on_count} of {len(room_lights)} lights on, at about {avg_bright} percent."
             )
 
     async def _handle_user_command(self, user_input: str):
@@ -706,15 +709,17 @@ class PhilipsHueControlCapability(MatchingCapability):
 
         if intent == "help":
             await self.capability_worker.speak(
-                "Try saying turn off the kitchen, set bedroom to 50 percent, make office blue, or activate movie night."
+                "Try things like turn off the kitchen, set bedroom to fifty percent, or make office blue."
             )
             return False
 
         if intent == "list_rooms":
             room_names = [r["name"] for r in self.room_cache.values()]
             if room_names:
+                room_list = ', '.join(room_names[:6])
+                suffix = ', and more.' if len(room_names) > 6 else '.'
                 await self.capability_worker.speak(
-                    f"You have {len(room_names)} rooms: {', '.join(room_names)}."
+                    f"You have {len(room_names)} rooms. {room_list}{suffix}"
                 )
             else:
                 await self.capability_worker.speak("I couldn't find any rooms.")
@@ -723,8 +728,10 @@ class PhilipsHueControlCapability(MatchingCapability):
         if intent == "list_scenes":
             scene_names = [s["name"] for s in self.scene_cache.values()]
             if scene_names:
+                scene_list = ', '.join(scene_names[:5])
+                suffix = ', and more.' if len(scene_names) > 5 else '.'
                 await self.capability_worker.speak(
-                    f"Available scenes: {', '.join(scene_names[:10])}."
+                    f"Your scenes are {scene_list}{suffix}"
                 )
             else:
                 await self.capability_worker.speak("I couldn't find any scenes.")
@@ -768,7 +775,7 @@ class PhilipsHueControlCapability(MatchingCapability):
         if intent in {"turn_on", "turn_off", "set_brightness", "set_color", "set_temp"}:
             if not target_name and target_type != "all":
                 await self.capability_worker.speak(
-                    f"Which room or light? Rooms: {self._format_targets()}."
+                    f"Which room or light? You have {self._format_targets()}."
                 )
                 return False
 
@@ -784,7 +791,7 @@ class PhilipsHueControlCapability(MatchingCapability):
 
             if not resolved_data:
                 await self.capability_worker.speak(
-                    f"I don't see {target_name}. Try one of: {self._format_targets()}."
+                    f"I don't see {target_name}. Try {self._format_targets()}."
                 )
                 return False
 
@@ -851,7 +858,7 @@ class PhilipsHueControlCapability(MatchingCapability):
             else:
                 if err == "color_not_supported":
                     await self.capability_worker.speak(
-                        "That light doesn't do color - try brightness or white temperature instead."
+                        "That light doesn't do color. Try brightness or temperature instead."
                     )
                 elif err == "temp_not_supported":
                     await self.capability_worker.speak(
