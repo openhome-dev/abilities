@@ -106,11 +106,18 @@ class HomeAssistantAbility(MatchingCapability):
 
     async def run(self):
         try:
+            # Validate configuration: token must be non-empty and URL must start with http
+            if not HA_TOKEN or not HA_URL or not HA_URL.startswith("http"):
+                await self.capability_worker.speak(
+                    "This ability isn't configured yet."
+                )
+                return
+
             # Fetch entities from HA
             entities = self._fetch_entities()
             if entities is None:
                 await self.capability_worker.speak(
-                    "I couldn't connect to Home Assistant. Please check the connection and try again."
+                    "Couldn't reach your smart home. Check your connection and try again."
                 )
                 return
 
@@ -120,13 +127,13 @@ class HomeAssistantAbility(MatchingCapability):
 
             if entity_count == 0:
                 await self.capability_worker.speak(
-                    "I connected to Home Assistant but found no controllable devices."
+                    "Connected, but I didn't find any controllable devices."
                 )
                 return
 
             # Greet
             await self.capability_worker.speak(
-                "Home Assistant is ready. What would you like to do?"
+                "Connected. What would you like to do?"
             )
 
             # Main conversation loop
@@ -134,7 +141,7 @@ class HomeAssistantAbility(MatchingCapability):
                 user_input = await self.capability_worker.user_response()
 
                 if not user_input or not user_input.strip():
-                    await self.capability_worker.speak("I didn't catch that. Could you repeat?")
+                    await self.capability_worker.speak("Didn't catch that — go ahead.")
                     continue
 
                 # Classify intent via LLM
@@ -142,7 +149,7 @@ class HomeAssistantAbility(MatchingCapability):
 
                 if intent is None:
                     await self.capability_worker.speak(
-                        "I had trouble understanding that. Could you try rephrasing?"
+                        "Not sure what you mean — try saying it differently."
                     )
                     continue
 
@@ -186,7 +193,7 @@ class HomeAssistantAbility(MatchingCapability):
                     await self.capability_worker.speak(spoken)
                 else:
                     await self.capability_worker.speak(
-                        "Sorry, I couldn't complete that action. Please check Home Assistant."
+                        "Couldn't do that — the device might be unavailable."
                     )
 
         except Exception as e:
