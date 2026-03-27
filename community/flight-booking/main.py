@@ -28,7 +28,7 @@ class FlightBookingCapability(MatchingCapability):
     api_key: str = None
 
     # Do not change following tag of register capability
-    #{{register capability}}
+    # {{register capability}}
 
     DUFFEL_BASE: ClassVar[str] = "https://api.duffel.com"
     DUFFEL_API_KEY: ClassVar[str] = "duffel_test_YOUR_KEY_HERE"
@@ -1090,8 +1090,8 @@ class FlightBookingCapability(MatchingCapability):
 
             # Step 11: Speak confirmation
             pay_by_raw = (
-                order.get("payment_required_by") or
-                order.get("payment_status", {}).get("payment_required_by", "")
+                order.get("payment_required_by")
+                or order.get("payment_status", {}).get("payment_required_by", "")
             )
             ref_spoken = ", ".join(list(booking_ref)) if booking_ref else "unavailable"
 
