@@ -41,6 +41,6 @@ Format: - **@username** — ability-name ([ability-name](community/ability-name/
 - **[@saifrehman100](https://github.com/saifrehman100)** — github-voice-manager ([github-voice-manager](community/github-voice-manager/))
 - **[@melodygui](https://github.com/melodygui)** — restaurant-recommendation ([restaurant-recommendation](community/restaurant-recommendation/))
 - **[@FHLiang221](https://github.com/FHLiang221)** — quiet-company ([quiet-company](community/quiet-company/))
-- **[@harmsolo13](https://github.com/harmsolo13)** — dungeon-master-voice ([dungeon-master-voice](community/dungeon-master-voice/))
+- **[@harmsolo13](https://github.com/harmsolo13)** — dungeon-master-voice ([dungeon-master-voice](community/dungeon-master-voice/)), home-assistant-voice-control ([home-assistant-voice-control](community/home-assistant-voice-control/))
 - **[@mahsumaktas](https://github.com/mahsumaktas)** — prayer-times ([prayer-times](community/prayer-times/))
 - **[@brianchilders](https://github.com/brianchilders)** — airthings ([airthings](community/airthings/))
