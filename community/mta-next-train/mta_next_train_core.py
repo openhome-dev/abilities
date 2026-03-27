@@ -3,12 +3,10 @@ from __future__ import annotations
 import difflib
 import json
 import re
-import urllib.parse
-import urllib.request
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Sequence
 
-
+import requests
 API_BASE_URL = "https://subwayinfo.nyc/api"
 ACTION_SET_DEFAULT = "set_default"
 ACTION_ARRIVALS = "arrivals"
@@ -232,20 +230,40 @@ def extract_direction(normalized_text: str) -> Optional[str]:
 
 
 def fetch_json(url: str, timeout: int = 12) -> object:
-    request = urllib.request.Request(
+    response = requests.get(
         url,
         headers={
             "User-Agent": "OpenHome-MTA-Next-Train/1.0",
             "Accept": "application/json",
         },
-        method="GET",
+        timeout=timeout,
     )
-    with urllib.request.urlopen(request, timeout=timeout) as response:
-        return json.loads(response.read().decode("utf-8"))
+    response.raise_for_status()
+    return response.json()
+
+
+def urlencode(params: Dict[str, object]) -> str:
+    parts = []
+    for key, value in params.items():
+        parts.append(f"{escape_query_value(str(key))}={escape_query_value(str(value))}")
+    return "&".join(parts)
+
+
+def escape_query_value(value: str) -> str:
+    safe = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_.~"
+    out = []
+    for ch in value:
+        if ch in safe:
+            out.append(ch)
+        elif ch == " ":
+            out.append("+")
+        else:
+            out.append(f"%{ord(ch):02X}")
+    return "".join(out)
 
 
 def search_stations(query: str, limit: int = 5) -> List[Station]:
-    params = urllib.parse.urlencode({"query": query, "limit": limit})
+    params = urlencode({"query": query, "limit": limit})
     payload = fetch_json(f"{API_BASE_URL}/stations?{params}")
     if not isinstance(payload, list):
         return []
@@ -258,7 +276,7 @@ def fetch_arrivals(station_id: str, routes: Sequence[str], direction: Optional[s
         params["line"] = routes[0]
     if direction:
         params["direction"] = direction
-    payload = fetch_json(f"{API_BASE_URL}/arrivals?{urllib.parse.urlencode(params)}")
+    payload = fetch_json(f"{API_BASE_URL}/arrivals?{urlencode(params)}")
     if not isinstance(payload, dict):
         return []
     raw_arrivals = payload.get("arrivals", [])

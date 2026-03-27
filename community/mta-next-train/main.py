@@ -13,13 +13,7 @@ from mta_next_train_core import (
 from src.main import AgentWorker
 from src.agent.capability_worker import CapabilityWorker
 from src.agent.capability import MatchingCapability
-import os
-import sys
 from typing import Dict, Optional
-
-CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
-if CURRENT_DIR not in sys.path:
-    sys.path.append(CURRENT_DIR)
 
 
 PREFS_KEY = "mta_next_train_prefs"
