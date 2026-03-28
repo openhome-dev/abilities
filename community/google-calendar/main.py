@@ -2,6 +2,7 @@ import json
 import re
 import requests
 from datetime import datetime, timedelta
+from time import time as epoch_now
 from zoneinfo import ZoneInfo
 from src.agent.capability import MatchingCapability
 from src.main import AgentWorker
@@ -21,10 +22,12 @@ LOCAL_TZ = ZoneInfo(DEFAULT_TIMEZONE)
 
 LATE_NIGHT_CUTOFF = 4
 
+EVENTS_CACHE_FILE = "gcal_events_cache.json"
+EVENTS_CACHE_MAX_AGE = 90  # seconds — fall back to API if cache is older than this
+
 # =============================================================================
 # TIMEZONE / DATE HELPERS
 # =============================================================================
-
 
 def get_local_now() -> datetime:
     return datetime.now(LOCAL_TZ)
@@ -108,7 +111,6 @@ def get_today_context() -> dict:
 # LLM PROMPTS
 # =============================================================================
 
-
 # Behavioral context injected into extraction prompts so the LLM understands
 # relative time phrases ("this afternoon", "tonight", "this evening") correctly.
 TIME_CONTEXT_BLOCK = """RIGHT NOW it is {current_time} on {day_name}, {today}. It is currently {time_bucket}.
@@ -126,20 +128,35 @@ RELATIVE TIME INTERPRETATION:
 - "after work" = around 5 PM or 6 PM
 - If the user says a bare time like "at 3" without AM/PM, infer based on context:
   - If it's currently morning and they say "at 3", they likely mean 3 PM
-  - If it's currently evening and they say "at 7", they likely mean 7 PM today or tomorrow morning"""
+  - If it's currently evening and they say "at 7", they likely mean 7 PM today or tomorrow morning
+
+OFFICE SLANG:
+- "EOD" or "end of day" = 5 PM or 6 PM
+- "COB" = end of business day = 5 PM
+- "bump this/it" = reschedule
+- "circle back" = revisit or reschedule
+- "loop in [name]" = invite that person
+- "block time" / "block off" = schedule a hold
+- "spin up a meeting" = schedule a meeting
+- "table it" / "drop it" = cancel or remove"""
 
 # Voice personality prompt — shapes how the LLM generates spoken output.
-VOICE_SYSTEM_PROMPT = """You are a sharp, concise voice assistant managing someone's calendar.
+VOICE_SYSTEM_PROMPT = """You are a sharp, friendly assistant who manages someone's calendar like a trusted EA.
 
 Rules:
 - Keep responses to 2-3 sentences max. This is voice, not text.
-- Be conversational and natural, like a sharp assistant who knows their day.
-- Never use bullet points, numbered lists, or markdown formatting.
+- Never feel like a phone menu. Talk like a real person who knows what's going on.
+- Use natural acknowledgments: "On it", "Sure thing", "Let me grab that", "Got it"
+- Vary your phrasing — don't repeat the same confirmation every time.
 - When summarizing calendar events, mention time, title, and relevant context naturally.
-- No emojis, no quotation marks, no special characters.
+- No bullet points, numbered lists, or markdown formatting.
+- No emojis, no quotation marks around titles, no special characters.
 - When reading email addresses, say "at" instead of "@".
 - Speak directly to the person (use 'you').
-- Do NOT be sycophantic. Be helpful and direct."""
+- Do NOT be sycophantic. Be helpful and direct, not stiff.
+- You understand office vernacular: "bump" means reschedule, "circle back" means revisit or reschedule,
+  "loop in" means invite someone, "table it" means drop/cancel for now, "block time" means schedule a hold,
+  "spin up a meeting" means schedule one, "EOD" means end of day around 5 PM."""
 
 EXTRACT_MEETING_PROMPT = """You are a meeting detail extractor. Extract meeting information from the user's input.
 Return ONLY a JSON object with these fields:
@@ -150,6 +167,10 @@ Return ONLY a JSON object with these fields:
 - "duration_explicit": boolean (true ONLY if the user explicitly stated a duration like '1 hour', '45 minutes', or an end time. false if you used the 30-minute default)
 - "description": string (any additional notes, or empty string)
 - "attendee_names": list of strings (names of people mentioned as attendees/participants, or empty list. e.g. if user says 'meeting with Jake', include 'Jake')
+- "recurring_weekly": boolean (true if user says "every week", "weekly", "recurring", "every Monday", "weekly standup", etc. false otherwise)
+- "reminder_minutes": integer or null (ONLY if the user explicitly requests a specific reminder window, e.g. "remind me 15 minutes before", "give me a 10 minute heads up", "ping me 5 min early". null if not specified)
+
+IMPORTANT for recurring events: If "recurring_weekly" is true and the user names a specific day of the week (e.g. "every Friday", "every Monday"), resolve "date" to the next upcoming occurrence of that weekday using the today date from the time context below. Do NOT leave "date" as null in this case.
 
 """ + TIME_CONTEXT_BLOCK + """
 
@@ -367,13 +388,16 @@ class GcalIntegrationCapability(MatchingCapability):
     # =========================================================================
 
     def create_event(self, summary: str, start_iso: str, end_iso: str,
-                     description: str = "", attendees: list = None) -> dict:
+                     description: str = "", attendees: list = None,
+                     recurring_weekly: bool = False) -> dict:
         event_body = {
             "summary": summary,
             "description": description,
             "start": {"dateTime": start_iso, "timeZone": DEFAULT_TIMEZONE},
             "end": {"dateTime": end_iso, "timeZone": DEFAULT_TIMEZONE},
         }
+        if recurring_weekly:
+            event_body["recurrence"] = ["RRULE:FREQ=WEEKLY"]
         if attendees:
             event_body["attendees"] = [{"email": a["email"]} for a in attendees]
 
@@ -824,6 +848,8 @@ class GcalIntegrationCapability(MatchingCapability):
             await self.handle_query_attendees(action_text)
         elif intent == "RENAME":
             await self.handle_rename_event(action_text)
+        elif intent == "MAKE_RECURRING":
+            await self.handle_make_recurring(action_text)
         elif intent == "RESCHEDULE":
             await self.handle_reschedule_event(action_text)
         elif intent == "INVITE":
@@ -832,6 +858,12 @@ class GcalIntegrationCapability(MatchingCapability):
             await self.handle_delete_event(action_text)
         elif intent == "REMOVE_ATTENDEE":
             await self.handle_remove_attendee(action_text)
+        elif intent == "ACCEPT_INVITE":
+            await self.handle_respond_to_invite(action_text, "accepted")
+        elif intent == "DECLINE_INVITE":
+            await self.handle_respond_to_invite(action_text, "declined")
+        elif intent == "SET_REMINDER":
+            await self.handle_set_reminder(action_text)
         elif intent == "SCHEDULE":
             await self.handle_schedule_event(action_text)
 
@@ -846,6 +878,8 @@ class GcalIntegrationCapability(MatchingCapability):
         if "cancel" in lower:
             # Strip "cancel" and see what's left
             after_cancel = re.sub(r"^.*?\bcancel\b\s*", "", lower, count=1).strip()
+            # Remove trailing/leading punctuation before comparing
+            after_cancel = after_cancel.strip(".,!?")
             # Bare cancel, or only vague words left → EXIT
             exit_remainders = ["", "that", "it", "this", "never mind", "nope"]
             if after_cancel in exit_remainders:
@@ -906,9 +940,17 @@ class GcalIntegrationCapability(MatchingCapability):
         if any(s in lower for s in delete_signals):
             return "DELETE"
 
+        # ── ACCEPT_INVITE / DECLINE_INVITE — must come before INVITE ──
+        if re.search(r"\b(accept|confirm|rsvp yes)\b", lower):
+            if not any(s in lower for s in ["schedule", "book", "create", "set up", "new"]):
+                return "ACCEPT_INVITE"
+        if re.search(r"\b(decline|reject|rsvp no|turn down)\b", lower):
+            if not any(s in lower for s in ["schedule", "book", "create", "set up", "new"]):
+                return "DECLINE_INVITE"
+
         # ── INVITE: add a *person* to an existing event ──
         if "invite" in lower:
-            if not any(s in lower for s in ["schedule", "book", "create", "set up", "new"]):
+            if not any(s in lower for s in ["schedule", "book", "create", "set up", "new", "accept", "decline"]):
                 return "INVITE"
         # "add X to the meeting/standup/call/etc."
         if re.search(r"\badd\b.+\bto\b.+\b(meeting|event|standup|call|sync|huddle|session|appointment)\b", lower):
@@ -921,18 +963,46 @@ class GcalIntegrationCapability(MatchingCapability):
         ]):
             return "INVITE"
 
+        # ── SET_REMINDER: update reminder preference for a meeting ──
+        if re.search(r"\b(remind me|set a reminder|reminder for|ping me|alert me)\b", lower):
+            if any(s in lower for s in ["before", "minutes", "minute", "mins", "min", "ahead"]):
+                return "SET_REMINDER"
+        if re.search(r"\bno reminder\b|\bskip.*reminder\b|\breminder.*off\b", lower):
+            return "SET_REMINDER"
+
+        # ── MAKE_RECURRING: convert an existing event to repeat weekly ──
+        if re.search(r"\b(make|set|turn)\b.{0,20}\b(recurring|repeat|weekly|repeating)\b", lower):
+            return "MAKE_RECURRING"
+        if re.search(r"\b(recurring|repeat|weekly|repeating)\b.{0,20}\b(it|that|this)\b", lower):
+            return "MAKE_RECURRING"
+
         # ── RESCHEDULE: move an existing event ──
         reschedule_signals = [
             "reschedule", "move my", "move the", "push my", "push the",
             "shift my", "shift the", "change the time", "change my",
             "instead of", "move it to", "push it to", "push to",
             "swap the time",
+            # Corporate slang
+            "bump this", "bump it", "bump the", "bump my",
+            "circle back on", "circle back about",
         ]
         if any(s in lower for s in reschedule_signals):
             return "RESCHEDULE"
         # Catch "move [event name] to [time]" — e.g., "move test meeting to 8AM"
         if re.search(r"\bmove\b.+\bto\b", lower):
             return "RESCHEDULE"
+
+        # ── INVITE: loop in [name] ──
+        if re.search(r"\bloop\s+in\b", lower):
+            return "INVITE"
+
+        # ── DELETE: table it / drop it (corporate slang for cancel) ──
+        if any(s in lower for s in ["table this", "table it", "table the", "drop this", "drop it", "drop the meeting"]):
+            return "DELETE"
+
+        # ── SCHEDULE: block time / spin up (corporate slang for create) ──
+        if any(s in lower for s in ["block some time", "block off", "block out", "spin up a meeting", "spin up a call"]):
+            return "SCHEDULE"
 
         # ── SCHEDULE: create a new event (default) ──
         return "SCHEDULE"
@@ -1001,10 +1071,13 @@ class GcalIntegrationCapability(MatchingCapability):
         return [{"date": ctx["today"], "label": "today"}]
 
     def find_matching_event(self, event_hint: str, original_time: str = None,
-                            original_date: str = None) -> dict:
+                            original_date: str = None,
+                            preloaded_events: list = None) -> dict:
         """
         Search upcoming events and fuzzy-match the user's description.
         Returns the matched event dict (with 'id', 'summary', 'start', etc.) or None.
+
+        Pass preloaded_events (from load_events_cache) to skip the API call.
         """
         # Shortcut: if the user says "that meeting", "this meeting", "the same one", etc.
         # and we have a recently-touched event, use it directly
@@ -1027,19 +1100,35 @@ class GcalIntegrationCapability(MatchingCapability):
                     return refreshed
             return self.last_event
 
-        today = get_effective_today().strftime("%Y-%m-%d")
-
-        # If user mentioned the original date, search just that day ± 1
-        # Otherwise search a 30-day window
-        if original_date:
-            orig = datetime.strptime(original_date, "%Y-%m-%d")
-            start_date = (orig - timedelta(days=1)).strftime("%Y-%m-%d")
-            end_date = (orig + timedelta(days=1)).strftime("%Y-%m-%d")
+        if preloaded_events is not None:
+            # Use the provided cache — filter by original_date if given
+            events = preloaded_events
+            if original_date:
+                try:
+                    orig = datetime.strptime(original_date, "%Y-%m-%d").date()
+                    events = [
+                        ev for ev in events
+                        if abs((datetime.fromisoformat(
+                            ev.get("start", {}).get("dateTime", "").replace("Z", "+00:00")
+                        ).date() - orig).days) <= 1
+                    ]
+                except Exception:
+                    pass
+            self.worker.editor_logging_handler.info(
+                f"[GCal] find_matching_event using preloaded cache ({len(events)} events after filter)."
+            )
         else:
-            start_date = today
-            end_date = (get_effective_today() + timedelta(days=30)).strftime("%Y-%m-%d")
-
-        events = self.list_events_in_range(start_date, end_date)
+            today = get_effective_today().strftime("%Y-%m-%d")
+            # If user mentioned the original date, search just that day ± 1
+            # Otherwise search a 30-day window
+            if original_date:
+                orig = datetime.strptime(original_date, "%Y-%m-%d")
+                start_date = (orig - timedelta(days=1)).strftime("%Y-%m-%d")
+                end_date = (orig + timedelta(days=1)).strftime("%Y-%m-%d")
+            else:
+                start_date = today
+                end_date = (get_effective_today() + timedelta(days=30)).strftime("%Y-%m-%d")
+            events = self.list_events_in_range(start_date, end_date)
 
         if not events:
             return None
@@ -1279,6 +1368,146 @@ class GcalIntegrationCapability(MatchingCapability):
             return get_today_context()["today"]
 
     # =========================================================================
+    # SCHEDULE MD (personality memory)
+    # =========================================================================
+
+    def _format_schedule_duration(self, minutes: int) -> str:
+        if minutes >= 60 and minutes % 60 == 0:
+            hrs = minutes // 60
+            return f"{hrs} hr"
+        elif minutes > 60:
+            hrs = minutes // 60
+            mins = minutes % 60
+            return f"{hrs} hr {mins} min"
+        return f"{minutes} min"
+
+    async def load_events_cache(self) -> list:
+        """
+        Return the cached event list written by background.py.
+        Falls back to a direct 7-day API fetch if the cache is missing or stale.
+        Direct API calls are only kept for: conflict checks, post-mutation refreshes,
+        and fetching a single event by ID.
+        """
+        try:
+            exists = await self.capability_worker.check_if_file_exists(EVENTS_CACHE_FILE, False)
+            if exists:
+                raw = await self.capability_worker.read_file(EVENTS_CACHE_FILE, False)
+                if raw:
+                    data = json.loads(raw)
+                    age = epoch_now() - data.get("updated_at", 0)
+                    if age <= EVENTS_CACHE_MAX_AGE:
+                        events = data.get("events", [])
+                        self.worker.editor_logging_handler.info(
+                            f"[GCal] Using events cache ({age:.1f}s old, {len(events)} events)."
+                        )
+                        return events
+                    else:
+                        self.worker.editor_logging_handler.info(
+                            f"[GCal] Cache stale ({age:.1f}s) — falling back to API."
+                        )
+        except Exception as e:
+            self.worker.editor_logging_handler.error(f"[GCal] Cache read error: {e} — falling back to API.")
+
+        # Fallback: direct API call for next 7 days
+        today = get_effective_today().strftime("%Y-%m-%d")
+        end_date = (get_effective_today() + timedelta(days=7)).strftime("%Y-%m-%d")
+        return self.list_events_in_range(today, end_date)
+
+    async def save_event_reminder(self, event_id: str, reminder_minutes: int):
+        """
+        Persist a per-event reminder override in gcal_event_reminders.json.
+        background.py checks this file by event ID before falling back to title-based prefs.
+        """
+        REMINDERS_FILE = "gcal_event_reminders.json"
+        try:
+            existing = {}
+            exists = await self.capability_worker.check_if_file_exists(REMINDERS_FILE, False)
+            if exists:
+                raw = await self.capability_worker.read_file(REMINDERS_FILE, False)
+                if raw:
+                    existing = json.loads(raw)
+            existing[event_id] = reminder_minutes
+            exists2 = await self.capability_worker.check_if_file_exists(REMINDERS_FILE, False)
+            if exists2:
+                await self.capability_worker.delete_file(REMINDERS_FILE, False)
+            await self.capability_worker.write_file(
+                REMINDERS_FILE, json.dumps(existing, indent=2), False, mode="w"
+            )
+            self.worker.editor_logging_handler.info(
+                f"[GCal] Saved reminder override for {event_id}: {reminder_minutes} min."
+            )
+        except Exception as e:
+            self.worker.editor_logging_handler.error(f"[GCal] save_event_reminder error: {e}")
+
+    async def refresh_schedule_md(self):
+        """
+        Fetch the next 7 days of events and rewrite upcoming_schedule.md so the
+        personality prompt always reflects the latest calendar state.
+        Called after every create / reschedule / delete.
+        """
+        try:
+            today = get_effective_today().strftime("%Y-%m-%d")
+            end_date = (get_effective_today() + timedelta(days=7)).strftime("%Y-%m-%d")
+            events = self.list_events_in_range(today, end_date)
+
+            now = get_local_now()
+            lines = ["## Upcoming Schedule (next 7 days)"]
+
+            for ev in events:
+                title = ev.get("summary", "Untitled")
+                start_str = ev.get("start", {}).get("dateTime", "")
+                end_str = ev.get("end", {}).get("dateTime", "")
+                if not start_str:
+                    continue
+                try:
+                    start_dt = datetime.fromisoformat(start_str.replace("Z", "+00:00")).astimezone(LOCAL_TZ)
+                    end_dt = datetime.fromisoformat(end_str.replace("Z", "+00:00")).astimezone(LOCAL_TZ) if end_str else None
+
+                    delta = (start_dt.date() - now.date()).days
+                    if delta == 0:
+                        date_label = "Today"
+                    elif delta == 1:
+                        date_label = "Tomorrow"
+                    else:
+                        date_label = start_dt.strftime("%A")
+
+                    if start_dt.minute == 0:
+                        time_label = start_dt.strftime("%-I %p")
+                    else:
+                        time_label = start_dt.strftime("%-I:%M %p")
+
+                    dur_label = ""
+                    if end_dt:
+                        dur_mins = int((end_dt - start_dt).total_seconds() / 60)
+                        dur_label = f" ({self._format_schedule_duration(dur_mins)})"
+
+                    attendees = ev.get("attendees", [])
+                    attendee_str = ""
+                    if attendees and 1 <= len(attendees) <= 3:
+                        names = [a.get("displayName") or a.get("email", "").split("@")[0] for a in attendees]
+                        attendee_str = f" with {', '.join(names)}"
+
+                    lines.append(f"- {date_label} {time_label} — {title}{dur_label}{attendee_str}")
+                except Exception:
+                    continue
+
+            if len(lines) > 21:
+                lines = lines[:21]
+                lines.append("- (...more events not shown)")
+
+            content = "\n".join(lines) + "\n"
+
+            exists = await self.capability_worker.check_if_file_exists("upcoming_schedule.md", False)
+            if exists:
+                await self.capability_worker.delete_file("upcoming_schedule.md", False)
+            await self.capability_worker.write_file("upcoming_schedule.md", content, False, mode="w")
+            self.worker.editor_logging_handler.info(
+                f"[GCal] Refreshed upcoming_schedule.md ({len(lines)-1} events)."
+            )
+        except Exception as e:
+            self.worker.editor_logging_handler.error(f"[GCal] refresh_schedule_md error: {e}")
+
+    # =========================================================================
     # MAIN ENTRY
     # =========================================================================
 
@@ -1303,7 +1532,7 @@ class GcalIntegrationCapability(MatchingCapability):
             if intent == "EXIT":
                 break
             if i > 0:
-                await self.capability_worker.speak("Next up.")
+                await self.capability_worker.speak("Alright, next one.")
             await self.execute_action(action_text)
 
         self.capability_worker.resume_normal_flow()
@@ -1312,8 +1541,38 @@ class GcalIntegrationCapability(MatchingCapability):
     # HANDLERS
     # =========================================================================
 
+    async def _find_event_with_retry(
+        self,
+        initial_hint: str,
+        original_time: str = None,
+        original_date: str = None,
+        max_retries: int = 2,
+    ):
+        """
+        Try to fuzzy-match an event; if not found, ask the user for the name
+        and retry up to max_retries times.  Returns the matched event dict or None.
+        """
+        hint = initial_hint
+        for attempt in range(max_retries + 1):
+            cached_events = await self.load_events_cache()
+            matched = self.find_matching_event(
+                event_hint=hint,
+                original_time=original_time,
+                original_date=original_date,
+                preloaded_events=cached_events,
+            )
+            if matched:
+                return matched
+            if attempt < max_retries:
+                hint = await self.capability_worker.run_io_loop(
+                    "I'm not finding that one. What's it called?"
+                )
+                if not hint or not hint.strip():
+                    return None
+        return None
+
     async def handle_list_events(self, user_input: str):
-        await self.capability_worker.speak("Let me take a look.")
+        await self.capability_worker.speak("Let's see.")
 
         # Extract date AND optional time from the query
         ctx = get_today_context()
@@ -1343,7 +1602,18 @@ class GcalIntegrationCapability(MatchingCapability):
         scope = query.get("scope", "full_day")
 
         label = friendly_date_label(date_str)
-        events = self.list_events_for_date(date_str)
+
+        # Use cached events from background.py; fall back to direct API only
+        # if the cache is stale or the date is outside the 7-day window.
+        cached = await self.load_events_cache()
+        events = [
+            ev for ev in cached
+            if ev.get("start", {}).get("dateTime", "")[:10] == date_str
+            or ev.get("start", {}).get("date", "") == date_str
+        ]
+        if not events and not cached:
+            # True fallback: no cache at all, hit API directly
+            events = self.list_events_for_date(date_str)
 
         if scope == "at_time" and query_time:
             # User wants to know what's happening at a specific time
@@ -1356,7 +1626,7 @@ class GcalIntegrationCapability(MatchingCapability):
 
     async def handle_query_attendees(self, user_input: str):
         """Answer 'who's on X meeting' / 'who's attending the standup'."""
-        await self.capability_worker.speak("Let me check.")
+        await self.capability_worker.speak("On it.")
 
         # Use the invite extractor to pull out the event hint
         ctx = get_today_context()
@@ -1380,16 +1650,14 @@ class GcalIntegrationCapability(MatchingCapability):
             return
 
         event_hint = details.get("event_hint", user_input)
-        matched_event = self.find_matching_event(
-            event_hint=event_hint,
+        matched_event = await self._find_event_with_retry(
+            initial_hint=event_hint,
             original_time=details.get("event_time"),
             original_date=details.get("event_date"),
         )
 
         if not matched_event:
-            await self.capability_worker.speak(
-                f"I'm not seeing an event called {event_hint} on your calendar."
-            )
+            await self.capability_worker.speak("I still can't find that one. Check the name and try again.")
             return
 
         event_title = matched_event.get("summary", "that event")
@@ -1416,7 +1684,7 @@ class GcalIntegrationCapability(MatchingCapability):
 
     async def handle_rename_event(self, user_input: str):
         """Rename an existing calendar event."""
-        await self.capability_worker.speak("Sure, let me find it.")
+        await self.capability_worker.speak("Sure thing, finding it.")
 
         ctx = get_today_context()
         prompt = (
@@ -1442,16 +1710,14 @@ class GcalIntegrationCapability(MatchingCapability):
             return
 
         event_hint = details.get("event_hint", user_input)
-        matched_event = self.find_matching_event(
-            event_hint=event_hint,
+        matched_event = await self._find_event_with_retry(
+            initial_hint=event_hint,
             original_time=details.get("event_time"),
             original_date=details.get("event_date"),
         )
 
         if not matched_event:
-            await self.capability_worker.speak(
-                f"I'm not seeing an event called {event_hint} on your calendar."
-            )
+            await self.capability_worker.speak("I still can't find that one. Check the name and try again.")
             return
 
         event_title = matched_event.get("summary", "Untitled")
@@ -1476,7 +1742,7 @@ class GcalIntegrationCapability(MatchingCapability):
             if parsed["followup"]:
                 await self.dispatch_followup(parsed["followup"])
             else:
-                await self.capability_worker.speak("Alright, keeping the name.")
+                await self.capability_worker.speak("Got it, keeping the name as is.")
             return
 
         await self.capability_worker.speak("One sec.")
@@ -1493,8 +1759,56 @@ class GcalIntegrationCapability(MatchingCapability):
                 f"That didn't work. The error was: {self.last_api_error}."
             )
 
+    async def handle_make_recurring(self, user_input: str):
+        """Convert an existing event to repeat weekly."""
+        lower = user_input.lower()
+        vague_refs = ["it", "that", "this", "the meeting", "the event", "the call"]
+        is_vague = any(v in lower for v in vague_refs) or not any(
+            c.isalpha() for c in lower.replace("make", "").replace("recurring", "")
+            .replace("repeat", "").replace("weekly", "").replace("it", "")
+            .replace("that", "").replace("this", "").replace("set", "")
+        )
+
+        event = None
+        if is_vague and self.last_event:
+            event = self.last_event
+        else:
+            event = await self._find_event_with_retry(initial_hint=user_input)
+
+        if not event:
+            await self.capability_worker.speak("I still can't find that one. Check the name and try again.")
+            return
+
+        event_id = event.get("id", "")
+        title = event.get("summary", "that event")
+        response = await self.capability_worker.run_io_loop(
+            f"I'll make {title} repeat every week. Sound good?"
+        )
+        parsed = self.parse_confirmation_response(response)
+
+        if not parsed["confirmed"]:
+            if parsed["followup"]:
+                await self.dispatch_followup(parsed["followup"])
+            else:
+                await self.capability_worker.speak("Got it, leaving it as a one-time event.")
+            return
+
+        await self.capability_worker.speak("On it.")
+        self.last_api_error = ""
+        result = self.update_event(event_id, {"recurrence": ["RRULE:FREQ=WEEKLY"]})
+
+        if result:
+            self.last_event = result
+            await self.capability_worker.speak(f"Done — {title} will now repeat every week.")
+            if parsed["followup"]:
+                await self.dispatch_followup(parsed["followup"])
+        else:
+            await self.capability_worker.speak(
+                f"That didn't go through. Error: {self.last_api_error}."
+            )
+
     async def handle_reschedule_event(self, user_input: str):
-        await self.capability_worker.speak("On it, let me pull that up.")
+        await self.capability_worker.speak("On it.")
 
         details = self.extract_reschedule_details(user_input)
         if not details or not details.get("event_hint"):
@@ -1505,17 +1819,14 @@ class GcalIntegrationCapability(MatchingCapability):
 
         self.worker.editor_logging_handler.info(f"[GCal] Reschedule details: {json.dumps(details)}")
 
-        matched_event = self.find_matching_event(
-            event_hint=details["event_hint"],
+        matched_event = await self._find_event_with_retry(
+            initial_hint=details["event_hint"],
             original_time=details.get("original_time"),
             original_date=details.get("original_date"),
         )
 
         if not matched_event:
-            await self.capability_worker.speak(
-                f"I'm not seeing anything called {details['event_hint']} on your calendar. "
-                "Can you double check the name?"
-            )
+            await self.capability_worker.speak("I still can't find that one. Check the name and try again.")
             return
 
         event_title = matched_event.get("summary", "Untitled")
@@ -1591,14 +1902,14 @@ class GcalIntegrationCapability(MatchingCapability):
                 response2 = await self.capability_worker.run_io_loop(confirm_msg2)
                 confirmed = self.interpret_yes_no(response2)
                 if not confirmed:
-                    await self.capability_worker.speak("No worries, leaving it as is.")
+                    await self.capability_worker.speak("Got it, leaving it where it is.")
                     return
             elif followup:
                 # They said no but want something else — dispatch it
                 await self.dispatch_followup(followup)
                 return
             else:
-                await self.capability_worker.speak("No worries, leaving it as is.")
+                await self.capability_worker.speak("Got it, leaving it where it is.")
                 return
 
         try:
@@ -1649,6 +1960,7 @@ class GcalIntegrationCapability(MatchingCapability):
             await self.capability_worker.speak(
                 f"All set. {event_title} is now at {new_time_label} {new_date_label}."
             )
+            await self.refresh_schedule_md()
             # Dispatch any follow-up from the confirmation response
             if followup:
                 await self.dispatch_followup(followup)
@@ -1659,7 +1971,7 @@ class GcalIntegrationCapability(MatchingCapability):
 
     async def handle_delete_event(self, user_input: str):
         """Delete an event from the calendar."""
-        await self.capability_worker.speak("One moment.")
+        await self.capability_worker.speak("Let me find it.")
 
         # Reuse reschedule extractor to identify which event
         details = self.extract_reschedule_details(user_input)
@@ -1667,16 +1979,14 @@ class GcalIntegrationCapability(MatchingCapability):
         if not event_hint:
             event_hint = user_input
 
-        matched_event = self.find_matching_event(
-            event_hint=event_hint,
+        matched_event = await self._find_event_with_retry(
+            initial_hint=event_hint,
             original_time=(details or {}).get("original_time"),
             original_date=(details or {}).get("original_date"),
         )
 
         if not matched_event:
-            await self.capability_worker.speak(
-                "I'm not seeing that on your calendar. What's it called exactly?"
-            )
+            await self.capability_worker.speak("I still can't find that one. Check the name and try again.")
             return
 
         event_title = matched_event.get("summary", "Untitled")
@@ -1696,7 +2006,7 @@ class GcalIntegrationCapability(MatchingCapability):
             if followup:
                 await self.dispatch_followup(followup)
             else:
-                await self.capability_worker.speak("Alright, keeping it.")
+                await self.capability_worker.speak("Works for me, leaving it on the books.")
             return
 
         await self.capability_worker.speak("One sec.")
@@ -1706,6 +2016,7 @@ class GcalIntegrationCapability(MatchingCapability):
         if success:
             self.last_event = None
             await self.capability_worker.speak(f"Gone. {event_title} has been removed.")
+            await self.refresh_schedule_md()
         else:
             await self.capability_worker.speak(
                 f"That didn't work. The error was: {self.last_api_error}."
@@ -1749,18 +2060,16 @@ class GcalIntegrationCapability(MatchingCapability):
             )
             return
 
-        await self.capability_worker.speak("Let me pull that up.")
-        event_hint = invite_details.get("event_hint", "")
-        matched_event = self.find_matching_event(
-            event_hint=event_hint if event_hint else user_input,
+        await self.capability_worker.speak("Let me take a look.")
+        event_hint = invite_details.get("event_hint", "") or user_input
+        matched_event = await self._find_event_with_retry(
+            initial_hint=event_hint,
             original_time=invite_details.get("event_time"),
             original_date=invite_details.get("event_date"),
         )
 
         if not matched_event:
-            await self.capability_worker.speak(
-                "I'm not seeing that event on your calendar. What's it called?"
-            )
+            await self.capability_worker.speak("I still can't find that one. Check the name and try again.")
             return
 
         event_title = matched_event.get("summary", "Untitled")
@@ -1794,7 +2103,7 @@ class GcalIntegrationCapability(MatchingCapability):
             if followup:
                 await self.dispatch_followup(followup)
             else:
-                await self.capability_worker.speak("Alright, leaving it as is.")
+                await self.capability_worker.speak("Got it, leaving the invite list as is.")
             return
 
         new_attendee_list = [
@@ -1853,19 +2162,17 @@ class GcalIntegrationCapability(MatchingCapability):
             )
             return
 
-        await self.capability_worker.speak("Let me pull that up.")
+        await self.capability_worker.speak("Let's see.")
 
-        event_hint = invite_details.get("event_hint", "")
-        matched_event = self.find_matching_event(
-            event_hint=event_hint if event_hint else user_input,
+        event_hint = invite_details.get("event_hint", "") or user_input
+        matched_event = await self._find_event_with_retry(
+            initial_hint=event_hint,
             original_time=invite_details.get("event_time"),
             original_date=invite_details.get("event_date"),
         )
 
         if not matched_event:
-            await self.capability_worker.speak(
-                "I'm not seeing that event. What's it called?"
-            )
+            await self.capability_worker.speak("I still can't find that one. Check the name and try again.")
             return
 
         event_title = matched_event.get("summary", "Untitled")
@@ -1887,7 +2194,7 @@ class GcalIntegrationCapability(MatchingCapability):
             if followup:
                 await self.dispatch_followup(followup)
             else:
-                await self.capability_worker.speak("No worries.")
+                await self.capability_worker.speak("All good, no changes.")
             return
 
         # Merge with existing attendees
@@ -1923,6 +2230,163 @@ class GcalIntegrationCapability(MatchingCapability):
             await self.capability_worker.speak(
                 f"That didn't work. The error was: {self.last_api_error}."
             )
+
+    async def handle_respond_to_invite(self, user_input: str, response_status: str):
+        """Accept or decline a meeting invite by PATCHing the self attendee's responseStatus."""
+        lower = user_input.lower()
+        vague_refs = ["it", "that", "this", "the invite", "the meeting", "the event"]
+
+        event = None
+        cached = await self.load_events_cache()
+
+        if any(v in lower for v in vague_refs) and self.last_event:
+            event = self.last_event
+        else:
+            event = self.find_matching_event(user_input, preloaded_events=cached)
+
+        # Fallback: if still nothing found, look for a single pending invite in the cache
+        if not event:
+            pending = [
+                ev for ev in cached
+                if not ev.get("organizer", {}).get("self", False)
+                and any(
+                    a.get("self") and a.get("responseStatus") in ("needsAction", "tentative")
+                    for a in ev.get("attendees", [])
+                )
+            ]
+            if len(pending) == 1:
+                event = pending[0]
+
+        if not event:
+            event = await self._find_event_with_retry(initial_hint=user_input)
+
+        if not event:
+            await self.capability_worker.speak("I still can't find that one. Check the name and try again.")
+            return
+
+        title = event.get("summary", "that event")
+        attendees = event.get("attendees", [])
+        self_att = next((a for a in attendees if a.get("self")), None)
+
+        if not self_att:
+            await self.capability_worker.speak(
+                f"I don't see you as an attendee on {title}."
+            )
+            return
+
+        action_label = "accept" if response_status == "accepted" else "decline"
+        response = await self.capability_worker.run_io_loop(
+            f"Go ahead and {action_label} {title}?"
+        )
+        parsed = self.parse_confirmation_response(response)
+        if not parsed["confirmed"]:
+            if parsed["followup"]:
+                await self.dispatch_followup(parsed["followup"])
+            else:
+                await self.capability_worker.speak("Got it, leaving it as is.")
+            return
+
+        # Build updated attendees list with self RSVP changed
+        updated_attendees = [
+            {**a, "responseStatus": response_status} if a.get("self") else a
+            for a in attendees
+        ]
+        event_id = event.get("id", "")
+        self.last_api_error = ""
+        result = self.update_event(event_id, {"attendees": updated_attendees})
+
+        if result:
+            self.last_event = result
+            verb = "accepted" if response_status == "accepted" else "declined"
+            await self.capability_worker.speak(f"Done — {title} is {verb}.")
+            if parsed["followup"]:
+                await self.dispatch_followup(parsed["followup"])
+        else:
+            await self.capability_worker.speak(
+                f"That didn't go through. {self.last_api_error}."
+            )
+
+    async def handle_set_reminder(self, user_input: str):
+        """Update user_preferences.md with a new per-meeting reminder override."""
+        extract_prompt = (
+            f'The user said: "{user_input}"\n'
+            "They want to set a reminder preference for a specific meeting.\n"
+            "Extract:\n"
+            '- "event_fragment": string — the meeting title fragment (lowercase). '
+            "If vague (e.g. 'that meeting', 'this one'), return null.\n"
+            '- "reminder_minutes": integer minutes before the meeting, '
+            'or "skip" if they want no reminder.\n'
+            "Return ONLY valid JSON, e.g.: "
+            '{"event_fragment": "standup", "reminder_minutes": 10}\n'
+            '{"event_fragment": "investor call", "reminder_minutes": "skip"}'
+        )
+        raw = self.capability_worker.text_to_text_response(
+            extract_prompt,
+            system_prompt="Extract reminder preference. Reply with only JSON.",
+        ).strip().replace("```json", "").replace("```", "").strip()
+
+        try:
+            extracted = json.loads(raw)
+        except Exception:
+            await self.capability_worker.speak(
+                "I didn't catch that. Try something like 'remind me 10 minutes before the standup'."
+            )
+            return
+
+        fragment = extracted.get("event_fragment")
+        minutes = extracted.get("reminder_minutes")
+
+        if not fragment:
+            await self.capability_worker.speak("Which meeting should I update the reminder for?")
+            return
+        if minutes is None:
+            await self.capability_worker.speak("How many minutes before should I remind you?")
+            return
+
+        # Read, update, write user_preferences.md
+        try:
+            exists = await self.capability_worker.check_if_file_exists("user_preferences.md", False)
+            current_content = ""
+            if exists:
+                current_content = await self.capability_worker.read_file("user_preferences.md", False) or ""
+
+            # Build the override line
+            if minutes == "skip" or minutes == 0:
+                override_line = f'- "{fragment}": skip'
+            else:
+                override_line = f'- "{fragment}": {int(minutes)}'
+
+            # Replace existing override for this fragment if present, else append
+            lines = current_content.splitlines()
+            fragment_lower = fragment.lower()
+            replaced = False
+            new_lines = []
+            for line in lines:
+                if re.search(rf'"{re.escape(fragment_lower)}"', line.lower()):
+                    new_lines.append(override_line)
+                    replaced = True
+                else:
+                    new_lines.append(line)
+
+            if not replaced:
+                new_lines.append(override_line)
+
+            new_content = "\n".join(new_lines)
+            if exists:
+                await self.capability_worker.delete_file("user_preferences.md", False)
+            await self.capability_worker.write_file("user_preferences.md", new_content, False, mode="w")
+
+            if minutes == "skip" or minutes == 0:
+                await self.capability_worker.speak(
+                    f"Got it — I'll skip reminders for {fragment} from now on."
+                )
+            else:
+                await self.capability_worker.speak(
+                    f"Done — I'll remind you {int(minutes)} minutes before {fragment}."
+                )
+        except Exception as e:
+            self.worker.editor_logging_handler.error(f"[GCal] set_reminder error: {e}")
+            await self.capability_worker.speak("Something went wrong updating your reminder preferences.")
 
     async def handle_schedule_event(self, user_input: str):
         details = self.extract_meeting_details(user_input)
@@ -2116,6 +2580,7 @@ class GcalIntegrationCapability(MatchingCapability):
         # --- Confirmation ---
         date_label = friendly_date_label(details["date"])
         time_label = self.format_time_for_speech(details["time"])
+        recurring_weekly = details.get("recurring_weekly", False)
 
         # Build readable duration
         if duration >= 60 and duration % 60 == 0:
@@ -2127,17 +2592,23 @@ class GcalIntegrationCapability(MatchingCapability):
         else:
             dur_label = f"{duration} minute"
 
-        confirm_text = (
-            f"a {dur_label} event called {details['summary']} "
-            f"{date_label} at {time_label}"
-        )
+        if recurring_weekly:
+            confirm_text = (
+                f"a weekly recurring {details['summary']}, "
+                f"starting {date_label} at {time_label} for {dur_label}"
+            )
+        else:
+            confirm_text = (
+                f"a {dur_label} event called {details['summary']} "
+                f"{date_label} at {time_label}"
+            )
 
         if attendees:
             names_str = " and ".join(a["name"] for a in attendees)
             confirm_text += f" with {names_str}"
 
         response = await self.capability_worker.run_io_loop(
-            f"I'll schedule {confirm_text}. Good?"
+            f"I'll set up {confirm_text}. Sound good?"
         )
         parsed = self.parse_confirmation_response(response)
         confirmed = parsed["confirmed"]
@@ -2214,17 +2685,31 @@ class GcalIntegrationCapability(MatchingCapability):
             end_iso=end_iso,
             description=details.get("description", ""),
             attendees=attendees if attendees else None,
+            recurring_weekly=recurring_weekly,
         )
 
         if event:
             self.last_event = event
             event_link = event.get("htmlLink", "")
             self.worker.editor_logging_handler.info(f"[GCal] Event link: {event_link}")
-            done_msg = f"All set. {details['summary']} is on your calendar."
+            if recurring_weekly:
+                done_msg = f"Done. {details['summary']} is locked in as a weekly recurring event."
+            else:
+                done_msg = f"All set. {details['summary']} is on your calendar."
             if attendees:
                 names_str = " and ".join(a["name"] for a in attendees)
                 done_msg += f" {names_str} will get an invite."
+
+            # Save per-event reminder override if user specified one
+            reminder_mins = details.get("reminder_minutes")
+            if reminder_mins and isinstance(reminder_mins, int) and reminder_mins > 0:
+                event_id = event.get("id", "")
+                if event_id:
+                    await self.save_event_reminder(event_id, reminder_mins)
+                    done_msg += f" I'll remind you {reminder_mins} minutes before."
+
             await self.capability_worker.speak(done_msg)
+            await self.refresh_schedule_md()
 
             # Dispatch any follow-up from the confirmation response
             if followup:

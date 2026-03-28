@@ -73,23 +73,53 @@ Aliases are matched phonetically by the LLM, so STT errors like "Von" for "Vaugh
 
 | Intent | Example phrases |
 |---|---|
-| Schedule | "Schedule a meeting with Melody tomorrow at 3 PM" |
+| Schedule | "Schedule a meeting with Mark tomorrow at 3 PM", "Schedule a call with Jim Friday at noon" |
 | Reschedule | "Move the standup to 4 PM", "Reschedule test meeting to Friday" |
 | Delete | "Cancel the meeting tomorrow", "Delete the standup" |
+| Rename | "Rename the standup meeting to team sync", "Change the name of that call" |
+| Make recurring | "Make that a weekly recurring", "Set the standup to repeat every week" |
 | List | "What's on my calendar tomorrow", "What do I have at 2 PM" |
-| Invite | "Add Vaughn to the standup", "Invite Chris to that meeting" |
-| Remove attendee | "Take Melody off the invite", "Remove Vaughn from the meeting" |
+| Invite | "Add Tim to the standup", "Invite Jessica to that meeting" |
+| Remove attendee | "Take Gus off the invite", "Remove Sophia from the weekly standup" |
 | Query attendees | "Who's on the standup?", "Who's attending the meeting tomorrow?" |
+| Accept invite | "Accept that invite", "Accept the shared meeting" |
+| Decline invite | "Decline the invite", "Turn down that meeting" |
+| Set reminder | "Remind me 20 minutes before my workout session", "Set a 60 minute reminder for the board meeting" |
 
 ## Key Behaviors
 
-**Conflict detection** -- When scheduling or rescheduling, the ability checks for overlapping events and warns before proceeding.
+**Active capability (main.py)**
 
-**Time awareness** -- Queries like "what do I have at 2 PM" find events that span that time, not just events starting at that time. Events in progress or starting soon are flagged.
+Handles all user-initiated calendar actions above. At any confirmation step the user can append a
+follow-on request — "Sounds good, but also invite John" — and both actions execute. After any
+operation, vague references like "that meeting" or "this event" resolve to the last touched event
+without re-searching.
 
-**Compound confirmations** -- At any confirmation step, the user can say "Sounds good, but also invite Melody" and both actions are handled.
+When scheduling or rescheduling, overlapping events are detected and the user is warned before
+proceeding. List queries like "what do I have at 2 PM" find events spanning that time, not just
+events starting then.
 
-**Session context** -- After any operation, "that meeting" / "this event" resolves to the last touched event without re-searching.
+If an event name isn't recognized, the ability asks for clarification and retries the lookup up to
+twice — it does not drop context or treat the clarification as a new scheduling request.
+
+Per-meeting reminder preferences are stored persistently and survive restarts. Contacts are resolved
+by first name from a local contact list.
+
+**Background daemon (background.py)**
+
+Polls the calendar every 30 seconds and maintains a local events cache and `upcoming_schedule.md`.
+Proactively interrupts with spoken notifications for:
+
+- New invites received from other organizers — "You got an invite to Shared Meeting today at 8 PM"
+- Events cancelled by the organizer
+- Events renamed or rescheduled externally
+- Attendees accepting or declining
+- New attendees added to an event you're on
+
+Meeting reminders fire based on per-event preferences stored in `user_preferences.md`. The default
+lead time is configurable, and individual meetings can have their own override (e.g.
+`Standup meeting: 30 min`, `HR meeting: 60 min`).
+
 
 ## Recommended Hotwords
 
@@ -105,3 +135,4 @@ Who's on
 Who's going to be
 Cancel
 Meeting
+Remind me about
