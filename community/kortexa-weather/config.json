@@ -1,0 +1,4 @@
+{
+    "unique_name": "kortexa_weather",
+    "matching_hotwords": ["weather", "what's the weather"]
+}
