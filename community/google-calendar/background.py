@@ -514,7 +514,7 @@ class GcalReminderDaemon(MatchingCapability):
         Write upcoming_schedule.md for personality context injection.
         Shows events for the next 7 days in a concise, under-200-word format.
         """
-        now = get_local_now()
+        get_local_now()
         lines = ["## Upcoming Schedule (next 7 days)"]
 
         for ev in events:
