@@ -57,7 +57,7 @@ class PrivateNotesCapability(MatchingCapability):
     worker: AgentWorker = None
     capability_worker: CapabilityWorker = None
 
-    #{{register capability}}
+    # {{register capability}}
 
     def call(self, worker: AgentWorker):
         """Entry point. Framework calls this when the ability is triggered."""
@@ -264,5 +264,3 @@ class PrivateNotesCapability(MatchingCapability):
         if not text:
             await self.capability_worker.speak(fallback_msg)
         return text or None
-
-
