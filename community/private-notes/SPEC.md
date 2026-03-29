@@ -140,6 +140,6 @@ Subsequent turns append tool results and follow-up answers as history entries. T
 ## Validation
 
 ```
-python3 -m py_compile abilities/community/private-notes/main.py
-python3 abilities/validate_ability.py abilities/community/private-notes
+python3 -m py_compile community/private-notes/main.py
+python3 validate_ability.py community/private-notes
 ```
