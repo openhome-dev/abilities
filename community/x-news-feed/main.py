@@ -519,8 +519,8 @@ class XNewsFeedCapability(MatchingCapability):
         if self.is_more_request(lower) or self.is_full_mode_request(lower):
             return "hear_more"
         if any(w in lower for w in ["number", "tweet", "tell me about", "more about",
-                                     "dig into", "expand", "break that down", "deeper",
-                                     "elaborate", "what about", "let's talk about"]):
+                                    "dig into", "expand", "break that down", "deeper",
+                                    "elaborate", "what about", "let's talk about"]):
             return "deep_dive"
         return "other"
 
@@ -613,10 +613,10 @@ class XNewsFeedCapability(MatchingCapability):
             self.worker.editor_logging_handler.warning(f"[XNews] repeat detect failed: {e}")
             # Fallback keyword check
             return any(p in user_input.lower() for p in ["again", "repeat", "read again",
-                                                          "say that again", "one more time",
-                                                          "go back", "run through those",
-                                                          "from the top", "play that back",
-                                                          "reread", "didn't catch"])
+                                                         "say that again", "one more time",
+                                                         "go back", "run through those",
+                                                         "from the top", "play that back",
+                                                         "reread", "didn't catch"])
 
     async def _extract_tweet_number_for_deepdive(self, user_input):
         """
@@ -643,9 +643,9 @@ class XNewsFeedCapability(MatchingCapability):
             # Fallback keyword check
             lower = user_input.lower()
             if any(w in lower for w in ["number", "tweet", "tell me about", "more about",
-                                         "dig into", "expand", "deeper", "elaborate",
-                                         "what about", "break that down", "let's talk about",
-                                         "that last one", "that third", "the second"]):
+                                        "dig into", "expand", "deeper", "elaborate",
+                                        "what about", "break that down", "let's talk about",
+                                        "that last one", "that third", "the second"]):
                 for i in range(1, len(self.fetched_tweets) + 1):
                     if str(i) in lower or self.number_to_word(i) in lower:
                         return i
