@@ -20,11 +20,18 @@ PREFS_FILE = "notion_capture_prefs.json"
 NOTION_BASE = "https://api.notion.com/v1"
 NOTION_VERSION = "2022-06-28"
 SCHEMA_CACHE_TTL = 30 * 60
-MAX_SPOKEN_ITEMS = 8
+MAX_SPOKEN_ITEMS = 4
 EXIT_WORDS = {
     "stop", "exit", "quit", "done", "cancel", "bye", "goodbye",
     "never mind", "no thanks", "that's all", "that is all",
+    "i'm done", "that's it", "i'm good", "we're done",
+    "all set", "nothing else", "all done", "i'm finished",
 }
+
+VOICE_FORMAT_INSTRUCTION = (
+    "Use plain spoken English only. No markdown, no bullet points, "
+    "no numbered lists, no emoji, no URLs, no special formatting."
+)
 
 
 def _strip_json_fences(raw):
@@ -57,7 +64,7 @@ class NotionQuickCaptureCapability(MatchingCapability):
 
     def call(self, worker: AgentWorker):
         self.worker = worker
-        self.capability_worker = CapabilityWorker(self.worker)
+        self.capability_worker = CapabilityWorker(self)
         self.worker.session_tasks.create(self.run())
 
     # -------------------------------------------------------------------------
@@ -104,7 +111,7 @@ class NotionQuickCaptureCapability(MatchingCapability):
             "integration_token": None,
             "databases": [],
             "notes_page_id": None,
-            "timezone": "America/Los_Angeles",
+            "timezone": self.capability_worker.get_timezone() or "America/Los_Angeles",
         }
         if await self.capability_worker.check_if_file_exists(PREFS_FILE, False):
             raw = await self.capability_worker.read_file(PREFS_FILE, False)
@@ -350,9 +357,9 @@ class NotionQuickCaptureCapability(MatchingCapability):
                 "your workspace."
             )
             await self.capability_worker.speak(
-                "Make sure it has Read, Update, and Insert content "
-                "capabilities. Copy the token, it starts with N T N "
-                "underscore, and paste it here."
+                "Use the default permissions, those will work. "
+                "Copy the token, it starts with N T N "
+                "underscore, and read it to me."
             )
             token_input = await self.capability_worker.user_response()
             if not token_input or not token_input.strip().startswith("ntn_"):
@@ -492,7 +499,10 @@ class NotionQuickCaptureCapability(MatchingCapability):
             "its name. Otherwise say skip."
         )
         notes_reply = await self.capability_worker.user_response()
-        if notes_reply and "skip" not in (notes_reply or "").lower():
+        if notes_reply and not any(
+            w in (notes_reply or "").lower()
+            for w in ("skip", "no", "nah", "nope", "pass", "don't have")
+        ):
             try:
                 rn = requests.post(
                     f"{NOTION_BASE}/search",
@@ -868,7 +878,7 @@ class NotionQuickCaptureCapability(MatchingCapability):
         except Exception:
             search_term = raw_query
 
-        await self.capability_worker.speak("Let me check.")
+        await self.capability_worker.speak("Searching now.")
 
         try:
             r = requests.post(
@@ -995,9 +1005,9 @@ class NotionQuickCaptureCapability(MatchingCapability):
                     if text:
                         text_parts.append(text)
                 elif btype == "image":
-                    text_parts.append("[image]")
+                    text_parts.append("There is an image here.")
                 elif btype == "code":
-                    text_parts.append("[code block]")
+                    text_parts.append("There is a code block here.")
 
             if not text_parts:
                 await self.capability_worker.speak(
@@ -1012,7 +1022,7 @@ class NotionQuickCaptureCapability(MatchingCapability):
             summary = self.capability_worker.text_to_text_response(
                 prompt_text=(
                     "Summarize this Notion page content for "
-                    "voice output. Be concise, 3-5 sentences. "
+                    "voice output. Be concise, 2-3 sentences. "
                     "Focus on the key points.\n\n"
                     f"{truncated}"
                 ),
@@ -1021,7 +1031,8 @@ class NotionQuickCaptureCapability(MatchingCapability):
                     "brief spoken summaries. Be conversational. "
                     "No bullet points or lists — this is spoken. "
                     "If the page is a task list, mention the "
-                    "count and highlight key items."
+                    "count and highlight key items. "
+                    + VOICE_FORMAT_INSTRUCTION
                 ),
             )
             await self.capability_worker.speak(summary)
@@ -1163,9 +1174,10 @@ class NotionQuickCaptureCapability(MatchingCapability):
 
             spoken = self.capability_worker.text_to_text_response(
                 f"Turn these database results into a brief "
-                f"spoken summary for voice output. Be natural, "
-                f"1-2 sentences per item. "
-                f"Max {MAX_SPOKEN_ITEMS} items.\n\n"
+                f"spoken summary for voice output. Lead with "
+                f"the total count, then highlight the most "
+                f"important items. Keep it to 3-5 sentences "
+                f"total. {VOICE_FORMAT_INSTRUCTION}\n\n"
                 f"{json.dumps(items)}"
             )
             await self.capability_worker.speak(spoken)
@@ -1203,17 +1215,17 @@ class NotionQuickCaptureCapability(MatchingCapability):
         )
 
         if mode == "quick_add":
-            await self.capability_worker.speak("Adding that now.")
+            await self.capability_worker.speak("On it.")
             await self._quick_add(prefs, content, target_db)
         elif mode == "quick_note":
-            await self.capability_worker.speak("Adding that now.")
+            await self.capability_worker.speak("Got it.")
             await self._quick_note(prefs, content)
         elif mode == "search":
             await self._search(prefs, search_query)
         elif mode == "read_page":
             await self._read_page(prefs, search_query)
         elif mode == "query_database":
-            await self.capability_worker.speak("Let me check.")
+            await self.capability_worker.speak("One sec.")
             await self._query_database(
                 prefs, target_db, content,
             )
@@ -1293,74 +1305,93 @@ class NotionQuickCaptureCapability(MatchingCapability):
                         await self.capability_worker.speak(
                             "Your saved databases aren't "
                             "compatible with the Notion API. "
-                            "They may use multiple data sources. "
-                            "Let's find new ones."
+                            "They may have been changed to use "
+                            "multiple data sources. Share new "
+                            "databases and run setup again."
                         )
-
-            if not prefs.get("databases"):
-                success = await self._first_run_setup(prefs)
-                if not success:
-                    return
-                prefs = await self._load_prefs()
-
-            user_input = (
-                await self.capability_worker
-                .wait_for_complete_transcription()
-            )
-            self._log_info(f"Trigger: {user_input}")
-
-            if self._has_actionable_content(user_input):
-                await self._process_command(prefs, user_input)
-            else:
-                user_input = (
-                    await self.capability_worker.run_io_loop(
-                        "Notion is ready. "
-                        "What would you like to do?"
-                    )
-                )
-                if not user_input or not user_input.strip():
-                    user_input = (
-                        await self.capability_worker.run_io_loop(
-                            "I didn't catch that. "
-                            "What should I do in Notion?"
-                        )
-                    )
-                if (
-                    not user_input
-                    or not user_input.strip()
-                    or _is_exit(user_input)
-                ):
-                    await self.capability_worker.speak(
-                        "OK. Say Notion when you need me."
-                    )
-                    return
-                await self._process_command(prefs, user_input)
-
-            empty_count = 0
-            while True:
-                follow_up = (
-                    await self.capability_worker.run_io_loop(
-                        "Anything else?"
-                    )
-                )
-                if not follow_up or not follow_up.strip():
-                    empty_count += 1
-                    if empty_count >= 2:
-                        break
-                    continue
-                empty_count = 0
-                if _is_exit(follow_up):
-                    break
-                await self._process_command(prefs, follow_up)
+                        return
 
             await self.capability_worker.speak(
-                "Done. Say Notion when you need me."
+                "Notion is ready. What would you like to do?"
             )
+
+            while True:
+                user_input = await self.capability_worker.user_response()
+                if not user_input:
+                    continue
+
+                if _is_exit(user_input):
+                    await self.capability_worker.speak("See you later.")
+                    break
+
+                lower = user_input.lower()
+
+                if "setup" in lower or "reconfigure" in lower or "reconnect" in lower:
+                    await self._first_run_setup(prefs)
+                    prefs = await self._load_prefs()
+                    continue
+
+                if "change" in lower and "database" in lower:
+                    await self.capability_worker.speak(
+                        "Run setup again and I'll re-scan "
+                        "your databases."
+                    )
+                    continue
+
+                if "set" in lower and "notes" in lower and "page" in lower:
+                    await self.capability_worker.speak(
+                        "What's the name of the page you want "
+                        "to use for notes?"
+                    )
+                    notes_reply = await self.capability_worker.user_response()
+                    if notes_reply and not any(
+                        w in (notes_reply or "").lower()
+                        for w in ("skip", "no", "nah", "nope", "pass", "don't have")
+                    ):
+                        try:
+                            rn = requests.post(
+                                f"{NOTION_BASE}/search",
+                                headers=self._headers(
+                                    prefs["integration_token"]
+                                ),
+                                json={
+                                    "query": notes_reply.strip()[:80],
+                                    "page_size": 3,
+                                    "filter": {
+                                        "property": "object",
+                                        "value": "page",
+                                    },
+                                },
+                                timeout=10,
+                            )
+                            if (
+                                rn.status_code == 200
+                                and rn.json().get("results")
+                            ):
+                                prefs["notes_page_id"] = (
+                                    rn.json()["results"][0]["id"]
+                                )
+                                await self._save_prefs(prefs)
+                                await self.capability_worker.speak(
+                                    "Done. Notes will go there now."
+                                )
+                            else:
+                                await self.capability_worker.speak(
+                                    "Couldn't find that page. "
+                                    "Make sure it's shared with OpenHome."
+                                )
+                        except Exception:
+                            await self.capability_worker.speak(
+                                "Couldn't search right now. Try later."
+                            )
+                    continue
+
+                await self._process_command(prefs, user_input)
 
         except Exception as e:
-            self._log_err(f"Run error: {e}")
+            self._log_err(f"Run loop error: {e}")
             await self.capability_worker.speak(
-                "Something went wrong. Try again in a moment."
+                "Something went wrong. Try again later."
             )
         finally:
             self.capability_worker.resume_normal_flow()
