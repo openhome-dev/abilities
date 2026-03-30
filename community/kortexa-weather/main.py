@@ -63,7 +63,7 @@ class WeatherDisplayCapability(MatchingCapability):
             location = await self._get_location()
             if not location:
                 await self.capability_worker.speak(
-                    "Couldn't determine your location. Is Porch running?"
+                    "I can't find your location. Is Porch running?"
                 )
                 return
 
@@ -82,7 +82,7 @@ class WeatherDisplayCapability(MatchingCapability):
             # Fetch weather from Open-Meteo (no API key needed)
             weather = await self._fetch_weather(lat, lon, use_fahrenheit)
             if not weather:
-                await self.capability_worker.speak(f"Couldn't get weather data for {city}.")
+                await self.capability_worker.speak(f"Sorry, couldn't get the weather for {city}.")
                 return
 
             current = weather["current"]
@@ -107,12 +107,12 @@ class WeatherDisplayCapability(MatchingCapability):
             # Speak a short summary
             await self.capability_worker.speak(
                 f"It's {temp} degrees and {condition.lower()} in {city}. "
-                f"Feels like {feels_like}. Humidity {humidity} percent."
+                f"Feels like {feels_like}, with {humidity} percent humidity."
             )
 
         except Exception as err:
             self.worker.editor_logging_handler.error(f"{TAG} error: {err}")
-            await self.capability_worker.speak("Something went wrong getting the weather.")
+            await self.capability_worker.speak("Sorry, something went wrong with the weather.")
         finally:
             self.capability_worker.resume_normal_flow()
 
