@@ -44,3 +44,4 @@ Format: - **@username** — ability-name ([ability-name](community/ability-name/
 - **[@harmsolo13](https://github.com/harmsolo13)** — dungeon-master-voice ([dungeon-master-voice](community/dungeon-master-voice/)), home-assistant-voice-control ([home-assistant-voice-control](community/home-assistant-voice-control/))
 - **[@mahsumaktas](https://github.com/mahsumaktas)** — prayer-times ([prayer-times](community/prayer-times/))
 - **[@brianchilders](https://github.com/brianchilders)** — airthings ([airthings](community/airthings/))
+- **[@azazrashid](https://github.com/azazrashid)** — notion-quick-capture ([notion-quick-capture](community/notion-quick-capture/))
