@@ -1,4 +1,7 @@
-# OpenHome Ability SDK — Complete Reference
+---
+title: 'OpenHome Ability SDK — Complete Reference'
+description: 'Single source of truth for everything available inside an OpenHome Ability SDK.'
+---
 
 > **This is the single source of truth for everything available inside an Ability.**
 > If a method or property isn't listed here, it either doesn't exist or hasn't been documented yet.
@@ -15,6 +18,15 @@ Inside any Ability, you have access to two objects:
 | `self.capability_worker` | **The SDK** — all I/O, speech, audio, LLM, files, and flow control | `CapabilityWorker(self)` |
 | `self.worker` | **The Agent** — logging, session management, memory, user connection info | Passed into `call()` |
 
+### Runtime Entry Points (`main.py` vs `background.py`)
+
+| Runtime | Required file | `call()` signature | Lifecycle |
+|---|---|---|---|
+| Interactive Skill / Brain Skill | `main.py` | `call(self, worker)` | Triggered on demand, exits with `resume_normal_flow()` |
+| Background Daemon | `background.py` | `call(self, worker, background_daemon_mode)` | Auto-starts on session begin, runs continuously |
+
+`background.py` must be named exactly `background.py` to be detected as a background daemon.
+
 ---
 
 ## Table of Contents
@@ -26,23 +38,24 @@ Inside any Ability, you have access to two objects:
 5. [Audio Playback](#5-audio-playback)
 6. [Audio Recording](#6-audio-recording)
 7. [Audio Streaming](#7-audio-streaming)
-8. [File Storage (Persistent + Temporary)](#8-file-storage-persistent--temporary)
-9. [WebSocket Communication](#9-websocket-communication)
-10. [Flow Control](#10-flow-control)
-11. [Logging](#11-logging)
-12. [Session Tasks](#12-session-tasks)
-13. [User Connection Info](#13-user-connection-info)
-14. [Conversation Memory & History](#14-conversation-memory--history)
-15. [Music Mode](#15-music-mode)
-16. [Common Patterns](#16-common-patterns)
-17. [Appendix: What You CAN'T Do (Yet)](#appendix-what-you-cant-do-yet)
-18. [Appendix: Blocked Imports](#appendix-blocked-imports)
+8. [File Storage (User Data + Ability Directory)](#8-file-storage-user-data--ability-directory)
+9. [Ability Context Storage (Key-Value)](#9-ability-context-storage-key-value)
+10. [WebSocket Communication](#10-websocket-communication)
+11. [Flow Control](#11-flow-control)
+12. [Logging](#12-logging)
+13. [Session Tasks](#13-session-tasks)
+14. [User Connection Info](#14-user-connection-info)
+15. [Conversation Memory & History](#15-conversation-memory--history)
+16. [Music Mode](#16-music-mode)
+17. [Common Patterns](#17-common-patterns)
+18. [Appendix: What You CAN'T Do (Yet)](#18-appendix-what-you-cant-do-yet)
+19. [Appendix: Blocked Imports](#19-appendix-blocked-imports)
 
 ---
 
 ## 1. Speaking / TTS
 
-### `speak(text)`
+### `speak(tokens, file_content=None)`
 Converts text to speech using the Agent's default voice. Streams audio to the user.
 
 ```python
@@ -55,7 +68,7 @@ await self.capability_worker.speak("Hello! How can I help?")
 
 ---
 
-### `text_to_speech(text, voice_id)`
+### `text_to_speech(prompt, voice_id)`
 Converts text to speech using a **specific Voice ID** (e.g., from ElevenLabs). Use when your Ability needs its own distinct voice.
 
 ```python
@@ -84,7 +97,7 @@ user_input = await self.capability_worker.user_response()
 ---
 
 ### `wait_for_complete_transcription()`
-Waits until the user has **completely finished speaking** before returning. Use when you need the full utterance without premature cutoff.
+Waits until the user has **completely finished speaking** before returning the final transcription.
 
 ```python
 full_input = await self.capability_worker.wait_for_complete_transcription()
@@ -92,13 +105,41 @@ full_input = await self.capability_worker.wait_for_complete_transcription()
 
 - **Async:** Yes (`await`)
 - **Returns:** `str` — the final transcribed input
-- **When to use:** Long-form input like descriptions, stories, or dictation
+- **When to use:**
+  - Long-form input (descriptions, dictation, storytelling)
+  - Cases where partial STT results may break your logic
+  - Flows that need the entire spoken sentence before processing
+  - The first step of an ability when capturing the trigger sentence
+
+#### Capturing the full trigger sentence
+
+When a trigger word starts an ability immediately, this method still returns the full spoken sentence, including both the trigger phrase and the actual request.
+
+Example trigger word: `remind`
+User says: `remind me to call Alex tomorrow at 6 PM`
+
+```python
+import re
+
+async def first_function(self):
+    full_input = await self.capability_worker.wait_for_complete_transcription()
+    reminder_text = re.sub(r"^\s*remind\b", "", full_input, flags=re.IGNORECASE).strip()
+    await self.capability_worker.speak(f"Creating reminder: {reminder_text}")
+```
+
+In this flow:
+
+- The ability is triggered by `remind`
+- `wait_for_complete_transcription()` returns:
+  `remind me to call Alex tomorrow at 6 PM`
+- The extracted request becomes:
+  `me to call Alex tomorrow at 6 PM`
 
 ---
 
 ## 3. Combined Speak + Listen
 
-### `run_io_loop(text)`
+### `run_io_loop(tokens)`
 Speaks the text, then waits for the user's response. Returns the user's reply. A convenience wrapper around `speak()` + `user_response()`.
 
 ```python
@@ -107,11 +148,12 @@ answer = await self.capability_worker.run_io_loop("What's your favorite color?")
 
 - **Async:** Yes (`await`)
 - **Returns:** `str` — user's reply
-- **Note:** Uses the Agent's default voice (not a custom voice ID)
+
+> **Note:** Uses the Agent's default voice (not a custom voice ID)
 
 ---
 
-### `run_confirmation_loop(text)`
+### `run_confirmation_loop(tokens)`
 Speaks the text (appends "Please respond with 'yes' or 'no'"), then loops until the user clearly says yes or no.
 
 ```python
@@ -168,7 +210,7 @@ await self.capability_worker.play_audio(audio.content)
 
 - **Async:** Yes (`await`)
 - **Input:** `bytes` or file-like object
-- **Tip:** For anything longer than a TTS clip, use [Music Mode](#15-music-mode)
+- **Tip:** For anything longer than a TTS clip, use [Music Mode](#16-music-mode)
 
 ---
 
@@ -217,6 +259,15 @@ Returns the length/duration of the current recording.
 ```python
 length = self.capability_worker.get_audio_recording_length()
 ```
+
+### `flush_audio_recording()`
+Clears the current recording buffer/file so the next recording starts fresh.
+
+```python
+self.capability_worker.flush_audio_recording()
+```
+
+- **Async:** No (synchronous)
 
 ### Recording Example
 
@@ -278,197 +329,245 @@ async def stream_long_audio(self):
 
 ---
 
-## 8. File Storage (Persistent + Temporary)
+## 8. File Storage (User Data + Ability Directory)
 
-OpenHome provides a server-side file storage system that allows Abilities to persist data across sessions. This is the primary mechanism for cross-session memory.
+Use `in_ability_directory` to choose where the file operation runs:
 
-### How It Works
-
-| Flag | Scope | Persistence | Use Case |
-|------|-------|-------------|----------|
-| `temp=False` | **User-level, global** | Survives disconnects and new sessions forever | User preferences, saved data, history, onboarding state |
-| `temp=True` | **Session-level** | Deleted when session ends | Scratch data, cached API responses, temp processing |
-
-**Key concept: Storage is scoped at the user level globally — NOT per-ability.** Any Ability can read/write to the same files for a given user. This means an onboarding Ability can write `user_prefs.json` and a completely separate Smart Hub Ability can read it.
+- `in_ability_directory=False` (default): user data storage (shared across that user's abilities)
+- `in_ability_directory=True`: current Ability directory
 
 **Allowed file types:** `.txt`, `.csv`, `.json`, `.md`, `.log`, `.yaml`, `.yml`
 
-### `check_if_file_exists(filename, temp)`
+### `check_if_file_exists(file_name, in_ability_directory=False)`
 
 ```python
-exists = await self.capability_worker.check_if_file_exists("user_prefs.json", False)
+exists = await self.capability_worker.check_if_file_exists(
+    "user_prefs.json",
+    in_ability_directory=False
+)
 ```
 
 - **Async:** Yes (`await`)
 - **Returns:** `bool`
-- **Always call this before reading** — don't assume a file exists on first run
 
-### `write_file(filename, content, temp)`
+### `write_file(file_name, content=None, in_ability_directory=False, mode="a+")`
 
 ```python
-await self.capability_worker.write_file("user_prefs.json", '{"theme": "dark"}', False)
+await self.capability_worker.write_file(
+    "user_prefs.json",
+    '{"theme": "dark"}',
+    False
+)
 ```
 
 - **Async:** Yes (`await`)
-- **⚠️ Behavior: APPENDS to existing file.** Creates the file if it doesn't exist. If it already exists, content is added to the end.
-- This is fine for `.txt` and `.log` files (just append new lines)
-- **For JSON: this WILL corrupt your data.** See the JSON pattern below.
+- **Modes:** `mode="a+"` (default, append) or `mode="w"` (overwrite)
+- **Default behavior (`a+`):** Appends to existing file; creates file if it doesn't exist
 
-### `read_file(filename, temp)`
+### `read_file(file_name, in_ability_directory=False)`
 
 ```python
-data = await self.capability_worker.read_file("user_prefs.json", False)
+data = await self.capability_worker.read_file(
+    "user_prefs.json",
+    in_ability_directory=False
+)
 ```
 
 - **Async:** Yes (`await`)
-- **Returns:** `str` — full file contents
+- **Returns:** `str`
 
-### `delete_file(filename, temp)`
+### `delete_file(file_name, in_ability_directory=False)`
 
 ```python
-await self.capability_worker.delete_file("user_prefs.json", False)
+await self.capability_worker.delete_file(
+    "user_prefs.json",
+    in_ability_directory=False
+)
 ```
 
 - **Async:** Yes (`await`)
 
----
+### `get_user_data_file_names()`
 
-### ⚠️ The JSON Rule: Always Delete + Write
-
-Because `write_file` **appends**, writing JSON to an existing file will produce invalid JSON (`{"a":1}{"a":1,"b":2}`). Always delete first, then write the complete object:
+Returns filenames in user data storage.
 
 ```python
-# ✅ CORRECT — delete + write
+files = await self.capability_worker.get_user_data_file_names()
+```
+
+- **Async:** Yes (`await`)
+- **Returns:** `list[str]`
+
+### ⚠️ The JSON Rule: Always Delete + Write, Never Append
+
+Because `write_file` defaults to append mode (`a+`), writing JSON to an existing file can silently produce invalid JSON (`{"a":1}{"a":1,"b":2}`) — no error is thrown, but your file is broken and unreadable. There are two safe ways to overwrite:
+
+- **Delete + Write** — explicitly delete the file first, then write the new content
+- **`mode="w"`** — passed as a parameter to `write_file`, it overwrites the file in place instead of appending
+
+```python
+# ✅ RECOMMENDED — delete + write (explicit, safe)
 async def save_json(self, filename, data):
     if await self.capability_worker.check_if_file_exists(filename, False):
         await self.capability_worker.delete_file(filename, False)
     await self.capability_worker.write_file(filename, json.dumps(data), False)
 
+# ✅ ALTERNATIVE — mode="w" (shorthand, but easy to forget)
+await self.capability_worker.write_file("prefs.json", json.dumps(data), False, mode="w")
+
 # ❌ WRONG — appending to JSON
 await self.capability_worker.write_file("prefs.json", json.dumps(new_data), False)
-# Result: {"old":"data"}{"new":"data"}  ← broken JSON
+# Result: {"old":"data"}{"new":"data"}  ← broken JSON, no error thrown
 ```
 
 ---
 
-### When to Use Which Mode
+## 9. Ability Context Storage (Key-Value)
 
-**Use `temp=False` (persistent) for:**
-- User preferences and settings
-- Onboarding data ("has this user done setup?")
-- Learned context (name, location, timezone)
-- Conversation summaries
-- Accumulated data (journals, logs, scores, history)
-- Any data that should survive a disconnect
+`CapabilityWorker` includes a key-value context store for structured user/session state.
 
-**Use `temp=True` (session-only) for:**
-- Cached API responses
-- Intermediate processing data
-- Temporary state that doesn't need to survive a disconnect
+- Each key stores a JSON object (`dict`) as the value.
+- These methods are synchronous (`do not await`).
+- Great for conversation memory, user preferences, cart/session state, multi-step workflows, feature flags, and API cache metadata.
+
+### `create_key(key: str, value: dict)`
+
+Creates a new key-value pair.
+
+```python
+result = self.capability_worker.create_key(
+    key="user_preferences",
+    value={
+        "language": "en",
+        "theme": "dark",
+        "notifications": True
+    }
+)
+```
+
+- **Async:** No (synchronous)
+- **Parameters:**
+  - `key` (str): Unique key
+  - `value` (dict): JSON object to store
+
+> **Note:** If the key already exists, the backend may return an error.
+
+### `update_key(key: str, value: dict)`
+
+Updates an existing key.
+
+```python
+result = self.capability_worker.update_key(
+    key="user_preferences",
+    value={
+        "language": "en",
+        "theme": "light",
+        "notifications": False
+    }
+)
+```
+
+- **Async:** No (synchronous)
+- **Parameters:** same as `create_key`
+
+### `delete_key(key: str)`
+
+Deletes a key-value pair permanently.
+
+```python
+result = self.capability_worker.delete_key("user_preferences")
+```
+
+- **Async:** No (synchronous)
+- **Parameters:**
+  - `key` (str): Key to delete
+
+### `get_all_keys()`
+
+Returns all stored key-value pairs.
+
+```python
+all_context = self.capability_worker.get_all_keys()
+```
+
+- **Async:** No (synchronous)
+- **Returns:** Backend response containing all keys/values
+
+### `get_single_key(key: str)`
+
+Returns one key's stored value.
+
+```python
+preferences = self.capability_worker.get_single_key("user_preferences")
+```
+
+- **Async:** No (synchronous)
+- **Parameters:**
+  - `key` (str): Key to retrieve
+
+### Example: Multi-Step Conversation State
+
+```python
+# 1) Create state
+self.capability_worker.create_key(
+    key="conversation_1234",
+    value={
+        "last_intent": "book_flight",
+        "destination": "Dubai",
+        "travel_date": "2026-04-01",
+        "step": "awaiting_confirmation"
+    }
+)
+
+# 2) Update state
+self.capability_worker.update_key(
+    key="conversation_1234",
+    value={
+        "last_intent": "book_flight",
+        "destination": "Dubai",
+        "travel_date": "2026-04-01",
+        "step": "confirmed"
+    }
+)
+
+# 3) Read state
+context = self.capability_worker.get_single_key("conversation_1234")
+```
+
+### Best Practices
+
+1. Use descriptive keys (for example `user_123_preferences`, `conversation_456_state`, `cart_session_789`).
+2. Always store structured JSON objects, not raw strings.
+3. Handle missing keys safely before update:
+
+```python
+existing = self.capability_worker.get_single_key("user_preferences")
+if existing:
+    self.capability_worker.update_key("user_preferences", updated_value)
+else:
+    self.capability_worker.create_key("user_preferences", updated_value)
+```
+
+### Choosing Between File Storage and Ability Context Storage
+
+Use **file storage** when you are producing **human-readable artifacts** (for example `notes.md`, `activity.log`, `report.txt`, `data.csv`, `user_prefs.json`) that a **user or developer might open in an editor** to read or export, and writes are **infrequent or append-only**.
+
+Use **ability context storage (key-value)** when you need **internal, structured JSON state** that your code reads and writes **frequently** (conversation state, carts, workflows, feature flags), especially when **multiple Abilities or processes might touch the same state**.
+
+### File Storage vs Ability Context Storage
+
+| Aspect | File Storage | Ability Context Storage (Key-Value) |
+|--------|--------------|--------------------------------------|
+| **Data shape** | Any allowed text format; you define the structure. | One JSON object (`dict`) stored under each key. |
+| **API style** | Async file ops: `read_file`, `write_file`, `delete_file`, etc. | Sync key ops: `create_key`, `update_key`, `delete_key`, `get_single_key`. |
+| **Best for** | Logs, notes, reports, markdown context, CSV/JSON exports. | Conversation/workflow state, carts, fast-changing preferences, feature flags. |
+| **Write pattern** | Infrequent writes or append-only logs. | Frequent small reads/writes during interactions. |
+| **Concurrency / corruption** | Be careful with JSON and multiple writers (delete-then-write or `mode="w"`). | Safer atomic key updates for concurrent access. |
+| **Rule of thumb** | Use when you want a file a human might open in an editor. | Use when you want live structured state your code updates often. |
 
 ---
 
-### Cross-Ability Data Sharing
-
-Since storage is user-level (not per-ability), use consistent file names across abilities to share data:
-
-```python
-# Onboarding Ability saves user context:
-await self.capability_worker.write_file("user_context.json", json.dumps({
-    "name": "Chris",
-    "city": "Austin",
-    "timezone": "America/Chicago"
-}), False)
-
-# A completely separate Ability reads it later:
-if await self.capability_worker.check_if_file_exists("user_context.json", False):
-    raw = await self.capability_worker.read_file("user_context.json", False)
-    context = json.loads(raw)
-    name = context.get("name", "there")
-    await self.capability_worker.speak(f"Welcome back, {name}.")
-```
-
----
-
-### Complete Example: Persistent User Preferences
-
-```python
-PREFS_FILE = "user_prefs.json"
-
-async def load_or_create_prefs(self) -> dict:
-    """Load persistent user preferences, or create defaults if first run."""
-    if await self.capability_worker.check_if_file_exists(PREFS_FILE, False):
-        raw = await self.capability_worker.read_file(PREFS_FILE, False)
-        try:
-            return json.loads(raw)
-        except json.JSONDecodeError:
-            self.worker.editor_logging_handler.error("Corrupt prefs file, resetting.")
-            await self.capability_worker.delete_file(PREFS_FILE, False)
-    return {}
-
-async def save_prefs(self, prefs: dict):
-    """Save user preferences persistently."""
-    if await self.capability_worker.check_if_file_exists(PREFS_FILE, False):
-        await self.capability_worker.delete_file(PREFS_FILE, False)
-    await self.capability_worker.write_file(PREFS_FILE, json.dumps(prefs), False)
-```
-
-### Complete Example: First Run Detection
-
-```python
-async def boot(self):
-    prefs = await self.load_or_create_prefs()
-
-    if prefs.get("onboarded"):
-        name = prefs.get("user_name", "there")
-        await self.capability_worker.speak(f"Welcome back, {name}.")
-        await self.run_main_loop(prefs)
-    else:
-        prefs = await self.run_onboarding()
-        prefs["onboarded"] = True
-        await self.save_prefs(prefs)
-        await self.run_main_loop(prefs)
-
-    self.capability_worker.resume_normal_flow()
-```
-
-### Complete Example: Activity Logging (Append-Friendly)
-
-For `.txt` and `.log` files, appending works perfectly:
-
-```python
-from time import time
-
-async def log_activity(self, event: str):
-    """Append a timestamped event to a persistent activity log."""
-    entry = "\n%s: %s" % (time(), event)
-    await self.capability_worker.write_file("activity.log", entry, False)
-
-async def get_recent_activity(self) -> str:
-    """Read the full activity log."""
-    if await self.capability_worker.check_if_file_exists("activity.log", False):
-        return await self.capability_worker.read_file("activity.log", False)
-    return ""
-```
-
-### Complete Example: Session-Only Cache
-
-```python
-async def cache_api_response(self, key: str, data: str):
-    """Cache data for current session only — cleaned up on disconnect."""
-    await self.capability_worker.write_file(f"cache_{key}.json", data, True)
-
-async def get_cached(self, key: str) -> str | None:
-    """Read cached data from current session."""
-    fname = f"cache_{key}.json"
-    if await self.capability_worker.check_if_file_exists(fname, True):
-        return await self.capability_worker.read_file(fname, True)
-    return None
-```
-
----
-
-## 9. WebSocket Communication
+## 10. WebSocket Communication
 
 ### `send_data_over_websocket(data_type, data)`
 Sends structured data over WebSocket. Used for custom events (music mode, DevKit actions, etc.).
@@ -495,18 +594,15 @@ await self.capability_worker.send_devkit_action("led_on")
 
 ---
 
-## 10. Flow Control
+## 11. Flow Control
 
 ### `resume_normal_flow()`
 
-**⚠️ CRITICAL: You MUST call this when your Ability is done.** It hands control back to the Agent. Without it, the Agent goes silent and the user has to restart the conversation.
+**⚠️ CRITICAL FOR `main.py` SKILLS:** You MUST call this when an interactive skill is done. It hands control back to the Agent. Without it, the Agent goes silent and the user has to restart the conversation.
 
 ```python
 self.capability_worker.resume_normal_flow()
 ```
-
-- **Async:** Yes (`await`)
-- **Use case:** Manual cutoffs when your Ability needs to immediately stop ongoing output and listen for fresh input
 
 - **Async:** No (synchronous)
 - **When to call:** On EVERY exit path:
@@ -523,6 +619,8 @@ self.capability_worker.resume_normal_flow()
 - [ ] Called after timeout logic?
 - [ ] Called after user exit detection?
 
+**Do not call this in `background.py` daemon loops.** Background daemons are independent threads and should keep running until session end.
+
 ### `send_interrupt_signal()`
 
 Sends an interrupt event to stop the current assistant output (speech/audio) and switch back to user input.
@@ -531,9 +629,13 @@ Sends an interrupt event to stop the current assistant output (speech/audio) and
 interrupt_signal = await self.capability_worker.send_interrupt_signal()
 ```
 
+- **Async:** Yes (`await`)
+- **Use case:** Manual cutoffs when your Ability needs to immediately stop ongoing output and listen for fresh input
+- **Background daemon rule:** Call this before daemon `speak()`, `play_audio()`, or `play_from_audio_file()` to avoid audio overlap.
+
 ---
 
-## 11. Logging
+## 12. Logging
 
 ### `editor_logging_handler`
 
@@ -555,7 +657,7 @@ self.worker.editor_logging_handler.debug("Debugging")
 
 ---
 
-## 12. Session Tasks
+## 13. Session Tasks
 
 OpenHome's managed task system. Ensures async work gets properly cancelled when sessions end. Raw `asyncio` tasks can outlive a session — if the user hangs up or switches abilities, your task keeps running as a ghost process. `session_tasks` ensures everything gets cleaned up properly.
 
@@ -576,13 +678,13 @@ await self.worker.session_tasks.sleep(5.0)
 ```
 
 - **Use instead of:** `asyncio.sleep()` (which can't be cleanly cancelled)
+- **Daemon best practice:** Background `background.py` loops should always use this for polling intervals.
 
 ---
 
-## 13. User Connection Info
+## 14. User Connection Info
 
 ### `get_timezone()`
-
 Returns the timezone for the active user/session when available.
 
 ```python
@@ -592,6 +694,21 @@ timezone = self.capability_worker.get_timezone()
 - **Async:** No (synchronous)
 - **Returns:** Timezone string (for example `America/Chicago`) or empty/`None` when unavailable
 - **Use case:** Time-aware scheduling, local date/time formatting, reminders
+- **Common daemon use:** Alarm/reminder checks aligned to the user's local timezone
+
+### `get_token(platform)`
+Returns the linked account access token for the current user.
+
+```python
+token = self.capability_worker.get_token("google")
+self.worker.editor_logging_handler.info(token)
+```
+
+- **Async:** No (synchronous)
+- **Parameters:**
+  - `platform` (str): Platform name. Supported values: Google (`"google"`), Slack (`"slack"`), Discord (`"discord"`)
+- **Returns:** Access token string for that linked platform
+- **Use case:** Calling Google/Slack/Discord APIs on behalf of the linked user account
 
 ### `user_socket.client.host`
 The user's public IP address at connection time.
@@ -638,10 +755,9 @@ def get_user_location(self):
 
 ---
 
-## 14. Conversation Memory & History
+## 15. Conversation Memory & History
 
 ### `get_full_message_history()`
-
 Access the full conversation message history from the current session through `CapabilityWorker`.
 
 ```python
@@ -651,6 +767,19 @@ self.worker.editor_logging_handler.info(f"Messages so far: {len(history)}")
 
 - **Returns:** The complete message history for the active session
 - **Use case:** Building context-aware abilities that know what was said before the ability was triggered
+- **Common daemon use:** Live conversation monitoring for note-taking, summarization, and event detection
+
+### `update_personality_agent_prompt(prompt_addition)`
+Append additional instructions/context to the active Agent personality prompt.
+
+```python
+self.capability_worker.update_personality_agent_prompt(
+    "The user prefers concise answers and metric units."
+)
+```
+
+- **Async:** No (synchronous)
+- **Use case:** Persist behavior/context updates into the Agent's prompt for later turns
 
 ### Maintaining History in a Looping Ability
 
@@ -678,23 +807,22 @@ async def main_loop(self):
 
 ### Passing Context Back After `resume_normal_flow()`
 
-Currently, there is **no direct way** to inject data into the Agent's system prompt after an Ability finishes. When `resume_normal_flow()` fires, the Ability is done and control returns to the Agent.
+After an Ability finishes, you can carry context forward in a few ways. When `resume_normal_flow()` fires, direct execution returns to the Agent.
 
 **What you CAN do:**
 
 1. **Save to conversation history** — Anything spoken during the Ability (via `speak()`) becomes part of the conversation history, which the Agent's LLM can see in subsequent turns.
-
-2. **Use file storage** — Write data to persistent files (see [File Storage](#8-file-storage-persistent--temporary)) that other Abilities can read later. The Agent itself won't read these files directly, but your Abilities can share data through them.
-
-3. **Memory feature** — OpenHome has a new memory feature that can persist user context. (Details TBD as this feature evolves.)
+2. **Update the Agent prompt** — Use `update_personality_agent_prompt(prompt_addition)` to append durable instructions/context to the Agent's personality prompt.
+3. **Use file storage** — Write data to persistent files (see [File Storage](#8-file-storage-persistent--temporary)) that other Abilities can read later. The Agent itself won't read these files directly, but your Abilities can share data through them.
+4. **Memory feature** — OpenHome has a new memory feature that can persist user context. (Details TBD as this feature evolves.)
 
 **What you CANNOT do (yet):**
-- Directly update or modify the Agent's system prompt from within an Ability
-- Pass structured data (like user location or preferences) to the Agent's LLM context after `resume_normal_flow()`
+- Silently inject hidden conversation-history entries without speaking them
+- Inject arbitrary structured runtime objects directly into the Agent's LLM context without using prompt/history/file mechanisms
 
 ---
 
-## 15. Music Mode
+## 16. Music Mode
 
 When playing audio that's longer than a TTS utterance (music, sound effects, long recordings), you need to signal the system to stop listening and not interrupt.
 
@@ -718,7 +846,7 @@ async def play_track(self, audio_bytes):
 
 ---
 
-## 16. Common Patterns
+## 17. Common Patterns
 
 ### LLM as Intent Router
 
@@ -792,45 +920,35 @@ Full catalog with 40+ voices available in the [OpenHome Dashboard](https://app.o
 
 ---
 
-## Appendix: What You CAN'T Do (Yet)
+## 18. Appendix: What You CAN'T Do (Yet)
 
 Being explicit about limitations saves developers hours of guessing:
 
 | You might want to... | Status |
 |----------------------|--------|
-| Update the Agent's system prompt from an Ability | ❌ Not possible |
-| Pass structured data back to the Agent after `resume_normal_flow()` | ❌ Not possible — use conversation history or file storage as workarounds |
+| Directly replace the full Agent system prompt from an Ability | ⚠️ Not supported — use `update_personality_agent_prompt(prompt_addition)` to append instructions |
+| Pass structured data back to the Agent after `resume_normal_flow()` | ❌ Not possible — use conversation history, prompt updates, or file storage as workarounds |
 | Access other Abilities from within an Ability | ❌ Not supported |
-| Run background tasks after `resume_normal_flow()` | ❌ Tasks are cancelled on session end |
+| Run background tasks for the active session | ✅ Supported via `background.py` background daemons |
+| Keep tasks alive after the session ends | ❌ Not supported — session tasks are cancelled on session end |
 | Access a database directly (Redis, SQL, etc.) | ❌ Blocked — use File Storage API instead |
 | Use `print()` | ❌ Blocked — use `editor_logging_handler` |
 | Use `asyncio.sleep()` or `asyncio.create_task()` | ❌ Blocked — use `session_tasks` |
 | Use `open()` for raw file access | ❌ Blocked — use File Storage API |
-| Import `redis`, `connection_manager`, `user_config` | ❌ Blocked |
+| Import `redis`, `user_config` | ❌ Blocked |
 
 ---
 
-## Appendix: Blocked Imports
+## 19. Appendix: Blocked Imports
 
 These will cause your Ability to be rejected by the sandbox:
 
 | Import | Why | Use Instead |
 |--------|-----|-------------|
 | `redis` | Direct datastore coupling | File Storage API |
-| `RedisHandler` | Bypasses platform abstractions | File Storage API |
-| `connection_manager` | Breaks isolation | CapabilityWorker APIs |
 | `user_config` | Can leak global state | File Storage API |
 
 Also avoid: `exec()`, `eval()`, `pickle`, `dill`, `shelve`, `marshal`, hardcoded secrets, MD5, ECB cipher mode.
 
-### Recommended Libraries
-- `requests` — for all HTTP/API calls (strongly recommended)
-- `json` — for parsing
-- `re` — for regex
-- `os` — for file path operations (within the Ability folder)
-- Other libraries may need to be requested from the OpenHome team
-
 ---
-
-*Last updated: February 2026*
 *Found an undocumented method? Report it on [Discord](https://discord.gg/openhome) so we can add it here.*

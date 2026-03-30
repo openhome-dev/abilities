@@ -86,7 +86,7 @@ With all three pre-filled, the ability **skips OAuth entirely** and connects imm
 ### Step 7: Upload to OpenHome
 
 1. Go to the **Customize Ability** page
-2. Upload all 4 files: `main.py`, `config.json`, `__init__.py`, `README.md`
+2. Upload all 3 files: `main.py`, `__init__.py`, `README.md`
 3. Fill in:
    - **Unique Name**: `google_tasks`
    - **Description**: Voice-powered Google Tasks management
