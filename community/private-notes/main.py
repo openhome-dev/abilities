@@ -3,7 +3,7 @@ Private Notes Ability
 =====================
 A voice-first note-taking skill that keeps notes private by design.
 
-Trigger words: note, notes, take a note, note this down, read my notes, 
+Trigger words: note, notes, take a note, note this down, read my notes,
                delete my notes, my notes, edit my note, update my note,
                change my note, fix my note
 
@@ -187,7 +187,7 @@ Classify into one of these actions:
 
 For "read", "edit", and "delete", extract the filter:
 - "today": notes from today
-- "last": just the most recent note  
+- "last": just the most recent note
 - "all": all notes
 - "X_minutes_ago": if user says "from X minutes ago"
 - For topic searches like "about groceries", extract just the keyword (e.g., "groceries")
