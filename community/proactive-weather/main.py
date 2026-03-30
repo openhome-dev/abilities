@@ -20,7 +20,7 @@ Do not read out every field. Keep it natural and conversational.
 WEATHER_MD_PROMPT = """
 Here is current weather data: {weather_data} for {location}.
 Write a concise markdown summary (under 200 words) for a voice assistant's background context.
-Use bullet points under a ## header. Include: current conditions, today's high/low, 
+Use bullet points under a ## header. Include: current conditions, today's high/low,
 precipitation outlook, and any active severe conditions. Write current state only, not history.
 """
 
@@ -48,8 +48,7 @@ class WeatherCapability(MatchingCapability):
         self.capability_worker = CapabilityWorker(self.worker)
         self.worker.session_tasks.create(self.run())
 
-    async def run(self):
-       # self.capability_worker.delete_key(LOCATION_KEY) # temporary line to clear persistent storage from prev session
+    async def run(self):       
         try:
             # confirm location is persistently saved
             trigger = await self.capability_worker.wait_for_complete_transcription()
