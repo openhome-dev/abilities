@@ -45,3 +45,4 @@ Format: - **@username** — ability-name ([ability-name](community/ability-name/
 - **[@mahsumaktas](https://github.com/mahsumaktas)** — prayer-times ([prayer-times](community/prayer-times/))
 - **[@brianchilders](https://github.com/brianchilders)** — airthings ([airthings](community/airthings/))
 - **[@azazrashid](https://github.com/azazrashid)** — notion-quick-capture ([notion-quick-capture](community/notion-quick-capture/))
+- **[@chadnewbry](https://github.com/chadnewbry)** — mta-next-train ([mta-next-train](community/mta-next-train/))
