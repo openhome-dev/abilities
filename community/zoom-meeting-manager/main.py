@@ -46,7 +46,7 @@ class ZoomMeetingManagerCapability(MatchingCapability):
     capability_worker: CapabilityWorker = None
     zoom_auth: Any = None
 
-    #{{register_capability}}
+    # {{register_capability}}
 
     class ZoomAuth:
         """Server-to-Server OAuth token management. Tokens live in memory only."""
