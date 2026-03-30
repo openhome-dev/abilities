@@ -21,10 +21,10 @@ from src.agent.capability_worker import CapabilityWorker
 class PrivateNotesCapability(MatchingCapability):
     worker: AgentWorker = None
     capability_worker: CapabilityWorker = None
-    
+
     NOTES_FILE = "private_notes.json"
 
-    #{{register capability}}
+    # {{register capability}}
 
     def call(self, worker: AgentWorker):
         worker.editor_logging_handler.info("[PrivateNotes] call() invoked")
@@ -35,13 +35,13 @@ class PrivateNotesCapability(MatchingCapability):
     async def run(self):
         try:
             self.log("=== Private Notes ability STARTED ===")
-            
+
             trigger_context = await self.get_trigger_context()
             self.log(f"Trigger context: '{trigger_context}'")
-            
+
             intent = self.classify_intent(trigger_context)
             self.log(f"Classified intent: {intent}")
-            
+
             if intent["action"] == "create":
                 await self.handle_create_note(intent.get("content"))
             elif intent["action"] == "read":
@@ -50,7 +50,7 @@ class PrivateNotesCapability(MatchingCapability):
                 await self.handle_edit_note(intent.get("filter"))
             elif intent["action"] == "delete":
                 await self.handle_delete_notes(intent.get("filter"))
-                
+
         except Exception as e:
             self.log_err(f"Error in Private Notes: {str(e)}")
             await self.capability_worker.speak(
@@ -73,7 +73,7 @@ class PrivateNotesCapability(MatchingCapability):
                 except AttributeError:
                     role = str(msg.get("role", "")).lower()
                     content = msg.get("content", "")
-                
+
                 if "user" in role and content and content.strip():
                     return content.strip()
         except Exception as e:
@@ -82,7 +82,7 @@ class PrivateNotesCapability(MatchingCapability):
 
     async def get_trigger_context(self) -> str:
         """Get the utterance that triggered this ability.
-        
+
         The live transcription fires the trigger, but the STT system
         doesn't finalize (write to history) until AFTER the ability
         produces speech output. So we speak a short filler, which forces
@@ -105,7 +105,7 @@ class PrivateNotesCapability(MatchingCapability):
                     val = self.worker.current_transcription
                 elif attr_name == 'last_transcription':
                     val = self.worker.last_transcription
-                
+
                 if val and val.strip() and val.strip() != stale_msg:
                     self.log(f"Got trigger from {attr_name}: '{val.strip()}'")
                     return val.strip()
@@ -116,12 +116,12 @@ class PrivateNotesCapability(MatchingCapability):
         # Poll for the final transcription to land in history
         for attempt in range(15):
             await self.worker.session_tasks.sleep(0.2)
-            
+
             current_msg = self._get_last_user_message()
             if current_msg and current_msg != stale_msg:
                 self.log(f"Got trigger from history (post-speak, attempt {attempt + 1}): '{current_msg}'")
                 return current_msg
-            
+
             if hasattr(self.worker, 'last_human_text') and self.worker.last_human_text:
                 val = self.worker.last_human_text.strip()
                 if val and val != stale_msg:
@@ -136,7 +136,7 @@ class PrivateNotesCapability(MatchingCapability):
 
     def classify_intent(self, trigger_context: str) -> dict:
         """Classify what the user wants to do with notes.
-        
+
         Uses fast keyword matching for common phrases first, only falling
         back to an LLM call for ambiguous inputs.
         """
@@ -144,14 +144,14 @@ class PrivateNotesCapability(MatchingCapability):
         while "  " in lower:
             lower = lower.replace("  ", " ")
         lower = lower.strip()
-        
+
         # ── Fast path: READ ──────────────────────────────────────────
         read_verbs = ["read ", "what ", "play ", "list ", "show ", "tell ", "go through "]
         is_read_intent = (
             ("note" in lower and any(lower.startswith(w) for w in read_verbs))
             or lower.strip() == "my notes"
         )
-        
+
         if is_read_intent:
             filt = self._extract_filter(lower)
             self.log(f"Fast path → read, filter={filt}")
@@ -199,13 +199,13 @@ class PrivateNotesCapability(MatchingCapability):
 
     def _extract_filter(self, lower: str) -> str:
         """Extract filter value from a lowercased utterance.
-        
+
         Returns a special value ("all", "last", "today"), a single keyword,
         or a pipe-separated list of keywords for compound queries
         (e.g. "milk|cars" from "about milk or cars").
         """
         raw = None
-        
+
         if "last" in lower:
             return "last"
         elif "today" in lower:
@@ -219,10 +219,10 @@ class PrivateNotesCapability(MatchingCapability):
             if after_from == "today":
                 return "today"
             return after_from
-        
+
         if not raw:
             return "all"
-        
+
         # Split compound queries: "milk or cars", "milk and cars",
         # "milk, cars, and dogs"
         parts = []
@@ -230,7 +230,7 @@ class PrivateNotesCapability(MatchingCapability):
             if chunk in ("or", "and", ",", "&"):
                 continue
             parts.append(chunk)
-        
+
         if len(parts) > 1:
             return "|".join(parts)
         elif len(parts) == 1:
@@ -265,7 +265,7 @@ Return ONLY the JSON object, no markdown, no explanation."""
 
         raw = self.capability_worker.text_to_text_response(prompt)
         clean = raw.replace("```json", "").replace("```", "").strip()
-        
+
         try:
             result = json.loads(clean)
             if result.get("action") not in ["create", "read", "edit", "delete"]:
@@ -314,7 +314,7 @@ Return ONLY the JSON object, no markdown, no explanation."""
         if kw.endswith("s"):
             variants.append(kw[:-1])           # "cars" → "car"
             if kw.endswith("ies"):
-                variants.append(kw[:-3] + "y") # "berries" → "berry"
+                variants.append(kw[:-3] + "y")  # "berries" → "berry"
             elif kw.endswith("es"):
                 variants.append(kw[:-2])        # "boxes" → "box"
         else:
@@ -334,36 +334,36 @@ Return ONLY the JSON object, no markdown, no explanation."""
 
     def filter_notes(self, notes: list, filter_type: str) -> list:
         """Filter notes based on the filter type.
-        
+
         Supports pipe-separated keywords for compound queries
         (e.g. "milk|cars" matches notes containing "milk" OR "cars").
         """
         self.log(f"filter_notes called: filter_type='{filter_type}', {len(notes)} notes")
-        
+
         if filter_type == "last":
             return [notes[-1]] if notes else []
-        
+
         if filter_type == "today":
             today = datetime.now().date()
             return [
-                n for n in notes 
+                n for n in notes
                 if datetime.fromisoformat(n["created_at_iso"]).date() == today
             ]
-        
+
         if filter_type == "all":
             return notes
-        
+
         if filter_type:
             keywords = [k.strip().lower() for k in filter_type.split("|") if k.strip()]
             self.log(f"filter_notes keywords: {keywords}")
             self.log(f"filter_notes note contents: {[n['content'] for n in notes]}")
             result = [
-                n for n in notes 
+                n for n in notes
                 if self._note_matches_keywords(n["content"], keywords)
             ]
             self.log(f"filter_notes matched {len(result)} notes")
             return result
-        
+
         return notes
 
     # ── Note CRUD ────────────────────────────────────────────────────
@@ -375,21 +375,21 @@ Return ONLY the JSON object, no markdown, no explanation."""
             await self.save_note(cleaned)
             await self.capability_worker.speak("Noted.")
             return
-        
+
         await self.capability_worker.speak("Go ahead.")
-        
+
         self.log(">>> Recording started: waiting for note dictation")
         raw_dictation = await self.capability_worker.user_response()
         self.log(f"<<< Recording stopped: got '{raw_dictation}'")
-        
+
         if not raw_dictation or raw_dictation.strip() == "":
             await self.capability_worker.speak("I didn't catch that.")
             return
-        
+
         if self.classify_yes_no_cancel(raw_dictation, "cancel") == "cancel":
             await self.capability_worker.speak("Cancelled.")
             return
-        
+
         cleaned = self.clean_dictation(raw_dictation)
         await self.save_note(cleaned)
         await self.capability_worker.speak("Noted.")
@@ -417,10 +417,10 @@ Return ONLY the cleaned note text, nothing else."""
     async def save_note(self, content: str):
         """Save a note to the JSON file."""
         notes = await self.load_notes()
-        
+
         tz = self.capability_worker.get_timezone()
         now = datetime.now()
-        
+
         note = {
             "id": f"note_{int(now.timestamp() * 1000)}",
             "content": content,
@@ -429,7 +429,7 @@ Return ONLY the cleaned note text, nothing else."""
             "timezone": tz,
             "human_time": now.strftime("%I:%M %p on %A, %b %d, %Y")
         }
-        
+
         notes.append(note)
         await self.save_notes_list(notes)
         self.log(f"Saved note: {note['id']}")
@@ -442,7 +442,7 @@ Return ONLY the cleaned note text, nothing else."""
             )
             if not exists:
                 return []
-            
+
             raw = await self.capability_worker.read_file(self.NOTES_FILE, False)
             return json.loads(raw)
         except (json.JSONDecodeError, Exception) as e:
@@ -452,14 +452,14 @@ Return ONLY the cleaned note text, nothing else."""
     async def handle_read_notes(self, filter_type: str = None):
         """Read notes back to the user with optional filtering."""
         notes = await self.load_notes()
-        
+
         if not notes:
             await self.capability_worker.speak("You don't have any notes yet.")
             return
-        
+
         filter_type = filter_type or "all"
         filtered = self.filter_notes(notes, filter_type)
-        
+
         if not filtered:
             if filter_type == "today":
                 await self.capability_worker.speak("No notes from today.")
@@ -480,10 +480,10 @@ Return ONLY the cleaned note text, nothing else."""
                         filtered = notes
                     else:
                         return
-        
+
         if not filtered:
             return
-        
+
         if filter_type == "last":
             note = filtered[0]
             await self.capability_worker.speak(
@@ -504,7 +504,7 @@ Return ONLY the cleaned note text, nothing else."""
                 await self.capability_worker.speak(
                     f"{time_str}: {note['content']}"
                 )
-                
+
                 if i >= 10 and i < len(filtered):
                     remaining = len(filtered) - i
                     await self.capability_worker.speak(
@@ -519,13 +519,13 @@ Return ONLY the cleaned note text, nothing else."""
     async def handle_edit_note(self, filter_type: str = None):
         """Edit an existing note. Find it by filter, read it back, collect replacement."""
         notes = await self.load_notes()
-        
+
         if not notes:
             await self.capability_worker.speak("You don't have any notes to edit.")
             return
-        
+
         filter_type = filter_type or "last"
-        
+
         # Find the target note
         if filter_type == "last":
             target = notes[-1]
@@ -574,47 +574,47 @@ Return ONLY the cleaned note text, nothing else."""
                     f"Found {len(matching)} notes{self._filter_label(filter_type)}. I'll edit the most recent one."
                 )
                 target = matching[-1]
-        
+
         # Read back and ask for replacement
         await self.capability_worker.speak(
             f"Here's the note: {target['content']}. What should it say instead?"
         )
-        
+
         raw_response = await self.capability_worker.user_response()
-        
+
         if not raw_response or raw_response.strip() == "":
             await self.capability_worker.speak("I didn't catch that. Edit cancelled.")
             return
-        
+
         lower_resp = raw_response.lower().strip()
-        if any(phrase in lower_resp for phrase in 
+        if any(phrase in lower_resp for phrase in
                ["never mind", "cancel", "forget it", "stop", "don't edit"]):
             await self.capability_worker.speak("Okay, kept it as is.")
             return
-        
+
         cleaned = self.clean_dictation(raw_response)
-        
+
         for n in notes:
             if n["id"] == target["id"]:
                 n["content"] = cleaned
                 n["edited_at_iso"] = datetime.now().isoformat()
                 break
-        
+
         await self.save_notes_list(notes)
         await self.capability_worker.speak("Updated.")
 
     async def handle_delete_notes(self, filter_type: str = None):
         """Delete notes with confirmation."""
         notes = await self.load_notes()
-        
+
         if not notes:
             await self.capability_worker.speak("You don't have any notes to delete.")
             return
-        
+
         filter_type = filter_type or "all"
         label = self._filter_label(filter_type).strip()
         self.log(f"handle_delete_notes: filter_type='{filter_type}', label='{label}', {len(notes)} notes")
-        
+
         # Handle "delete all" separately since it skips filtering
         if filter_type == "all":
             await self.capability_worker.speak(
@@ -627,7 +627,7 @@ Return ONLY the cleaned note text, nothing else."""
             else:
                 await self.capability_worker.speak("Okay, kept them.")
             return
-        
+
         # Find matching notes
         if filter_type == "last":
             matching = [notes[-1]]
@@ -652,13 +652,13 @@ Return ONLY the cleaned note text, nothing else."""
         else:
             # Keyword filter — uses filter_notes which handles plural/singular
             matching = self.filter_notes(notes, filter_type)
-        
+
         self.log(f"handle_delete_notes: found {len(matching)} matching notes")
-        
+
         if not matching:
             await self.capability_worker.speak(f"No notes{' ' + label if label else ''}.")
             return
-        
+
         # Confirm deletion
         if len(matching) == 1:
             note = matching[0]
@@ -669,7 +669,7 @@ Return ONLY the cleaned note text, nothing else."""
             await self.capability_worker.speak(
                 f"Found {len(matching)} notes{' ' + label if label else ''}. Delete all of them? Say yes to confirm."
             )
-        
+
         response = await self.capability_worker.user_response()
         if response and self.classify_yes_no_cancel(response, "confirm deletion") == "yes":
             matching_ids = {n["id"] for n in matching}
@@ -690,7 +690,7 @@ Return ONLY the cleaned note text, nothing else."""
             exists = await self.capability_worker.check_if_file_exists(self.NOTES_FILE, False)
             if exists:
                 await self.capability_worker.delete_file(self.NOTES_FILE, False)
-            
+
             if notes:
                 await self.capability_worker.write_file(
                     self.NOTES_FILE,
@@ -709,7 +709,7 @@ Return ONLY the cleaned note text, nothing else."""
             created = datetime.fromisoformat(note["created_at_iso"])
             now = datetime.now()
             diff = now - created
-            
+
             if diff.days == 0:
                 if diff.seconds < 60:
                     return "Just now"
@@ -751,13 +751,13 @@ Return ONLY one word: yes, no, or cancel. Nothing else."""
 
         raw = self.capability_worker.text_to_text_response(prompt)
         result = raw.strip().lower().replace('"', '').replace("'", "")
-        
+
         if result in ["yes", "no", "cancel"]:
             return result
         if "yes" in result:
             return "yes"
         elif "cancel" in result:
             return "cancel"
-        
+
         self.log(f"Ambiguous yes/no/cancel: '{raw}' -> defaulting to 'no'")
         return "no"
