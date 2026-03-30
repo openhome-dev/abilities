@@ -160,9 +160,12 @@ _HEALTH_KEYWORDS = {
 _DETAIL_TRIGGERS = (
     "detail",
     "tell me about",
+    "tell me more",
+    "more about",
     "ingredients",
     "reviews",
     "what's in",
+    "what's it got",
     "yes",
     "yep",
     "yeah",
@@ -179,6 +182,10 @@ _DETAIL_TRIGGERS = (
     "first one",
     "second one",
     "third one",
+    "go with",
+    "pick that",
+    "let's go with",
+    "what about",
 )
 
 
@@ -602,8 +609,8 @@ class HealthSupplementSearchCapability(MatchingCapability):
         try:
             if not self._config_ok():
                 await self.capability_worker.speak(
-                    "Health Supplement Search isn't configured yet. "
-                    "Please add your API keys and re-upload the ability."
+                    "Supplement Search isn't set up yet. "
+                    "Add your API keys and re-upload the ability."
                 )
                 self.capability_worker.resume_normal_flow()
                 return
@@ -618,15 +625,15 @@ class HealthSupplementSearchCapability(MatchingCapability):
             pending_guess = None
             confirmed_search = False
 
+            await self.capability_worker.speak(
+                "Supplement search is ready. Just a heads up, "
+                "this is informational, not medical advice."
+            )
             if pending_input:
-                await self.capability_worker.speak(
-                    "Welcome to Health Supplement Search — informational only, not medical advice. "
-                    "Let me search for that."
-                )
+                await self.capability_worker.speak("Searching now.")
             else:
                 await self.capability_worker.speak(
-                    "Welcome to Health Supplement Search — informational only, not medical advice. "
-                    "What health concern can I help you with?"
+                    "What health concern can I help with?"
                 )
 
             idle_count = 0
@@ -645,12 +652,12 @@ class HealthSupplementSearchCapability(MatchingCapability):
                     idle_count += 1
                     if idle_count >= IDLE_EXIT:
                         await self.capability_worker.speak(
-                            "No response detected. Goodbye!"
+                            "I haven't heard anything in a while. Talk to you later."
                         )
                         break
                     if idle_count >= IDLE_REPROMPT:
                         user_input = await self.capability_worker.run_io_loop(
-                            "I'm still here. What supplement or health concern can I help you with?"
+                            "Still here. What supplement or health concern can I help with?"
                         )
                         if user_input and user_input.strip():
                             idle_count = 0
@@ -662,33 +669,32 @@ class HealthSupplementSearchCapability(MatchingCapability):
                 # "yes" must confirm the guess, not exit the session.
                 if not pending_guess and self._wants_exit(user_input):
                     await self.capability_worker.speak(
-                        "Thanks for using Health Supplement Search. Stay healthy!"
+                        "Thanks for using Supplement Search. Stay healthy!"
                     )
                     break
 
                 if pending_guess:
+                    # User already spoke — use that as the answer
                     lowered_ui = user_input.lower().strip()
-                    if any(
+                    is_yes = any(
                         w in lowered_ui
                         for w in (
-                            "yes",
-                            "yep",
-                            "yeah",
-                            "yup",
-                            "sure",
-                            "ok",
-                            "okay",
-                            "correct",
-                            "right",
-                            "absolutely",
-                            "go ahead",
-                            "do it",
-                            "sounds good",
-                            "for sure",
+                            "yes", "yep", "yeah", "yup", "sure",
+                            "ok", "okay", "correct", "right",
+                            "absolutely", "go ahead", "do it",
+                            "sounds good", "for sure", "that's right",
+                            "exactly", "please", "uh huh", "you got it",
                         )
-                    ):
+                    )
+                    if is_yes:
                         pending_input = pending_guess
                         pending_guess = None
+                        confirmed_search = True
+                        continue
+                    # Not a yes — check if it's a new health query
+                    if self._is_health_query(user_input):
+                        pending_guess = None
+                        pending_input = user_input
                         confirmed_search = True
                         continue
                     pending_guess = None
@@ -721,13 +727,15 @@ class HealthSupplementSearchCapability(MatchingCapability):
                             await self._detail_response(detail_payload)
                         )
                         await self.capability_worker.speak(
-                            "Would you like details on another product, or search for something else?"
+                            "Want details on another, or search for something else?"
                         )
                         continue
                     if any(t in user_input.lower() for t in _DETAIL_TRIGGERS):
+                        count = min(len(self._last_results), MAX_DISPLAY)
+                        ordinals = ["first", "second", "third"][:count]
+                        options = ", ".join(ordinals[:-1]) + f", or {ordinals[-1]}" if count > 1 else ordinals[0]
                         await self.capability_worker.speak(
-                            "Which product would you like more details on? "
-                            "Say the first, second, or third."
+                            f"Which one? Say the {options}."
                         )
                         continue
 
@@ -742,12 +750,12 @@ class HealthSupplementSearchCapability(MatchingCapability):
                         if guess:
                             pending_guess = guess
                             await self.capability_worker.speak(
-                                f"Did you mean {guess}? Say yes to search for that, "
-                                f"or tell me more about what you need."
+                                f"Did you mean {guess}? Or tell me "
+                                f"more about what you need."
                             )
                         else:
                             await self.capability_worker.speak(
-                                "Can you tell me more? What health concern are you looking for supplements for?"
+                                "Can you tell me a bit more about what you're looking for?"
                             )
                         continue
                     if not health_check:
@@ -758,19 +766,19 @@ class HealthSupplementSearchCapability(MatchingCapability):
                         if guess:
                             pending_guess = guess
                             await self.capability_worker.speak(
-                                f"I didn't quite catch that. Did you mean something like {guess}? "
-                                f"Or tell me what health concern you're looking for."
+                                f"I didn't quite catch that. Did you mean {guess}? "
+                                f"Or just tell me what you're looking for."
                             )
                         else:
                             pending_guess = None
                             await self.capability_worker.speak(
-                                "I can only help with health and supplement questions. "
-                                "What health concern can I search supplements for?"
+                                "I'm focused on health and supplement questions. "
+                                "What health concern can I search for?"
                             )
                         continue
 
                 search_query = self._normalize_query(user_input)
-                await self.capability_worker.speak("Let me search for that...")
+                await self.capability_worker.speak("Searching now.")
                 results, source = await self._search_with_fallback(search_query)
                 self._last_results = results
                 self._last_source = source
@@ -785,8 +793,8 @@ class HealthSupplementSearchCapability(MatchingCapability):
                     )
                 else:
                     await self.capability_worker.speak(
-                        "I couldn't find supplements matching that concern in my database or online. "
-                        "Could you rephrase, or try a different health topic?"
+                        "Nothing came up for that one. "
+                        "Try rephrasing or a different health topic."
                     )
 
         except Exception as exc:
