@@ -29,7 +29,7 @@ class PrivateNotesCapability(MatchingCapability):
     def call(self, worker: AgentWorker):
         worker.editor_logging_handler.info("[PrivateNotes] call() invoked")
         self.worker = worker
-        self.capability_worker = CapabilityWorker(self.worker)
+        self.capability_worker = CapabilityWorker(self)
         self.worker.session_tasks.create(self.run())
 
     async def run(self):
@@ -62,75 +62,11 @@ class PrivateNotesCapability(MatchingCapability):
 
     # ── Trigger Context ──────────────────────────────────────────────
 
-    def _get_last_user_message(self) -> str:
-        """Return the most recent user message from conversation history, or ''."""
-        try:
-            history = self.worker.agent_memory.full_message_history
-            for msg in reversed(history):
-                try:
-                    role = str(msg.role).lower()
-                    content = msg.content
-                except AttributeError:
-                    role = str(msg.get("role", "")).lower()
-                    content = msg.get("content", "")
-
-                if "user" in role and content and content.strip():
-                    return content.strip()
-        except Exception as e:
-            self.log_err(f"Error reading history: {e}")
-        return ""
-
     async def get_trigger_context(self) -> str:
-        """Get the utterance that triggered this ability.
-
-        The live transcription fires the trigger, but the STT system
-        doesn't finalize (write to history) until AFTER the ability
-        produces speech output. So we speak a short filler, which forces
-        STT finalization, then read the now-available final transcription
-        from history.
-        """
-        stale_msg = self._get_last_user_message()
-        self.log(f"Stale history message (pre-trigger): '{stale_msg}'")
-
-        # Quick check — worker attributes might already have it
-        for attr_name in ('last_human_text', 'human_text',
-                          'current_transcription', 'last_transcription'):
-            if hasattr(self.worker, attr_name):
-                val = None
-                if attr_name == 'last_human_text':
-                    val = self.worker.last_human_text
-                elif attr_name == 'human_text':
-                    val = self.worker.human_text
-                elif attr_name == 'current_transcription':
-                    val = self.worker.current_transcription
-                elif attr_name == 'last_transcription':
-                    val = self.worker.last_transcription
-
-                if val and val.strip() and val.strip() != stale_msg:
-                    self.log(f"Got trigger from {attr_name}: '{val.strip()}'")
-                    return val.strip()
-
-        # Speak a filler — forces STT to finalize the transcription
-        await self.capability_worker.speak("One sec.")
-
-        # Poll for the final transcription to land in history
-        for attempt in range(15):
-            await self.worker.session_tasks.sleep(0.2)
-
-            current_msg = self._get_last_user_message()
-            if current_msg and current_msg != stale_msg:
-                self.log(f"Got trigger from history (post-speak, attempt {attempt + 1}): '{current_msg}'")
-                return current_msg
-
-            if hasattr(self.worker, 'last_human_text') and self.worker.last_human_text:
-                val = self.worker.last_human_text.strip()
-                if val and val != stale_msg:
-                    self.log(f"Got trigger from last_human_text (post-speak, attempt {attempt + 1}): '{val}'")
-                    return val
-
-        fallback = self._get_last_user_message()
-        self.log(f"Trigger poll timed out, using fallback: '{fallback}'")
-        return fallback
+        """Get the utterance that triggered this ability."""
+        trigger = await self.capability_worker.wait_for_complete_transcription()
+        self.log(f"Got trigger: '{trigger}'")
+        return trigger or ""
 
     # ── Intent Classification ────────────────────────────────────────
 
