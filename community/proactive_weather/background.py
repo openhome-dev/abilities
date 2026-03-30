@@ -52,7 +52,7 @@ class WeatheralertCapabilityBackground(MatchingCapability):
     background_daemon_mode: bool = False
 
     # Do not change following tag of register capability
-    #{{register capability}}
+    # {{register capability}}
 
     def call(self, worker: AgentWorker, background_daemon_mode: bool):
         self.worker = worker
@@ -71,12 +71,12 @@ class WeatheralertCapabilityBackground(MatchingCapability):
                 saved = self.capability_worker.get_single_key(LOCATION_KEY)
                 saved_value = saved.get("value") if saved else None
                 if saved_value and saved_value.get("city"):
-                    lat, lon = self.geocode(saved_value["city"])                
+                    lat, lon = self.geocode(saved_value["city"])
                     if lat is not None:
                         weather_data = self.fetch_weather(lat, lon)
                         if weather_data:
                             await self.check_for_alerts(weather_data)
-                            await self.write_weather_md(saved["city"], weather_data)                            
+                            await self.write_weather_md(saved["city"], weather_data)
                 else:
                     self.worker.editor_logging_handler.info(
                         "[WeatherDaemon] No saved location yet, skipping poll."
@@ -185,13 +185,13 @@ class WeatheralertCapabilityBackground(MatchingCapability):
                 )
             )
 
-            # required write pattern for context files 
+            # required write pattern for context files
             exists = await self.capability_worker.check_if_file_exists(WEATHER_MD, in_ability_directory=False)
             if exists:
                 await self.capability_worker.delete_file(WEATHER_MD, in_ability_directory=False)
             await self.capability_worker.write_file(WEATHER_MD, content, in_ability_directory=False)
 
             self.worker.editor_logging_handler.info("[Weather] Wrote local_weather.md")
-                        
+
         except Exception as e:
-            self.worker.editor_logging_handler.error(f"[Weather] Failed to write md: {e}")    
+            self.worker.editor_logging_handler.error(f"[Weather] Failed to write md: {e}")

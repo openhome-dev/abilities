@@ -55,13 +55,13 @@ class WeatherCapability(MatchingCapability):
             trigger = await self.capability_worker.wait_for_complete_transcription()
             saved = self.capability_worker.get_single_key(LOCATION_KEY)
             self.worker.editor_logging_handler.info(f"[Weather] get_single_key returned: {saved}")
-        
+
             # Check if we have a saved location
             saved = self.capability_worker.get_single_key(LOCATION_KEY)
             saved_value = saved.get("value") if saved else None
             if saved_value and saved_value.get("city"):
                 location = saved_value["city"]
-                await self.capability_worker.speak(f"Checking the weather in {location}.")           
+                await self.capability_worker.speak(f"Checking the weather in {location}.")
             else:
                 # Try to extract location from the trigger phrase first
                 extracted = self.parse_location(trigger)
@@ -80,8 +80,8 @@ class WeatherCapability(MatchingCapability):
                         self.capability_worker.resume_normal_flow()
                         return
                     self.capability_worker.create_key(LOCATION_KEY, {"city": location})
-                    self.worker.editor_logging_handler.info(f"[Weather] Saved location: {location}") # confirm location is saved
-                    await self.capability_worker.speak(f"Got it, checking {location}.")              
+                    self.worker.editor_logging_handler.info(f"[Weather] Saved location: {location}")  # confirm location is saved
+                    await self.capability_worker.speak(f"Got it, checking {location}.")
 
             # Geocode
             lat, lon = self.geocode(location)
@@ -107,7 +107,7 @@ class WeatherCapability(MatchingCapability):
             )
             await self.capability_worker.speak(summary)
 
-            # Write local_weather.md for the Memory Watcher 
+            # Write local_weather.md for the Memory Watcher
             await self.write_weather_md(location, weather_data)
 
         except Exception as e:
@@ -150,8 +150,7 @@ class WeatherCapability(MatchingCapability):
         except Exception as e:
             self.worker.editor_logging_handler.error(f"[Weather] Fetch failed: {e}")
             return None
-   
-    
+
     async def write_weather_md(self, location: str, weather_data: dict):
         """Write local_weather.md for Memory Watcher injection into Personality prompt."""
         try:
@@ -162,13 +161,13 @@ class WeatherCapability(MatchingCapability):
                 )
             )
 
-            # required write pattern for context files 
+            # required write pattern for context files
             exists = await self.capability_worker.check_if_file_exists(WEATHER_MD, in_ability_directory=False)
             if exists:
                 await self.capability_worker.delete_file(WEATHER_MD, in_ability_directory=False)
             await self.capability_worker.write_file(WEATHER_MD, content, in_ability_directory=False)
 
-            self.worker.editor_logging_handler.info("[Weather] Wrote local_weather.md")    
-        
+            self.worker.editor_logging_handler.info("[Weather] Wrote local_weather.md")
+
         except Exception as e:
             self.worker.editor_logging_handler.error(f"[Weather] Failed to write md: {e}")
