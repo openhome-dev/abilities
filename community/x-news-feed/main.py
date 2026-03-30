@@ -24,25 +24,65 @@ TOPIC_SEEDS = [
 ]
 
 # ============================================================================
+# TOPIC ALIASES — spoken variants that map to each TOPIC_SEED
+# Issue 3 fix: natural spoken aliases per topic so user speech reliably matches
+# ============================================================================
+TOPIC_ALIASES = {
+    "Artificial Intelligence": [
+        "artificial intelligence", "ai", "machine learning", "ml",
+        "llms", "llm", "chatgpt", "gpt", "deep learning", "neural",
+    ],
+    "Crypto": [
+        "crypto", "cryptocurrency", "bitcoin", "btc", "ethereum", "eth",
+        "blockchain", "defi", "nft", "web3", "coin", "token",
+    ],
+    "Climate": [
+        "climate", "climate change", "environment", "environmental",
+        "global warming", "weather", "carbon", "emissions", "green energy",
+    ],
+    "Tech Innovation": [
+        "tech", "tech innovation", "technology", "gadgets", "startups",
+        "startup", "innovation", "hardware", "software",
+    ],
+    "Global Markets": [
+        "global markets", "stocks", "stock market", "wall street", "finance",
+        "markets", "investing", "economy", "trading", "equities",
+    ],
+}
+
+# ============================================================================
 # CONSTANTS
 # ============================================================================
+
+# Issue 5 fix: expanded EXIT_WORDS to cover common spoken closings
 EXIT_WORDS = [
     "exit", "stop", "quit", "done", "bye", "goodbye", "cancel",
     "nothing else", "all good", "nope", "no thanks", "i'm good",
     "that's all", "never mind", "leave", "that is all",
+    "i'm done", "i'm all set", "that'll do it", "we're good",
+    "no more", "i'm finished", "enough", "wrap it up",
+    "i think that's it", "i'm out",
 ]
 
+# Issue 6 fix: expanded MORE_WORDS to cover natural spoken affirmatives
+MORE_WORDS = [
+    "more", "rest", "continue", "yes", "yeah", "sure",
+    "go ahead", "keep going", "read more", "next", "and",
+    "yep", "yup", "absolutely", "totally", "of course",
+    "let's hear it", "hit me", "bring it", "do it",
+    "go on", "please", "uh huh",
+]
+
+# Issue 7 fix: expanded FULL_MODE_TRIGGERS to cover natural "give me everything" phrasing
 FULL_MODE_TRIGGERS = [
     "catch me up", "all trends", "full briefing", "everything",
     "run through", "brief me", "all of them", "the full list",
     "full list", "all five", "read all", "read them all",
     "dive in", "deep dive", "explore", "tell me everything", "all tweets",
     "all three", "show all",
-]
-
-MORE_WORDS = [
-    "more", "rest", "continue", "yes", "yeah", "sure",
-    "go ahead", "keep going", "read more", "next", "and",
+    "give me everything", "lay it all on me", "the whole thing",
+    "all of it", "hit me with everything", "don't hold back",
+    "the whole rundown", "just go for it",
 ]
 
 FILLER_INTRO_TEMPLATES = [
@@ -52,6 +92,13 @@ FILLER_INTRO_TEMPLATES = [
     "One moment, fetching top tweets on {topic}.",
     "Looking up the best tweets on {topic} for you.",
 ]
+
+# Issue 9 fix: shared voice guardrail appended to every LLM prompt that feeds speak()
+VOICE_GUARDRAIL = (
+    "Plain spoken English only. No lists, no bullet points, no numbers used as list markers, "
+    "no colons used as headers, no emoji, no markdown. "
+    "Write as if speaking naturally to someone in the room."
+)
 
 # ============================================================================
 # Demo tweet data — 3 representative tweets per TOPIC_SEED
@@ -157,7 +204,8 @@ class XNewsFeedCapability(MatchingCapability):
     first_visit: bool = True
     trigger_phrase: str = ""
 
-    # {{register_capability}}
+    # Do not change following tag of register capability
+    # {{register capability}}
 
     def call(self, worker: AgentWorker):
         self.worker = worker
@@ -175,9 +223,9 @@ class XNewsFeedCapability(MatchingCapability):
             self.worker.editor_logging_handler.info(f"[XNews] Mode: {self.mode}")
 
             if self.first_visit:
+                # Issue 14 fix: shortened welcome message to ~14 words, combined with topic ask
                 await self.capability_worker.speak(
-                    f"Hey {self.user_name}, welcome to X News! "
-                    "I will help you catch up on the latest tweets for any topic you care about."
+                    f"Hey {self.user_name}, welcome to X News. What topic are you curious about?"
                 )
                 self.first_visit = False
                 await self.save_user_preferences()
@@ -231,8 +279,9 @@ class XNewsFeedCapability(MatchingCapability):
     # TOPIC SELECTION — DEMO MODE
     # ========================================================================
     async def ask_user_to_pick_topic(self):
+        # Issue 8 fix: use "number 1" format instead of "1." so TTS reads cleanly
         topics_spoken = ", ".join(
-            f"{i}. {name}" for i, name in enumerate(TOPIC_SEEDS, 1)
+            f"number {i}, {name}" for i, name in enumerate(TOPIC_SEEDS, 1)
         )
         await self.capability_worker.speak(
             f"Here are the available topics: {topics_spoken}. "
@@ -250,25 +299,52 @@ class XNewsFeedCapability(MatchingCapability):
                 return ""
             if self.is_exit_command(user_input.lower()):
                 return ""
-            matched = self._match_topic(user_input)
+            matched = await self._match_topic_with_llm(user_input)
             if matched:
                 self.worker.editor_logging_handler.info(f"[XNews] Topic picked: {matched}")
                 return matched
+            # Issue 10 fix: "recognize" (US spelling)
             await self.capability_worker.speak(
-                "I did not recognise that. Try a number from 1 to 5, "
+                "I did not recognize that. Try a number from 1 to 5, "
                 "or a name like Crypto or Climate."
             )
 
         return ""
 
-    def _match_topic(self, user_input):
+    async def _match_topic_with_llm(self, user_input):
+        """
+        Issue 3 fix: two-stage matching.
+        Stage 1 — fast alias lookup (no LLM cost).
+        Stage 2 — LLM fallback for phrasing not in the alias map.
+        """
         text = user_input.strip().lower()
+
+        # Stage 1: number match
         for i, name in enumerate(TOPIC_SEEDS, 1):
             if str(i) in text or self.number_to_word(i) in text:
                 return name
-        for name in TOPIC_SEEDS:
-            if any(word in text for word in name.lower().split()):
-                return name
+
+        # Stage 2: alias map lookup
+        for topic_name, aliases in TOPIC_ALIASES.items():
+            if any(alias in text for alias in aliases):
+                return topic_name
+
+        # Stage 3: LLM fallback for anything not in alias map
+        try:
+            topic_list = ", ".join(TOPIC_SEEDS)
+            prompt = (
+                f"Which of these topics is the user asking about: {topic_list}?\n"
+                f"User said: \"{user_input}\"\n"
+                f"Answer with the exact topic name from the list, or the word none if no match.\n"
+                f"No explanation. Just the topic name or the word none."
+            )
+            result = self.capability_worker.text_to_text_response(prompt).strip()
+            for name in TOPIC_SEEDS:
+                if name.lower() in result.lower():
+                    return name
+        except Exception as e:
+            self.worker.editor_logging_handler.warning(f"[XNews] LLM topic match failed: {e}")
+
         return ""
 
     # ========================================================================
@@ -350,10 +426,11 @@ class XNewsFeedCapability(MatchingCapability):
             tweet_block = "\n".join(
                 f"{i + 1}. {t['text']}" for i, t in enumerate(tweets)
             )
+            # Issue 9 + 13 fix: added VOICE_GUARDRAIL and a hard word count
             prompt = (
                 f"You are a news analyst. Below are the top tweets on '{topic}'.\n"
-                f"Write a short 1-2 sentence conversational summary capturing the key theme.\n"
-                f"No markdown. No preamble. Just the summary.\n\nTweets:\n{tweet_block}"
+                f"Write a 1-sentence spoken summary, under 20 words, capturing the key theme.\n"
+                f"{VOICE_GUARDRAIL}\n\nTweets:\n{tweet_block}"
             )
             return self.capability_worker.text_to_text_response(prompt).strip()
         except Exception as e:
@@ -361,7 +438,9 @@ class XNewsFeedCapability(MatchingCapability):
             return ""
 
     # ========================================================================
-    # QUICK MODE — top 2 shown, offer the 3rd
+    # QUICK MODE
+    # Issue 16 fix: collapse the two back-to-back dead-end prompts into one
+    # open-ended prompt routed by LLM intent classifier.
     # ========================================================================
     async def quick_mode(self):
         count = len(self.fetched_tweets)
@@ -377,35 +456,73 @@ class XNewsFeedCapability(MatchingCapability):
             await self.worker.session_tasks.sleep(0.3)
 
         if count >= 3:
+            # Single combined prompt — one wait, LLM decides the branch
             await self.capability_worker.speak(
-                "There is one more tweet. Want to hear it, or are you all set?"
+                "That is the top two. Want the third, a deeper dive on any of them, or are we done?"
             )
-            user_input = await self.wait_for_input(
-                max_attempts=5, wait_seconds=3.0, context="initial"
-            )
+            user_input = await self.wait_for_input(max_attempts=5, wait_seconds=3.0)
 
             if not user_input or self.is_exit_command(user_input.lower()):
                 await self.generate_contextual_goodbye()
                 self.capability_worker.resume_normal_flow()
                 return
 
-            if self.is_more_request(user_input.lower()) or self.is_full_mode_request(user_input.lower()):
+            intent = self._classify_quick_mode_intent(user_input)
+            self.worker.editor_logging_handler.info(f"[XNews] quick_mode intent: {intent}")
+
+            if intent == "hear_more":
                 await self.speak_single_tweet(3, self.fetched_tweets[2])
                 await self.worker.session_tasks.sleep(0.3)
-                await self.capability_worker.speak("That is the top 3. Anything else?")
-            else:
-                await self.capability_worker.speak("No problem. Anything else you would like?")
-
-            final = await self.wait_for_input(max_attempts=3, wait_seconds=2.0)
-            if not final or self.is_exit_command(final.lower()):
-                await self.capability_worker.speak("Take care!")
+            elif intent == "deep_dive":
+                await self.handle_tweet_question(user_input.lower())
+            elif intent == "exit":
+                await self.generate_contextual_goodbye()
+                self.capability_worker.resume_normal_flow()
+                return
+            # "other" falls through to the interactive loop below
         else:
             await self.capability_worker.speak("That is all I found. Anything else?")
-            final = await self.wait_for_input(max_attempts=3, wait_seconds=2.0)
-            if not final or self.is_exit_command(final.lower()):
+            user_input = await self.wait_for_input(max_attempts=3, wait_seconds=2.0)
+            if not user_input or self.is_exit_command(user_input.lower()):
                 await self.capability_worker.speak("Catch you later!")
+                self.capability_worker.resume_normal_flow()
+                return
 
-        self.capability_worker.resume_normal_flow()
+        # Open interactive loop for follow-up questions
+        await self.interactive_loop()
+
+    def _classify_quick_mode_intent(self, user_input):
+        """
+        Issue 16 fix: LLM-based intent classifier for the post-delivery prompt.
+        Returns one of: hear_more | deep_dive | exit | other
+        """
+        try:
+            prompt = (
+                f"Classify the user's reply into exactly one of these intents:\n"
+                f"hear_more — they want to hear the next tweet\n"
+                f"deep_dive — they want more detail on a specific tweet\n"
+                f"exit — they are done and want to leave\n"
+                f"other — something else entirely\n\n"
+                f"User said: \"{user_input}\"\n"
+                f"Answer with exactly one word from the list above. No explanation."
+            )
+            result = self.capability_worker.text_to_text_response(prompt).strip().lower()
+            if result in ("hear_more", "deep_dive", "exit", "other"):
+                return result
+        except Exception as e:
+            self.worker.editor_logging_handler.warning(f"[XNews] intent classify failed: {e}")
+
+        # Fallback to keyword checks
+        lower = user_input.lower()
+        if self.is_exit_command(lower):
+            return "exit"
+        if self.is_more_request(lower) or self.is_full_mode_request(lower):
+            return "hear_more"
+        if any(w in lower for w in ["number", "tweet", "tell me about", "more about",
+                                     "dig into", "expand", "break that down", "deeper",
+                                     "elaborate", "what about", "let's talk about"]):
+            return "deep_dive"
+        return "other"
 
     # ========================================================================
     # FULL MODE — all 3 shown upfront, then Q&A loop
@@ -442,8 +559,9 @@ class XNewsFeedCapability(MatchingCapability):
             if not user_input:
                 idle_count += 1
                 if idle_count >= 2:
+                    # Issue 15 fix: replaced broadcast "sign off" with natural home-device phrasing
                     await self.capability_worker.speak(
-                        "I am still here if you need anything. Otherwise I will sign off."
+                        "Still here if you need me, otherwise I'll wrap up."
                     )
                     await self.worker.session_tasks.sleep(3)
                     break
@@ -456,7 +574,8 @@ class XNewsFeedCapability(MatchingCapability):
                 await self.generate_contextual_goodbye()
                 break
 
-            if any(p in lower for p in ["again", "repeat", "read again"]):
+            # Issue 1 fix: LLM-based repeat detection instead of brittle keyword list
+            if await self._user_wants_repeat(user_input):
                 await self.capability_worker.speak("Sure, here they are again:")
                 await self.worker.session_tasks.sleep(0.3)
                 for i, tweet in enumerate(self.fetched_tweets, 1):
@@ -465,8 +584,10 @@ class XNewsFeedCapability(MatchingCapability):
                 await self.capability_worker.speak("Anything else?")
                 continue
 
-            if any(w in lower for w in ["number", "tweet", "tell me about", "more about"]):
-                await self.handle_tweet_question(lower)
+            # Issue 2 fix: LLM-based deep-dive detection instead of brittle keyword list
+            tweet_number = await self._extract_tweet_number_for_deepdive(user_input)
+            if tweet_number is not None:
+                await self.handle_tweet_question_by_number(tweet_number)
                 continue
 
             await self.handle_general_question(user_input)
@@ -474,7 +595,66 @@ class XNewsFeedCapability(MatchingCapability):
         self.capability_worker.resume_normal_flow()
 
     # ========================================================================
+    # LLM INTENT HELPERS
+    # Issue 1 fix: LLM classifier for repeat/replay detection
+    # Issue 2 fix: LLM classifier for tweet deep-dive detection
+    # ========================================================================
+    async def _user_wants_repeat(self, user_input):
+        """Returns True if the user wants the tweets repeated."""
+        try:
+            prompt = (
+                f"Does the user want the tweets to be repeated or read again?\n"
+                f"User said: \"{user_input}\"\n"
+                f"Answer with exactly yes or no. No explanation."
+            )
+            result = self.capability_worker.text_to_text_response(prompt).strip().lower()
+            return result.startswith("yes")
+        except Exception as e:
+            self.worker.editor_logging_handler.warning(f"[XNews] repeat detect failed: {e}")
+            # Fallback keyword check
+            return any(p in user_input.lower() for p in ["again", "repeat", "read again",
+                                                          "say that again", "one more time",
+                                                          "go back", "run through those",
+                                                          "from the top", "play that back",
+                                                          "reread", "didn't catch"])
+
+    async def _extract_tweet_number_for_deepdive(self, user_input):
+        """
+        Returns the tweet number (1, 2, or 3) the user wants to deep-dive into,
+        or None if they are not asking for a deep dive.
+        Issue 2 fix: LLM-based detection replaces brittle keyword list.
+        """
+        try:
+            count = len(self.fetched_tweets)
+            prompt = (
+                f"Is the user asking for more detail on a specific tweet?\n"
+                f"There are {count} tweets numbered 1 to {count}.\n"
+                f"User said: \"{user_input}\"\n"
+                f"If yes, reply with just the number (1, 2, or 3). "
+                f"If no, reply with the word no. No explanation."
+            )
+            result = self.capability_worker.text_to_text_response(prompt).strip().lower()
+            for i in range(1, count + 1):
+                if str(i) in result or self.number_to_word(i) in result:
+                    return i
+            return None
+        except Exception as e:
+            self.worker.editor_logging_handler.warning(f"[XNews] deep-dive detect failed: {e}")
+            # Fallback keyword check
+            lower = user_input.lower()
+            if any(w in lower for w in ["number", "tweet", "tell me about", "more about",
+                                         "dig into", "expand", "deeper", "elaborate",
+                                         "what about", "break that down", "let's talk about",
+                                         "that last one", "that third", "the second"]):
+                for i in range(1, len(self.fetched_tweets) + 1):
+                    if str(i) in lower or self.number_to_word(i) in lower:
+                        return i
+            return None
+
+    # ========================================================================
     # CAPTURE INITIAL TRIGGER
+    # Reviewer fix: replaced deprecated self.worker.agent_memory.full_message_history
+    # with self.capability_worker.get_full_message_history()
     # ========================================================================
     async def capture_user_input(self):
         try:
@@ -491,7 +671,8 @@ class XNewsFeedCapability(MatchingCapability):
                 return
 
             await self.worker.session_tasks.sleep(0.5)
-            history = self.worker.agent_memory.full_message_history
+            # Reviewer fix: use the approved API instead of the deprecated agent_memory attribute
+            history = self.capability_worker.get_full_message_history()
             if history:
                 last_msg = history[-1]
                 try:
@@ -585,22 +766,15 @@ class XNewsFeedCapability(MatchingCapability):
           - Mentions (@word)
           - HTML entities (&amp; &lt; &gt; &quot; &#39;)
           - Excess whitespace left behind after stripping
-        The cleaned text is then passed to the LLM to produce a
-        single polished sentence before speaking.
         """
-        # Remove URLs
         text = re.sub(r'https?://\S+', '', text)
-        # Remove hashtags
         text = re.sub(r'#\S+', '', text)
-        # Remove mentions
         text = re.sub(r'@\S+', '', text)
-        # Decode common HTML entities
         text = text.replace('&amp;', 'and')
         text = text.replace('&lt;', 'less than')
         text = text.replace('&gt;', 'greater than')
         text = text.replace('&quot;', '"')
         text = text.replace('&#39;', "'")
-        # Collapse extra spaces / newlines
         text = re.sub(r'[\r\n]+', ' ', text)
         text = re.sub(r' {2,}', ' ', text).strip()
         return text
@@ -608,14 +782,15 @@ class XNewsFeedCapability(MatchingCapability):
     def polish_tweet_for_speech(self, raw_text):
         """
         Ask the LLM to rewrite the cleaned tweet as a single clean,
-        natural-sounding sentence — removing leftover symbols, emoji,
-        and any awkward phrasing introduced by stripping URLs/hashtags.
+        natural-sounding sentence.
+        Issue 9 fix: added VOICE_GUARDRAIL to this prompt.
         """
         try:
             prompt = (
                 "Rewrite the following tweet as a single clean, natural-sounding sentence "
                 "suitable for being read aloud. Remove any emoji, symbols, or awkward fragments. "
-                "Keep the core meaning. No markdown. No preamble. Just the sentence.\n\n"
+                "Keep the core meaning. "
+                f"{VOICE_GUARDRAIL}\n\n"
                 f"Tweet: {raw_text}"
             )
             result = self.capability_worker.text_to_text_response(prompt).strip()
@@ -626,13 +801,10 @@ class XNewsFeedCapability(MatchingCapability):
 
     async def speak_single_tweet(self, number, tweet):
         raw_text = tweet.get("text", "").strip()
-        tweet.get("score", 0)
         if raw_text:
             cleaned = self.clean_tweet_text(raw_text)
             polished = self.polish_tweet_for_speech(cleaned)
-            await self.capability_worker.speak(
-                f"Tweet {number}: {polished}"
-            )
+            await self.capability_worker.speak(f"Tweet {number}: {polished}")
         else:
             await self.capability_worker.speak(f"Tweet {number}: no content available.")
 
@@ -640,20 +812,27 @@ class XNewsFeedCapability(MatchingCapability):
     # Q&A HELPERS
     # ========================================================================
     async def handle_tweet_question(self, user_input):
-        tweet_number = None
-        for i in range(1, 4):
-            if str(i) in user_input or self.number_to_word(i) in user_input:
-                tweet_number = i
-                break
+        """Entry point when we already have a raw user utterance and need to resolve the number."""
+        tweet_number = await self._extract_tweet_number_for_deepdive(user_input)
+        if tweet_number is not None:
+            await self.handle_tweet_question_by_number(tweet_number)
+        else:
+            await self.capability_worker.speak(
+                f"I did not catch that. Try saying a number between 1 and {len(self.fetched_tweets)}."
+            )
 
+    async def handle_tweet_question_by_number(self, tweet_number):
+        """Deliver the deep-dive analysis for a specific tweet number."""
         if tweet_number and tweet_number <= len(self.fetched_tweets):
             tweet = self.fetched_tweets[tweet_number - 1]
             text = tweet.get("text", "")
+            # Issue 9 + 11 fix: added VOICE_GUARDRAIL and reduced word ceiling to 20
             prompt = (
                 f"Topic: '{self.selected_topic}' is trending on X.\n"
                 f"Tweet: \"{text}\"\n"
-                f"Give an additional 1-2 sentence conversational insight about why this tweet matters. "
-                f"Be concise. Under 40 words. No markdown."
+                f"Give a 1-sentence conversational insight about why this tweet matters, "
+                f"under 20 words. "
+                f"{VOICE_GUARDRAIL}"
             )
             analysis = self.capability_worker.text_to_text_response(prompt)
             await self.capability_worker.speak(f"More on tweet {tweet_number}: {analysis}")
@@ -666,12 +845,14 @@ class XNewsFeedCapability(MatchingCapability):
 
     async def handle_general_question(self, user_input):
         tweets_context = " | ".join(t.get("text", "") for t in self.fetched_tweets)
+        # Issue 9 + 12 fix: added VOICE_GUARDRAIL and a hard word count of 25
         prompt = (
             f"You are a helpful X news assistant. The user asked about '{self.selected_topic}'.\n"
             f"Top tweets: {tweets_context}\n"
             f"Summary: {self.topic_summary}\n"
             f"User question: {user_input}\n"
-            f"Reply in 2 sentences max. Conversational. No markdown."
+            f"Reply in 1-2 sentences, under 25 words total. "
+            f"{VOICE_GUARDRAIL}"
         )
         response = self.capability_worker.text_to_text_response(prompt)
         await self.capability_worker.speak(response)
@@ -679,9 +860,11 @@ class XNewsFeedCapability(MatchingCapability):
         await self.capability_worker.speak("Anything else?")
 
     async def generate_contextual_goodbye(self):
+        # Issue 4 fix: replaced broadcast-style examples with casual spoken closings
         prompt = (
-            "Generate a brief friendly goodbye under 10 words for a news briefing. "
-            "Casual. Examples: Catch you later, Stay informed, Take care. One only:"
+            "Casual spoken goodbye under 6 words. "
+            "Examples: Later! Have a good one! Talk soon! Take it easy! "
+            "One only, no punctuation that sounds unnatural read aloud:"
         )
         goodbye = self.capability_worker.text_to_text_response(prompt).strip()
         await self.capability_worker.speak(goodbye)
