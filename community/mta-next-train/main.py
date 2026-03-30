@@ -2,6 +2,7 @@ from src.agent.capability import MatchingCapability
 from src.agent.capability_worker import CapabilityWorker
 from src.main import AgentWorker
 
+import asyncio
 import difflib
 import re
 from dataclasses import dataclass, field
@@ -41,8 +42,8 @@ ROUTE_ALIASES = {
     "z": "Z",
     "shuttle": "S",
 }
-NORTHBOUND_WORDS = {"northbound", "uptown"}
-SOUTHBOUND_WORDS = {"southbound", "downtown"}
+NORTHBOUND_WORDS = {"northbound", "uptown", "north", "up"}
+SOUTHBOUND_WORDS = {"southbound", "downtown", "south", "down"}
 STREET_WORDS = {
     "st": "street",
     "street": "street",
@@ -56,8 +57,13 @@ STREET_WORDS = {
 }
 PREFS_KEY = "mta_next_train_prefs"
 EXIT_WORDS = {
-    "stop", "exit", "quit", "done", "cancel", "bye", "goodbye", "nothing else",
+    "stop", "exit", "quit", "done", "cancel", "bye", "goodbye",
+    "nothing else", "i'm done", "that's it", "i'm good", "all set",
+    "we're done", "no thanks", "never mind", "that's all",
+    "all done", "i'm finished",
 }
+
+_ORDINAL_TO_IDX = {"first": 0, "second": 1, "third": 2, "fourth": 3, "fifth": 4}
 
 
 @dataclass
@@ -186,6 +192,15 @@ def parse_query_intent(text: str) -> QueryIntent:
                 direction=direction,
             )
 
+    # "change my default station" / "set my default" without a station name
+    if re.search(r"(?:set|change|update)\s+(?:my\s+)?(?:default|home)\s+station", normalized):
+        return QueryIntent(
+            action=ACTION_SET_DEFAULT,
+            station_text=None,
+            routes=routes,
+            direction=direction,
+        )
+
     if any(
         phrase in normalized
         for phrase in (
@@ -195,12 +210,18 @@ def parse_query_intent(text: str) -> QueryIntent:
             "what s the default station",
             "what is my home station",
             "what s my home station",
+            "what s my station",
+            "which station am i using",
+            "what station is saved",
         )
     ):
         return QueryIntent(action=ACTION_GET_DEFAULT, routes=routes, direction=direction)
 
     if any(
-        phrase in normalized for phrase in ("help", "what can you do", "how does this work")
+        phrase in normalized for phrase in (
+            "help", "what can you do", "how does this work",
+            "what can i say", "what are my options",
+        )
     ):
         return QueryIntent(action=ACTION_HELP, routes=routes, direction=direction)
 
@@ -223,9 +244,10 @@ def clean_station_phrase(text: Optional[str]) -> Optional[str]:
 
 def extract_station_phrase(normalized_text: str) -> Optional[str]:
     patterns = (
-        r"\b(?:at|from)\b\s+(?P<station>[a-z0-9\s]+?)(?:\s+for\s+[a-z0-9]+\s+train|\s+for\s+[a-z0-9]+|\s+train|$)",
-        r"\bnext\s+(?:train|subway)\s+(?:at|from)\b\s+(?P<station>[a-z0-9\s]+)$",
-        r"\bwhen(?:'s|\s+is)?\s+the\s+next\s+(?:train|subway)\s+(?:at|from)\b\s+(?P<station>[a-z0-9\s]+)$",
+        r"\b(?:at|from|in|for)\b\s+(?P<station>[a-z0-9\s]+?)(?:\s+for\s+[a-z0-9]+\s+train|\s+for\s+[a-z0-9]+|\s+train|$)",
+        r"\bnext\s+(?:train|subway)\s+(?:at|from|in)\b\s+(?P<station>[a-z0-9\s]+)$",
+        r"\bwhen(?:'s|\s+is)?\s+the\s+next\s+(?:train|subway)\s+(?:at|from|in|per)\b\s+(?P<station>[a-z0-9\s]+)$",
+        r"\b(?:check|get)\s+.*?(?:at|from|in|for|per)\b\s+(?P<station>[a-z0-9\s]+)$",
     )
     for pattern in patterns:
         match = re.search(pattern, normalized_text)
@@ -364,7 +386,7 @@ def format_arrivals_for_voice(
     direction: Optional[str],
 ) -> str:
     if not arrivals:
-        return f"I am not seeing any matching trains for {station.name} right now."
+        return f"I'm not seeing any matching trains at {station.name} right now."
 
     grouped: Dict[tuple[str, str], List[Arrival]] = {}
     for arrival in arrivals:
@@ -383,7 +405,8 @@ def format_arrivals_for_voice(
 
     if len(lead_bits) == 1:
         return f"At {station.name}, the next train is {lead_bits[0]}."
-    return f"At {station.name}, next trains: " + "; ".join(lead_bits) + "."
+    joined = ", ".join(lead_bits[:-1]) + f", and {lead_bits[-1]}"
+    return f"At {station.name}, next trains: {joined}."
 
 
 def render_minutes(minutes: int) -> str:
@@ -406,27 +429,55 @@ class MTANextTrainCapability(MatchingCapability):
         self.capability_worker = CapabilityWorker(self)
         self.worker.session_tasks.create(self.run())
 
+    def _get_trigger_text(self) -> str:
+        history = self.capability_worker.get_full_message_history() or []
+        for item in reversed(history):
+            if item.get("role") == "user":
+                content = (item.get("content") or "").strip()
+                if content:
+                    return content
+        return ""
+
     async def run(self):
         try:
             self.worker.editor_logging_handler.info("MTA Next Train triggered")
             self.prefs = self.load_prefs()
-            trigger_text = self.get_trigger_text()
-            if not trigger_text:
+            trigger_text = self._get_trigger_text()
+
+            # Parse trigger intent first — handle get_default/set_default/help
+            # directly without prompting for a station
+            if trigger_text:
+                intent = parse_query_intent(trigger_text)
+                if intent.action in (ACTION_GET_DEFAULT, ACTION_SET_DEFAULT, ACTION_HELP):
+                    # Has a clear non-arrivals intent, use it directly
+                    pass
+                elif intent.action == ACTION_ARRIVALS and not intent.station_text and not self.prefs.get("default_station_id"):
+                    # Arrivals but no station and no default — need to ask
+                    trigger_text = await self.capability_worker.run_io_loop(
+                        "What station or line do you want to check?"
+                    )
+                # else: arrivals with station or default — proceed
+            else:
                 trigger_text = await self.capability_worker.run_io_loop(
-                    "What would you like to check? You can say, when is my next train, or set my default station to Astor Place."
+                    "What station or line do you want to check?"
                 )
             if not trigger_text:
                 return
 
             while True:
                 if self._is_exit(trigger_text):
-                    await self.capability_worker.speak("Okay. Closing MTA Next Train.")
+                    await self.capability_worker.speak("All good. See you next ride.")
                     return
 
                 intent = parse_query_intent(trigger_text)
                 if intent.action == ACTION_HELP:
                     await self.capability_worker.speak(
-                        "You can ask for your next train, ask for a specific line at a station, or set a default station. For example: when is my next train, next Q train at Union Square, or set my default station to Astor Place."
+                        "You can ask for your next train at any station, "
+                        "or a specific line like the Q at Union Square."
+                    )
+                    await self.capability_worker.speak(
+                        "You can also set a default station so you "
+                        "just have to say, when's my next train."
                     )
                 elif intent.action == ACTION_GET_DEFAULT:
                     await self.handle_get_default()
@@ -436,14 +487,14 @@ class MTANextTrainCapability(MatchingCapability):
                     await self.handle_arrivals(intent)
 
                 trigger_text = await self.capability_worker.run_io_loop(
-                    "Anything else for the subway? Say another station or line, or say done."
+                    "Anything else?"
                 )
                 if not trigger_text:
                     return
         except Exception as exc:
             self.worker.editor_logging_handler.error(f"[MTANextTrain] {exc}")
             await self.capability_worker.speak(
-                "Something went wrong while checking live arrivals."
+                "Something went wrong checking live arrivals."
             )
         finally:
             self.capability_worker.resume_normal_flow()
@@ -466,18 +517,12 @@ class MTANextTrainCapability(MatchingCapability):
         else:
             self.capability_worker.create_key(PREFS_KEY, self.prefs)
 
-    def get_trigger_text(self) -> str:
-        history = self.capability_worker.get_full_message_history() or []
-        for item in reversed(history):
-            if item.get("role") == "user":
-                content = (item.get("content") or "").strip()
-                if content:
-                    return content
-        return ""
-
     def _is_exit(self, text: str) -> bool:
         lowered = (text or "").strip().lower()
-        return any(phrase in lowered for phrase in EXIT_WORDS)
+        for phrase in EXIT_WORDS:
+            if lowered == phrase or lowered.startswith(phrase + " ") or lowered.endswith(" " + phrase):
+                return True
+        return False
 
     async def handle_set_default(self, intent: QueryIntent):
         station_text = intent.station_text
@@ -498,19 +543,26 @@ class MTANextTrainCapability(MatchingCapability):
         if not station:
             return
 
+        confirmed = await self.capability_worker.run_confirmation_loop(
+            f"Save {station.name} as your default station?"
+        )
+        if not confirmed:
+            await self.capability_worker.speak("No problem.")
+            return
+
         self.prefs["default_station_id"] = station.station_id
         self.prefs["default_station_name"] = station.name
         self.prefs["default_station_borough"] = station.borough
         self.prefs["default_station_lines"] = station.lines
         self.save_prefs()
         await self.capability_worker.speak(
-            f"Saved {station.name} as your default station."
+            f"Done. {station.name} is your default now."
         )
 
     async def handle_get_default(self):
         if not self.prefs.get("default_station_id"):
             await self.capability_worker.speak(
-                "You do not have a default station saved yet."
+                "You don't have a default station saved yet."
             )
             return
         await self.capability_worker.speak(
@@ -531,12 +583,12 @@ class MTANextTrainCapability(MatchingCapability):
 
         if not station:
             spoken_station = await self.capability_worker.run_io_loop(
-                "Which station do you want to check? You can also say set my default station to save one."
+                "Which station do you want to check?"
             )
             if not spoken_station:
                 return
             if self._is_exit(spoken_station):
-                await self.capability_worker.speak("Okay. Closing MTA Next Train.")
+                await self.capability_worker.speak("All good. See you next ride.")
                 return
             follow_up_intent = parse_query_intent(spoken_station)
             if follow_up_intent.action == ACTION_SET_DEFAULT:
@@ -550,12 +602,14 @@ class MTANextTrainCapability(MatchingCapability):
                 return
 
         await self.capability_worker.speak(
-            f"Checking live arrivals for {station.name}."
+            f"Checking {station.name}."
         )
         self.worker.editor_logging_handler.info(
             f"MTA arrivals request station_id={station.station_id} station={station.name} routes={intent.routes} direction={intent.direction}"
         )
-        arrivals = fetch_arrivals(station.station_id, intent.routes, intent.direction)
+        arrivals = await asyncio.to_thread(
+            fetch_arrivals, station.station_id, intent.routes, intent.direction
+        )
         self.worker.editor_logging_handler.info(
             f"MTA arrivals result count={len(arrivals)} station_id={station.station_id}"
         )
@@ -567,27 +621,53 @@ class MTANextTrainCapability(MatchingCapability):
         )
         await self.capability_worker.speak(summary)
 
+        # Offer to save as default if user doesn't have one yet
+        if not self.prefs.get("default_station_id"):
+            save = await self.capability_worker.run_confirmation_loop(
+                f"Want me to save {station.name} as your default?"
+            )
+            if save:
+                self.prefs["default_station_id"] = station.station_id
+                self.prefs["default_station_name"] = station.name
+                self.prefs["default_station_borough"] = station.borough
+                self.prefs["default_station_lines"] = station.lines
+                self.save_prefs()
+                await self.capability_worker.speak("Saved.")
+
     async def resolve_station(self, station_text: str) -> Optional[Station]:
-        stations = search_stations(station_text, limit=5)
+        await self.capability_worker.speak("One sec.")
+        stations = await asyncio.to_thread(search_stations, station_text, 5)
         matches = find_station_matches(stations, station_text)
         if not matches:
             await self.capability_worker.speak(
-                f"I could not find a subway station matching {station_text}."
+                f"Couldn't find a station matching {station_text}."
             )
             return None
 
         top_match = matches[0]
         if len(matches) > 1 and (top_match.score - matches[1].score) < 0.08:
-            options = ", ".join(match.station.name for match in matches[:3])
+            # Deduplicate by name — if all close matches have the same name, just pick the first
+            unique_names = list(dict.fromkeys(m.station.name for m in matches[:3]))
+            if len(unique_names) == 1:
+                return top_match.station
+
+            options = ", ".join(unique_names)
             response = await self.capability_worker.run_io_loop(
-                f"I found a few close matches: {options}. Which one did you mean?"
+                f"I found a few close matches: {options}. Which one?"
             )
             if not response:
                 return None
+
+            # Handle ordinal selection ("first one", "second one", "the first", etc.)
+            lowered_resp = response.lower().strip()
+            for word, idx in _ORDINAL_TO_IDX.items():
+                if word in lowered_resp and idx < len(matches):
+                    return matches[idx].station
+
             narrowed = find_station_matches(stations, response, limit=1)
             if not narrowed:
                 await self.capability_worker.speak(
-                    "I still could not pin down the station."
+                    "Still couldn't pin down the station."
                 )
                 return None
             return narrowed[0].station
