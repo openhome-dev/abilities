@@ -48,7 +48,7 @@ class WeatherCapability(MatchingCapability):
         self.capability_worker = CapabilityWorker(self.worker)
         self.worker.session_tasks.create(self.run())
 
-    async def run(self):       
+    async def run(self):
         try:
             # confirm location is persistently saved
             trigger = await self.capability_worker.wait_for_complete_transcription()
