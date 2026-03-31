@@ -76,7 +76,7 @@ class WeatheralertCapabilityBackground(MatchingCapability):
                         weather_data = self.fetch_weather(lat, lon)
                         if weather_data:
                             await self.check_for_alerts(weather_data)
-                            await self.write_weather_md(saved["city"], weather_data)
+                            await self.write_weather_md(saved_value["city"], weather_data)
                 else:
                     self.worker.editor_logging_handler.info(
                         "[WeatherDaemon] No saved location yet, skipping poll."
