@@ -32,6 +32,7 @@ class WeatherCapability(MatchingCapability):
     # {{register_capability}}
 
     def parse_location(self, raw: str) -> str:
+        """Extract city name from user text using LLM."""
         result = self.capability_worker.text_to_text_response(
             f"Extract ONLY the city name from this text: '{raw}'. "
             "Reply with the city name only — no other words, no punctuation, no explanation. "
@@ -43,6 +44,34 @@ class WeatherCapability(MatchingCapability):
             return ""
         return result
 
+    def is_update_city_intent(self, text: str) -> bool:
+        """Check if user wants to change their saved city."""
+        result = self.capability_worker.text_to_text_response(
+            f"Does this text mean the user wants to change, update, or switch their weather city/location? "
+            f"Examples that mean YES: 'change my city', 'update my location', 'switch to London', "
+            f"'set my city to Paris', 'use a different city'. "
+            f"Examples that mean NO: 'what's the weather', 'will it rain', 'weather in Tokyo'. "
+            f'Text: "{text}"\nReply YES or NO only.'
+        )
+        return result.strip().upper().startswith("Y")
+
+    def get_saved_location(self) -> str:
+        """Get saved city from KV storage, or empty string."""
+        saved = self.capability_worker.get_single_key(LOCATION_KEY)
+        saved_value = saved.get("value") if saved else None
+        if saved_value and saved_value.get("city"):
+            return saved_value["city"]
+        return ""
+
+    def save_location(self, city: str):
+        """Save city to KV storage using create-or-update pattern."""
+        existing = self.capability_worker.get_single_key(LOCATION_KEY)
+        if existing and existing.get("value"):
+            self.capability_worker.update_key(LOCATION_KEY, {"city": city})
+        else:
+            self.capability_worker.create_key(LOCATION_KEY, {"city": city})
+        self.worker.editor_logging_handler.info(f"[Weather] Saved location: {city}")
+
     def call(self, worker: AgentWorker):
         self.worker = worker
         self.capability_worker = CapabilityWorker(self.worker)
@@ -50,37 +79,47 @@ class WeatherCapability(MatchingCapability):
 
     async def run(self):
         try:
-            # confirm location is persistently saved
             trigger = await self.capability_worker.wait_for_complete_transcription()
-            saved = self.capability_worker.get_single_key(LOCATION_KEY)
-            self.worker.editor_logging_handler.info(f"[Weather] get_single_key returned: {saved}")
+            self.worker.editor_logging_handler.info(f"[Weather] Trigger: {trigger}")
 
-            # Check if we have a saved location
-            saved = self.capability_worker.get_single_key(LOCATION_KEY)
-            saved_value = saved.get("value") if saved else None
-            if saved_value and saved_value.get("city"):
-                location = saved_value["city"]
+            # Check if user wants to update their city
+            if trigger and self.is_update_city_intent(trigger):
+                await self.handle_update_city(trigger)
+                return
+
+            # Check for saved location
+            location = self.get_saved_location()
+
+            if location:
+                # Check if trigger mentions a different city (one-time override)
+                extracted = self.parse_location(trigger) if trigger else ""
+                if extracted and extracted.lower() != location.lower():
+                    # User asked about a specific city — use it but don't overwrite saved
+                    location = extracted
                 await self.capability_worker.speak(f"Checking the weather in {location}.")
             else:
-                # Try to extract location from the trigger phrase first
-                extracted = self.parse_location(trigger)
+                # No saved location — try to extract from trigger
+                extracted = self.parse_location(trigger) if trigger else ""
                 if extracted:
                     location = extracted
-                    self.capability_worker.create_key(LOCATION_KEY, {"city": location})
-                    await self.capability_worker.speak(f"Checking the weather in {location}.")
                 else:
-                    # Nothing in trigger, ask explicitly
                     raw = await self.capability_worker.run_io_loop(
                         "Which city would you like the weather for?"
                     )
                     location = self.parse_location(raw)
                     if not location:
                         await self.capability_worker.speak("I didn't catch that. Try again later.")
-                        self.capability_worker.resume_normal_flow()
                         return
-                    self.capability_worker.create_key(LOCATION_KEY, {"city": location})
-                    self.worker.editor_logging_handler.info(f"[Weather] Saved location: {location}")  # confirm location is saved
-                    await self.capability_worker.speak(f"Got it, checking {location}.")
+
+                # Ask if they want to save this city
+                save = await self.capability_worker.run_confirmation_loop(
+                    f"Would you like me to remember {location} for future weather checks?"
+                )
+                if save:
+                    self.save_location(location)
+                    await self.capability_worker.speak(f"Saved. Checking {location}.")
+                else:
+                    await self.capability_worker.speak(f"No problem. Checking {location}.")
 
             # Geocode
             lat, lon = self.geocode(location)
@@ -88,7 +127,6 @@ class WeatherCapability(MatchingCapability):
                 await self.capability_worker.speak(
                     "I couldn't find that location. Try a different city name."
                 )
-                self.capability_worker.resume_normal_flow()
                 return
 
             # Fetch weather
@@ -97,7 +135,6 @@ class WeatherCapability(MatchingCapability):
                 await self.capability_worker.speak(
                     "Sorry, I couldn't get the weather right now."
                 )
-                self.capability_worker.resume_normal_flow()
                 return
 
             # Speak a concise summary
@@ -114,6 +151,37 @@ class WeatherCapability(MatchingCapability):
             await self.capability_worker.speak("Sorry, something went wrong.")
         finally:
             self.capability_worker.resume_normal_flow()
+
+    async def handle_update_city(self, trigger: str):
+        """Handle user intent to change their saved city."""
+        current = self.get_saved_location()
+
+        # Try to extract new city from trigger (e.g. "change my city to London")
+        new_city = self.parse_location(trigger)
+
+        if not new_city:
+            raw = await self.capability_worker.run_io_loop(
+                "Which city would you like to switch to?"
+            )
+            new_city = self.parse_location(raw)
+            if not new_city:
+                await self.capability_worker.speak("I didn't catch that.")
+                return
+
+        if current:
+            confirm = await self.capability_worker.run_confirmation_loop(
+                f"Change your weather city from {current} to {new_city}?"
+            )
+        else:
+            confirm = await self.capability_worker.run_confirmation_loop(
+                f"Save {new_city} as your weather city?"
+            )
+
+        if confirm:
+            self.save_location(new_city)
+            await self.capability_worker.speak(f"Done. {new_city} is your weather city now.")
+        else:
+            await self.capability_worker.speak("Okay, no changes.")
 
     def geocode(self, location: str):
         try:
