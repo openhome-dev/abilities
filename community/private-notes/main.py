@@ -242,7 +242,10 @@ class PrivateNotesCapability(MatchingCapability):
         if not await self.capability_worker.check_if_file_exists(NOTES_FILE, False):
             return {"schema_version": 2, "notes": []}
         raw = await self.capability_worker.read_file(NOTES_FILE, False)
-        return json.loads(raw)
+        data = json.loads(raw)
+        if isinstance(data, list):
+            return {"schema_version": 2, "notes": data}
+        return data
 
     async def _save_notebook(self, notebook: dict):
         """Write notes to JSON file, sorted by most recently updated."""
