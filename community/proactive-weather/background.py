@@ -33,9 +33,10 @@ WMO_DESCRIPTIONS = {
 }
 
 ALERT_PROMPT = """
-Severe weather detected: {description} (WMO code {code}).
+Severe weather detected: {description}.
 Current conditions: {current}.
 Write a short 1-2 sentence calm but urgent voice alert to warn the user.
+Plain spoken English only. No markdown, no lists, no formatting, no codes or numbers the user wouldn't understand.
 """
 
 WEATHER_MD_PROMPT = """
@@ -160,7 +161,6 @@ class WeatheralertCapabilityBackground(MatchingCapability):
             description = WMO_DESCRIPTIONS.get(code, "severe weather")
             alert_text = self.capability_worker.text_to_text_response(
                 ALERT_PROMPT.format(
-                    code=code,
                     description=description,
                     current=json.dumps(current),
                 )
@@ -168,8 +168,10 @@ class WeatheralertCapabilityBackground(MatchingCapability):
             await self.capability_worker.send_interrupt_signal()
             await self.capability_worker.speak(alert_text)
 
-            # Save fired code to dedup state
+            # Save fired code to dedup state (delete-before-write)
             fired_codes.append(code)
+            if await self.capability_worker.check_if_file_exists(ALERTS_JSON, False):
+                await self.capability_worker.delete_file(ALERTS_JSON, False)
             await self.capability_worker.write_file(ALERTS_JSON, json.dumps({"fired_codes": fired_codes}), False)
             self.worker.editor_logging_handler.info(f"[WeatherDaemon] Fired alert for code {code}")
         except Exception as e:
