@@ -47,3 +47,4 @@ Format: - **@username** — ability-name ([ability-name](community/ability-name/
 - **[@azazrashid](https://github.com/azazrashid)** — notion-quick-capture ([notion-quick-capture](community/notion-quick-capture/))
 - **[@chadnewbry](https://github.com/chadnewbry)** — mta-next-train ([mta-next-train](community/mta-next-train/))
 - **[@francip](https://github.com/francip)** — kortexa-weather ([kortexa-weather](community/kortexa-weather/))
+- **[@Mmiless](https://github.com/Mmiless)** — google-calendar ([google-calendar](community/google-calendar/))
