@@ -6,7 +6,7 @@ The `CapabilityWorker` is the core SDK class for all I/O inside an Ability. Acce
 
 ## Speaking (Text-to-Speech)
 
-### `speak(text)`
+### `speak(tokens, file_content=None)`
 
 Converts text to speech using the Agent's default voice.
 
@@ -14,7 +14,7 @@ Converts text to speech using the Agent's default voice.
 await self.capability_worker.speak("Hello! How can I help?")
 ```
 
-### `text_to_speech(text, voice_id)`
+### `text_to_speech(prompt, voice_id)`
 
 Converts text to speech using a **specific Voice ID**. Use when your Ability needs its own voice.
 
@@ -48,7 +48,7 @@ full_input = await self.capability_worker.wait_for_complete_transcription()
 
 ## Combined Speak + Listen
 
-### `run_io_loop(text)`
+### `run_io_loop(tokens)`
 
 Speaks the text, then waits for a response. Returns the user's reply.
 
@@ -56,7 +56,7 @@ Speaks the text, then waits for a response. Returns the user's reply.
 answer = await self.capability_worker.run_io_loop("What's your name?")
 ```
 
-### `run_confirmation_loop(text)`
+### `run_confirmation_loop(tokens)`
 
 Asks a yes/no question. Loops until the user confirms. Returns `True` or `False`.
 
@@ -189,6 +189,17 @@ timezone = self.capability_worker.get_timezone()
 ```
 
 Synchronous. Returns a string like `America/Chicago` or `None` if unavailable.
+
+### `get_token(platform)`
+
+Returns the linked account access token for the current user.
+
+```python
+token = self.capability_worker.get_token("google")
+self.worker.editor_logging_handler.info(token)
+```
+
+Synchronous. `platform` must be one of: Google (`"google"`), Slack (`"slack"`), Discord (`"discord"`).
 
 ### `get_full_message_history()`
 

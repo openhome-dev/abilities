@@ -56,7 +56,7 @@ Leave the placeholder as-is. On first use, the ability will ask you to paste or 
 ### Step 3: Upload to OpenHome
 
 1. Go to the **Customize Ability** page
-2. Upload all 4 files: `main.py`, `config.json`, `__init__.py`, `README.md`
+2. Upload all 3 files: `main.py`, `__init__.py`, `README.md`
 3. Fill in:
    - **Unique Name**: `traffic_travel_time`
    - **Description**: Voice-powered traffic and travel time checker
@@ -196,9 +196,9 @@ Voice trigger → run() → load prefs → check API key
 | File | Purpose |
 |------|---------|
 | `main.py` | All ability logic (~1,260 lines) |
-| `config.json` | Unique name + 20 trigger words |
 | `__init__.py` | Package marker (empty) |
 | `README.md` | This file |
+| OpenHome dashboard | Unique name + 20 trigger words (platform-managed) |
 
 ## API Reference
 

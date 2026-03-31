@@ -90,7 +90,7 @@ Weather Master is a comprehensive weather ability designed specifically for voic
 
 2. **Install the Ability**
    - Upload `weather_master_ability.py` to your OpenHome abilities folder
-   - Upload `config.json` to the same directory
+   - Set the ability's trigger words in the OpenHome dashboard
 
 3. **Configure API Key**
 ```python
@@ -103,27 +103,18 @@ Weather Master is a comprehensive weather ability designed specifically for voic
 
 4. **Deploy**
    - Restart your OpenHome device
-   - The ability will be available via the trigger words in `config.json`
+   - The ability will be available via the trigger words you saved in the OpenHome dashboard
 
 ---
 
-## ⚙️ Configuration
+## ⚙️ Trigger Words
 
-### config.json
-```json
-{
-    "unique_name": "weather pro",
-    "matching_hotwords": [
-        "weather",
-        "check weather",
-        "weather forecast"
-    ]
-}
-```
+Configure trigger words for this ability in the OpenHome dashboard.
 
-**Customization:**
-- `unique_name`: Internal identifier for the ability
-- `matching_hotwords`: Trigger phrases (add your preferred phrases)
+**Suggested phrases:**
+- `weather`
+- `check weather`
+- `weather forecast`
 
 ### Preferences Storage
 
@@ -346,7 +337,6 @@ Save Preferences (if changed)
 ```
 weather_master_ability/
 ├── weather_master_ability.py    # Main ability code
-├── config.json                   # Configuration file
 ├── weather_preferences.json      # Auto-generated user data
 └── README.md                     # This file
 ```

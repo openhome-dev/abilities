@@ -22,9 +22,10 @@ A voice-first calendar assistant for OpenHome. It connects to Microsoft Outlook 
 ```
 OutlookCalendar/
 ├── main.py       # All ability logic
-├── config.json   # Hotwords and unique name
 └── README.md     # This file
 ```
+
+Trigger words and the ability's unique name are managed in the OpenHome dashboard.
 
 ---
 
@@ -62,32 +63,25 @@ YOUR_EMAIL = "YOUR_EMAIL_HERE"           # Your Outlook email address
 
 ---
 
-### 3. Add `config.json`
+### 3. Set Trigger Words in OpenHome
 
-Create a `config.json` file in the same folder as `main.py`:
+Configure this ability in the OpenHome dashboard with a unique name and trigger phrases such as:
 
-```json
-{
-  "unique_name": "outlook_calendar",
-  "matching_hotwords": [
-    "what's on my calendar",
-    "catch me up",
-    "what do I have today",
-    "check my schedule",
-    "what's my day look like",
-    "calendar check",
-    "open my calendar"
-  ]
-}
-```
+- `what's on my calendar`
+- `catch me up`
+- `what do I have today`
+- `check my schedule`
+- `what's my day look like`
+- `calendar check`
+- `open my calendar`
 
-You can add or remove hotwords to match however your users naturally trigger it.
+You can add or remove phrases to match however your users naturally trigger it.
 
 ---
 
 ### 4. Upload to OpenHome
 
-- Zip the folder containing `main.py` and `config.json`
+- Zip the folder containing your ability files
 - Upload the zip in the OpenHome Live Editor or Ability Manager
 - Assign it to an Agent
 
