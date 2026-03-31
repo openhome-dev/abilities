@@ -1,3 +1,4 @@
+import asyncio
 import json
 import requests
 from src.agent.capability import MatchingCapability
@@ -15,6 +16,7 @@ Here is current weather data: {weather_data}.
 Summarize in 2-3 sentences, voice-friendly. Only mention what affects the user's day:
 temperature, precipitation, wind if notable, and anything severe.
 Do not read out every field. Keep it natural and conversational.
+Plain spoken English only. No markdown, no bullet points, no lists, no formatting.
 """
 
 WEATHER_MD_PROMPT = """
@@ -122,7 +124,7 @@ class WeatherCapability(MatchingCapability):
                     await self.capability_worker.speak(f"No problem. Checking {location}.")
 
             # Geocode
-            lat, lon = self.geocode(location)
+            lat, lon = await asyncio.to_thread(self.geocode, location)
             if lat is None:
                 await self.capability_worker.speak(
                     "I couldn't find that location. Try a different city name."
@@ -130,7 +132,7 @@ class WeatherCapability(MatchingCapability):
                 return
 
             # Fetch weather
-            weather_data = self.fetch_weather(lat, lon)
+            weather_data = await asyncio.to_thread(self.fetch_weather, lat, lon)
             if not weather_data:
                 await self.capability_worker.speak(
                     "Sorry, I couldn't get the weather right now."
