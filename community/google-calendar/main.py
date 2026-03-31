@@ -14,7 +14,7 @@ from src.agent.capability_worker import CapabilityWorker
 
 CALENDAR_API_URL = "https://www.googleapis.com/calendar/v3/calendars/primary/events"
 DEFAULT_TIMEZONE = "America/Los_Angeles"
-LOCAL_TZ = ZoneInfo(DEFAULT_TIMEZONE)
+LOCAL_TZ = None  # set in call() via SDK get_timezone()
 
 LATE_NIGHT_CUTOFF = 4
 
@@ -259,8 +259,11 @@ class GcalIntegrationCapability(MatchingCapability):
     # {{register_capability}}
 
     def call(self, worker: AgentWorker):
+        global LOCAL_TZ
         self.worker = worker
-        self.capability_worker = CapabilityWorker(self.worker)
+        self.capability_worker = CapabilityWorker(self)
+        tz = self.capability_worker.get_timezone() or DEFAULT_TIMEZONE
+        LOCAL_TZ = ZoneInfo(tz)
         self.access_token = None
         self.last_api_error = ""
         self.contacts = {}
@@ -1503,30 +1506,34 @@ class GcalIntegrationCapability(MatchingCapability):
     # =========================================================================
 
     async def run_calendar(self):
-        self.contacts = await self.load_contacts()
-        msg = await self.capability_worker.wait_for_complete_transcription()
-        self.worker.editor_logging_handler.info(f"[GCal] User said: {msg}")
+        try:
+            self.contacts = await self.load_contacts()
+            msg = await self.capability_worker.wait_for_complete_transcription()
+            self.worker.editor_logging_handler.info(f"[GCal] User said: {msg}")
 
-        if not self.get_access_token():
-            await self.capability_worker.speak(
-                "I can't reach Google Calendar right now. The credentials might need a refresh."
-            )
+            if not self.get_access_token():
+                await self.capability_worker.speak(
+                    "I can't reach Google Calendar right now. Link your Google account in OpenHome settings."
+                )
+                return
+
+            # Parse into potentially multiple actions
+            actions = self.parse_multi_intent(msg)
+            self.worker.editor_logging_handler.info(f"[GCal] Action queue ({len(actions)}): {actions}")
+
+            for i, action_text in enumerate(actions):
+                intent = self.classify_intent(action_text)
+                if intent == "EXIT":
+                    break
+                if i > 0:
+                    await self.capability_worker.speak("Alright, next one.")
+                await self.execute_action(action_text)
+
+        except Exception as e:
+            self.worker.editor_logging_handler.error(f"[GCal] Error: {e}")
+            await self.capability_worker.speak("Something went wrong with Google Calendar.")
+        finally:
             self.capability_worker.resume_normal_flow()
-            return
-
-        # Parse into potentially multiple actions
-        actions = self.parse_multi_intent(msg)
-        self.worker.editor_logging_handler.info(f"[GCal] Action queue ({len(actions)}): {actions}")
-
-        for i, action_text in enumerate(actions):
-            intent = self.classify_intent(action_text)
-            if intent == "EXIT":
-                break
-            if i > 0:
-                await self.capability_worker.speak("Alright, next one.")
-            await self.execute_action(action_text)
-
-        self.capability_worker.resume_normal_flow()
 
     # =========================================================================
     # HANDLERS
