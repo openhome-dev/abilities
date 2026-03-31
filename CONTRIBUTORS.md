@@ -36,7 +36,7 @@ Format: - **@username** — ability-name ([ability-name](community/ability-name/
 - **[@BILLKISHORE](https://github.com/BILLKISHORE)** — n8n-commander ([n8n-commander](community/n8n-commander/)), mtg-game-master ([mtg-game-master](community/mtg-game-master/))
 - **[@Kaushal-205](https://github.com/Kaushal-205)** — movie-recommender ([movie-recommender](community/movie-recommender/)), air-quality-checker ([air-quality-checker](community/air-quality-checker/)), meditation-breathing-guide ([meditation-breathing-guide](community/meditation-breathing-guide/)), earthquake-monitor ([earthquake-monitor](community/earthquake-monitor/)), astronomy-guide ([astronomy-guide](community/astronomy-guide/)), plant-care-reminder ([plant-care-reminder](community/plant-care-reminder/)), language-phrase-helper ([language-phrase-helper](community/language-phrase-helper/))
 - **[@MKmuneebkhalid](https://github.com/MKmuneebkhalid)** — discord-connector ([discord-connector](community/discord-connector/))
-- **[@Ju-usc](https://github.com/Ju-usc)** — coding-agent-runner ([coding-agent-runner](community/coding-agent-runner/))
+- **[@Ju-usc](https://github.com/Ju-usc)** — coding-agent-runner ([coding-agent-runner](community/coding-agent-runner/)), private-notes ([private-notes](community/private-notes/))
 - **[@code-guru1](https://github.com/code-guru1)** — todoist-voice-tasks ([todoist-voice-tasks](community/todoist-voice-tasks/))
 - **[@saifrehman100](https://github.com/saifrehman100)** — github-voice-manager ([github-voice-manager](community/github-voice-manager/))
 - **[@melodygui](https://github.com/melodygui)** — restaurant-recommendation ([restaurant-recommendation](community/restaurant-recommendation/))
