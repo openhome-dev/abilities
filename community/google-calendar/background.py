@@ -13,7 +13,7 @@ from src.agent.capability_worker import CapabilityWorker
 
 CALENDAR_API_URL = "https://www.googleapis.com/calendar/v3/calendars/primary/events"
 DEFAULT_TIMEZONE = "America/Los_Angeles"
-LOCAL_TZ = ZoneInfo(DEFAULT_TIMEZONE)
+LOCAL_TZ = None  # set in call() via SDK get_timezone()
 
 # How often the daemon polls (seconds)
 POLL_INTERVAL = 30.0
@@ -95,9 +95,12 @@ class GcalReminderDaemon(MatchingCapability):
     # {{register_capability}}
 
     def call(self, worker: AgentWorker, background_daemon_mode: bool):
+        global LOCAL_TZ
         self.worker = worker
         self.background_daemon_mode = background_daemon_mode
         self.capability_worker = CapabilityWorker(self)
+        tz = self.capability_worker.get_timezone() or DEFAULT_TIMEZONE
+        LOCAL_TZ = ZoneInfo(tz)
         self.worker.session_tasks.create(self.reminder_loop())
 
     # =========================================================================
