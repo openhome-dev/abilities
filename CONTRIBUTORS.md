@@ -46,3 +46,4 @@ Format: - **@username** — ability-name ([ability-name](community/ability-name/
 - **[@brianchilders](https://github.com/brianchilders)** — airthings ([airthings](community/airthings/))
 - **[@azazrashid](https://github.com/azazrashid)** — notion-quick-capture ([notion-quick-capture](community/notion-quick-capture/))
 - **[@chadnewbry](https://github.com/chadnewbry)** — mta-next-train ([mta-next-train](community/mta-next-train/))
+- **[@francip](https://github.com/francip)** — kortexa-weather ([kortexa-weather](community/kortexa-weather/))
