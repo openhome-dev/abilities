@@ -4,42 +4,9 @@ Voice-controlled Google Calendar integration for OpenHome. Supports scheduling, 
 
 ## Setup
 
-### Google Cloud Credentials
+### Google Account
 
-You need three values: a **Client ID**, **Client Secret**, and **Refresh Token** with the `calendar.events` scope.
-
-1. Go to [Google Cloud Console](https://console.cloud.google.com/).
-2. Create a project (or select an existing one).
-3. Enable the **Google Calendar API** under APIs & Services > Library.
-4. Go to APIs & Services > Credentials > Create Credentials > OAuth 2.0 Client ID.
-   - Application type: **Desktop app**.
-   - After creating, go back into the credential and add `http://localhost:8080/` under **Authorized redirect URIs**.
-5. Copy the **Client ID** and **Client Secret**.
-6. Run the token generation script locally with your id and secret values to get a refresh token:
-
-```
-pip install google-auth-oauthlib
-```
-
-```
-python token_gen.py
-```
-
-This opens a browser window to sign in with the Google account whose calendar you want to control. After authorizing, it prints the refresh token.
-
-7. Paste all three into `main.py`:
-
-```python
-CLIENT_ID = "your-client-id"
-CLIENT_SECRET = "your-client-secret"
-REFRESH_TOKEN = "your-refresh-token"
-```
-
-Also set your timezone:
-
-```python
-DEFAULT_TIMEZONE = "America/Los_Angeles"
-```
+Link your Google account in OpenHome settings. The ability uses the platform's built-in Google authentication — no API keys or tokens to configure manually.
 
 ### contacts.json
 
@@ -103,7 +70,7 @@ If an event name isn't recognized, the ability asks for clarification and retrie
 twice — it does not drop context or treat the clarification as a new scheduling request.
 
 Per-meeting reminder preferences are stored persistently and survive restarts. Contacts are resolved
-by first name from a local contact list.
+by first name from a local contact list. Timezone is automatically detected from your OpenHome profile.
 
 **Background daemon (background.py)**
 
@@ -119,7 +86,6 @@ Proactively interrupts with spoken notifications for:
 Meeting reminders fire based on per-event preferences stored in `user_preferences.md`. The default
 lead time is configurable, and individual meetings can have their own override (e.g.
 `Standup meeting: 30 min`, `HR meeting: 60 min`).
-
 
 ## Recommended Hotwords
 
