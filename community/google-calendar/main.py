@@ -12,10 +12,6 @@ from src.agent.capability_worker import CapabilityWorker
 # CONFIGURATION
 # =============================================================================
 
-CLIENT_ID = "xxx"
-CLIENT_SECRET = "xxx"
-REFRESH_TOKEN = "xxx"
-TOKEN_URL = "https://oauth2.googleapis.com/token"
 CALENDAR_API_URL = "https://www.googleapis.com/calendar/v3/calendars/primary/events"
 DEFAULT_TIMEZONE = "America/Los_Angeles"
 LOCAL_TZ = ZoneInfo(DEFAULT_TIMEZONE)
@@ -366,20 +362,13 @@ class GcalIntegrationCapability(MatchingCapability):
 
     def get_access_token(self) -> bool:
         try:
-            resp = requests.post(TOKEN_URL, data={
-                "client_id": CLIENT_ID,
-                "client_secret": CLIENT_SECRET,
-                "refresh_token": REFRESH_TOKEN,
-                "grant_type": "refresh_token",
-            })
-            if resp.ok:
-                token_data = resp.json()
-                self.access_token = token_data["access_token"]
-                scope = token_data.get("scope", "unknown")
-                self.worker.editor_logging_handler.info(f"[GCal] Access token refreshed. Scopes: {scope}")
+            token = self.capability_worker.get_token("google")
+            if token:
+                self.access_token = token
+                self.worker.editor_logging_handler.info("[GCal] Got token from platform")
                 return True
             else:
-                self.worker.editor_logging_handler.error(f"[GCal] Auth failed ({resp.status_code}): {resp.text}")
+                self.worker.editor_logging_handler.error("[GCal] No Google token available. Link your Google account in OpenHome settings.")
                 return False
         except Exception as e:
             self.worker.editor_logging_handler.error(f"[GCal] Auth exception: {e}")
