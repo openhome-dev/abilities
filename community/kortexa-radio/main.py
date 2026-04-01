@@ -69,8 +69,8 @@ class KortexaRadioCapability(MatchingCapability):
                     pass
 
                 await self.worker.session_tasks.sleep(5)
-        except asyncio.CancelledError as e:
-            self.worker.editor_logging_handler.error(f"{TAG} SSE cancelled: {e}")
+        except asyncio.CancelledError:
+            self.worker.editor_logging_handler.info(f"{TAG} SSE cancelled")
 
             pass
 
