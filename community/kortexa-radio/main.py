@@ -10,7 +10,7 @@ EVENTS_URL = "https://api.kortexa.ai/radio/events"
 CHUNK_SIZE = 25 * 1024
 TAG = "[KortexaRadio]"
 
-CONTINUE_PROMPT = "Say 'play' to start the radio, or 'stop' to exit."
+STOP_WORDS = ["stop", "off", "exit", "quit", "turn it off"]
 
 
 class KortexaRadioCapability(MatchingCapability):
@@ -75,95 +75,44 @@ class KortexaRadioCapability(MatchingCapability):
             pass
 
     async def run(self):
-        """Main setup and conversation loop."""
+        """Auto-start radio, listen for stop command, exit cleanly."""
 
-        first_time = True
-        is_playing = False
-        is_stopping = False
+        stream_task = None
         events_task = None
 
         try:
-            while True:
-                if is_stopping:
-                    self.worker.editor_logging_handler.info(f"{TAG} Waiting for stream to finish")
+            await self.capability_worker.speak("Tuning in to Kortexa Radio.")
 
-                    await self.worker.session_tasks.sleep(0.1)
+            # Subscribe to events (registers us as a listener)
+            self.worker.editor_logging_handler.info(f"{TAG} Register as a listener")
+            events_task = self.worker.session_tasks.create(self._keep_events_connected())
 
-                    if not events_task:
-                        self.worker.editor_logging_handler.info(f"{TAG} No events task")
+            # Turn on music mode
+            self.worker.editor_logging_handler.info(f"{TAG} Turn on music mode")
+            self.worker.music_mode_event.set()
+            await self.capability_worker.send_data_over_websocket("music-mode", {"mode": "on"})
 
+            # Stream audio in background so the loop stays responsive
+            self.worker.editor_logging_handler.info(f"{TAG} Start streaming")
+            stream_task = self.worker.session_tasks.create(self._stream())
+
+            # Wait for stop command
+            while not self.worker.music_mode_stop_event.is_set():
+                msg = await self.capability_worker.user_response()
+
+                if self.worker.music_mode_stop_event.is_set():
+                    break
+
+                if msg:
+                    normalized = msg.strip().lower()
+                    self.worker.editor_logging_handler.info(f"{TAG} Command: {normalized}")
+
+                    if any(word in normalized for word in STOP_WORDS):
+                        self.worker.editor_logging_handler.info(f"{TAG} Stop requested")
+                        self.worker.music_mode_stop_event.set()
                         break
 
-                    continue
-
-                if first_time:
-                    self.worker.editor_logging_handler.info(f"{TAG} First trigger")
-
-                    msg = "start"
-                    first_time = False
-                else:
-                    self.worker.editor_logging_handler.info(f"{TAG} Interruption")
-
-                    msg = await self.capability_worker.user_response()
-
-                if not msg or not msg.strip():
-                    self.worker.editor_logging_handler.info(f"{TAG} User silent")
-
-                    if is_playing:
-                        msg = "stop"
-                    else:
-                        msg = "start"
-
-                normalized = msg.strip().lower()
-
-                self.worker.editor_logging_handler.info(f"{TAG} Command: {normalized}")
-
-                if "stop" in normalized or "off" in normalized:
-                    is_stopping = True
-
-                    self.worker.editor_logging_handler.info(f"{TAG} Stop stream")
-
-                    self.worker.music_mode_stop_event.set()
-
-                    self.worker.editor_logging_handler.info(f"{TAG} Turn off music mode")
-
-                    await self.capability_worker.send_data_over_websocket("music-mode", {"mode": "off"})
-                    self.worker.music_mode_event.clear()
-
-                elif "play" in normalized or "start" in normalized or "on" in normalized or "radio" in normalized:
-                    self.worker.editor_logging_handler.info(f"{TAG} Start playing")
-
-                    is_playing = True
-
-                    await self.capability_worker.speak("Tuning in to Kortexa Radio.")
-
-                    # Subscribe to events (registers us as a listener)
-                    self.worker.editor_logging_handler.info(f"{TAG} Register as a listener")
-                    events_task = self.worker.session_tasks.create(self._keep_events_connected())
-
-                    self.worker.editor_logging_handler.info(f"{TAG} Turn on music mode")
-
-                    self.worker.music_mode_event.set()
-                    await self.capability_worker.send_data_over_websocket("music-mode", {"mode": "on"})
-
-                    # Stream audio (blocks until stop event or error)
-                    await self._stream()
-
-                    if events_task:
-                        self.worker.editor_logging_handler.info(f"{TAG} Unregister as a listener")
-
-                        events_task.cancel()
-                        events_task = None
-
-                    await self.capability_worker.speak("Radio off! Catch you later.")
-
-                    self.worker.music_mode_stop_event.clear()
-
-                    is_playing = False
-
-                    self.worker.editor_logging_handler.info(f"{TAG} Stop playing")
-
-                    break
+            await self.capability_worker.speak("Radio off! Catch you later.")
 
         except Exception as e:
             self.worker.editor_logging_handler.error(f"{TAG} Error: {e}")
@@ -171,17 +120,16 @@ class KortexaRadioCapability(MatchingCapability):
         finally:
             self.worker.editor_logging_handler.info(f"{TAG} Clean up")
 
+            self.worker.music_mode_stop_event.set()
+
+            if stream_task:
+                stream_task.cancel()
             if events_task:
-                self.worker.editor_logging_handler.info(f"{TAG} Unregister as a listener")
-
                 events_task.cancel()
-                events_task = None
 
-            if is_playing:
-                self.worker.editor_logging_handler.info(f"{TAG} Turn off music mode")
-
-                await self.capability_worker.send_data_over_websocket("music-mode", {"mode": "off"})
-                self.worker.music_mode_event.clear()
+            await self.capability_worker.send_data_over_websocket("music-mode", {"mode": "off"})
+            self.worker.music_mode_event.clear()
+            self.worker.music_mode_stop_event.clear()
 
             self.worker.editor_logging_handler.info(f"{TAG} Radio OFF")
 
