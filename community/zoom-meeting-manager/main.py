@@ -396,7 +396,8 @@ class ZoomMeetingManagerCapability(MatchingCapability):
             "Generate a concise spoken summary of today's Zoom schedule. "
             "1-2 sentences max. Format times naturally (e.g. 9am, 2:30pm). "
             "If more than 5 meetings, say 'You have N meetings today. The next one is...' "
-            "Otherwise list topic and time for each.\n"
+            "Otherwise mention topic and time for each. "
+            "This will be spoken aloud — no markdown, no lists.\n"
             f"Meetings: {json.dumps(summaries)}"
         )
         summary = self.capability_worker.text_to_text_response(prompt)
@@ -510,7 +511,7 @@ class ZoomMeetingManagerCapability(MatchingCapability):
         pwd = full.get("password", full.get("pstn_password", ""))
         mid_fmt = self._format_meeting_id_for_voice(mid)
         await self.capability_worker.speak(
-            f"{topic} is at {time_str}. Meeting ID: {mid_fmt}. Passcode: {pwd}."
+            f"{topic} is at {time_str}. Meeting ID is {mid_fmt}. Passcode is {pwd}."
         )
 
     async def _handle_cancel(self, meeting_ref: Optional[str]) -> None:
@@ -528,7 +529,7 @@ class ZoomMeetingManagerCapability(MatchingCapability):
         st = matched.get("start_time", "")
         time_str = self._format_time_for_voice(st)
         confirmed = await self.capability_worker.run_confirmation_loop(
-            f"Cancel {topic} at {time_str}? This will notify participants. Should I go ahead?"
+            f"Cancel {topic} at {time_str}? Participants will be notified."
         )
         if not confirmed:
             await self.capability_worker.speak("Okay, I didn't cancel it.")
@@ -582,6 +583,7 @@ class ZoomMeetingManagerCapability(MatchingCapability):
             items.append({"topic": topic, "date": start, "duration": d_str})
         prompt = (
             "Speak this recording list naturally. 1-2 sentences. "
+            "This will be spoken aloud — no markdown, no lists.\n"
             f"Items: {json.dumps(items)}"
         )
         summary = self.capability_worker.text_to_text_response(prompt)
@@ -666,17 +668,19 @@ class ZoomMeetingManagerCapability(MatchingCapability):
             )
             sys_prompt = (
                 "Answer the question based on the transcript. Be specific and concise. "
-                "1-3 sentences. If the answer isn't in the transcript, say so."
+                "1-3 sentences. If the answer isn't in the transcript, say so. "
+                "This will be spoken aloud — no markdown or formatting."
             )
         else:
             prompt = (
-                f"Summarize this meeting transcript concisely for voice output. "
-                f"3-5 key points max. Speak naturally, not in bullet points.\n\n{truncated}"
+                f"Summarize this meeting transcript for voice output. "
+                f"2-3 sentences covering decisions, action items, and key takeaways.\n\n"
+                f"{truncated}"
             )
             sys_prompt = (
                 "You summarize meeting transcripts into brief spoken summaries. "
-                "Be concise. 2-4 sentences. Focus on decisions, action items, and key "
-                "takeaways. Do NOT use bullet points — this will be spoken aloud."
+                "Be concise. 2-3 sentences max. Focus on what matters. "
+                "This will be spoken aloud — no markdown, no bullet points, no lists."
             )
         summary = self.capability_worker.text_to_text_response(
             prompt, system_prompt=sys_prompt
