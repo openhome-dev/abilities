@@ -34,9 +34,9 @@ EXIT_WORDS = {
 }
 
 DIFFICULTY_KEYWORDS = {
-    "easy":   {"easy", "beginner", "casual", "gentle", "simple", "light"},
+    "easy": {"easy", "beginner", "casual", "gentle", "simple", "light"},
     "medium": {"medium", "normal", "moderate", "standard", "default", "balanced"},
-    "hard":   {"hard", "difficult", "expert", "tough", "advanced", "intense", "brutal"},
+    "hard": {"hard", "difficult", "expert", "tough", "advanced", "intense", "brutal"},
 }
 
 ROUND_NAMES = ["Opening Statements", "Rebuttals", "Closing Arguments"]
@@ -67,7 +67,7 @@ class DebatePartnerCapability(MatchingCapability):
     capability_worker: CapabilityWorker = None
 
     # Do not change following tag of register capability
-    #{{register capability}}
+    # {{register capability}}
 
     # ------------------------------------------------------------------
     # Hotword matching
@@ -138,7 +138,7 @@ class DebatePartnerCapability(MatchingCapability):
     # ------------------------------------------------------------------
 
     def _generate_opponent_argument(self, debate_state: dict, round_index: int,
-                                     user_argument: str) -> dict:
+                                    user_argument: str) -> dict:
         """
         Generate the opponent's argument for the current round.
         Returns {"argument": str, "user_score": dict, "opponent_score": dict}
