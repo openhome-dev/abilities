@@ -2,7 +2,7 @@
 <h1 align="center">OpenHome Abilities</h1>
 
 <p align="center">
-  <strong>Open-source voice AI plugins for OpenHome — build, share, and remix.</strong>
+  <strong>Open-source voice AI plugins for OpenHome - build, share, and remix.</strong>
 </p>
 
 <p align="center">
