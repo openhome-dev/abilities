@@ -5,7 +5,7 @@ from src.agent.capability import MatchingCapability
 from src.main import AgentWorker
 from src.agent.capability_worker import CapabilityWorker
 
-API_KEY = "YOUR_LISTEN_NOTES_API_KEY"  # YOUR KEY from https://www.listennotes.com/api/dashboard/#apps
+REQUIRED_KEYS = ["listen_notes_api_key"]
 BASE_URL = "https://listen-api.listennotes.com/api/v2"
 
 EXIT_WORDS = {
@@ -30,6 +30,25 @@ class PodcastPlayerCapability(MatchingCapability):
     def call(self, worker: AgentWorker):
         self.worker = worker
         self.capability_worker = CapabilityWorker(self.worker)
+
+        # --- Load API keys ---
+        keys = self.capability_worker.get_api_keys()
+        missing = [k for k in REQUIRED_KEYS if not keys.get(k)]
+
+        if missing:
+            missing_list = ", ".join(missing)
+            self.worker.session_tasks.create(
+                self.capability_worker.speak(
+                    f"I'm missing required keys: {missing_list}. "
+                    "Please set them in Settings under API Keys."
+                )
+            )
+            self.capability_worker.resume_normal_flow()
+            return
+
+        # Store key for later use
+        self.listen_notes_api_key = keys.get("listen_notes_api_key")
+
         self.worker.session_tasks.create(self.run())
 
     # -------------------------------------------------------------------------
@@ -37,7 +56,7 @@ class PodcastPlayerCapability(MatchingCapability):
     # -------------------------------------------------------------------------
 
     def _headers(self):
-        return {"X-ListenAPI-Key": API_KEY}
+        return {"X-ListenAPI-Key": self.listen_notes_api_key}
 
     def _wants(self, text: str, words: set[str]) -> bool:
         t = text.lower()
