@@ -48,7 +48,7 @@ class WeatherDisplayCapability(MatchingCapability):
     capability_worker: CapabilityWorker = None
 
     # Do not change following tag of register capability
-    #{{register_capability}}
+    # {{register_capability}}
 
     def call(self, worker: AgentWorker):
         self.worker = worker

@@ -17,7 +17,7 @@ class KortexaRadioCapability(MatchingCapability):
     worker: AgentWorker = None
     capability_worker: CapabilityWorker = None
 
-    #{{register_capability}}
+    # {{register_capability}}
 
     async def _stream(self):
         """Stream radio audio with pause/stop handling."""
@@ -66,13 +66,10 @@ class KortexaRadioCapability(MatchingCapability):
                                 pass
                 except httpx.HTTPError as e:
                     self.worker.editor_logging_handler.error(f"{TAG} SSE error: {e}")
-                    pass
 
                 await self.worker.session_tasks.sleep(5)
         except asyncio.CancelledError:
             self.worker.editor_logging_handler.info(f"{TAG} SSE cancelled")
-
-            pass
 
     async def run(self):
         """Auto-start radio, listen for stop command, exit cleanly."""
