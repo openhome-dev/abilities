@@ -444,7 +444,7 @@ class ConversationInsightsBackground(MatchingCapability):
 
                 if s["last_processed_index"] > current_length:
                     self.worker.editor_logging_handler.info(
-                        f"[InsightsCoach] History shrunk, resetting pointer"
+                        "[InsightsCoach] History shrunk, resetting pointer"
                     )
                     s["last_processed_index"] = max(0, current_length - 3)
 
