@@ -48,7 +48,7 @@ class ConversationInsightsCapability(MatchingCapability):
     capability_worker: CapabilityWorker = None
 
     # Do not change following tag of register capability
-    #{{register capability}}
+    # {{register capability}}
 
     # ------------------------------------------------------------------
     # Hotword matching
@@ -218,10 +218,10 @@ class ConversationInsightsCapability(MatchingCapability):
     # ------------------------------------------------------------------
 
     def _generate_report(self, session: dict, history: list,
-                          goal: Optional[int], streak: int, milestone: str) -> str:
+                         goal: Optional[int], streak: int, milestone: str) -> str:
         total_fillers = self._total_fillers(session)
         vocab_div = self._vocab_diversity(session)
-        filler_rate = self._filler_rate(session)
+        self._filler_rate(session)
         question_ratio = self._question_ratio(session)
         avg_len = session.get("avg_utterance_length", 0.0)
         total_utterances = session.get("total_utterances", 0)

@@ -127,7 +127,7 @@ class ConversationInsightsBackground(MatchingCapability):
     background_daemon_mode: bool = False
 
     # Do not change following tag of register capability
-    #{{register capability}}
+    # {{register capability}}
 
     # ------------------------------------------------------------------
     # Filler & hedge detection — pure Python, no LLM, no self-state
@@ -337,7 +337,7 @@ class ConversationInsightsBackground(MatchingCapability):
             s["prev_vocab"].update(s["unique_words"])
             # Reset counters for new day
             for k in ("total_utterances", "total_words", "question_count",
-                       "statement_count", "repeat_count"):
+                      "statement_count", "repeat_count"):
                 s[k] = 0
             s["unique_words"] = set()
             s["filler_counts"] = {}
@@ -428,7 +428,7 @@ class ConversationInsightsBackground(MatchingCapability):
             "[InsightsCoach] daemon started — monitoring communication (20s interval)"
         )
 
-        cached_data = await self._restore_from_file(s)
+        await self._restore_from_file(s)
 
         while True:
             try:
