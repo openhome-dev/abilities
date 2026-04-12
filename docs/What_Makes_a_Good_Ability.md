@@ -1,4 +1,3 @@
-
 > For product design philosophy, ability archetypes, and 170+ ideas for what to build, see [Designing OpenHome Abilities](/Designing_OpenHome_Abilities).
 
 ## What Makes a Good Ability
@@ -463,19 +462,19 @@ Five methods, all on `self.capability_worker`:
 
 | Method | What It Does |
 |---|---|
-| `await check_if_file_exists(filename, temp)` | Returns `True`/`False`. Use before reading to avoid errors. |
-| `await write_file(filename, content, temp, mode="a+")` | Writes content to file. Default behavior appends. |
-| `await read_file(filename, temp)` | Returns the file content as a string. |
-| `await delete_file(filename, temp)` | Deletes the file. |
+| `await check_if_file_exists(filename, in_ability_directory)` | Returns `True`/`False`. Use before reading to avoid errors. |
+| `await write_file(filename, content, in_ability_directory=False, mode="a+")` | Writes content to file. Default behavior appends. |
+| `await read_file(filename, in_ability_directory)` | Returns the file content as a string. |
+| `await delete_file(filename, in_ability_directory)` | Deletes the file. |
 | `await get_user_data_file_names()` | Lists filenames currently saved in user-level data storage. |
 
-The `temp` flag controls persistence:
-- `temp=False` — **Persistent.** Data lives on the server and survives across sessions. Use for anything the user would expect to be remembered.
-- `temp=True` — **Session-only.** Auto-deleted when the session ends. Use for caching API responses or temporary working data.
+The `in_ability_directory` flag controls where the file is accessed:
+- `in_ability_directory=False` — **User data storage.** Use for saved state and cross-session data.
+- `in_ability_directory=True` — **Ability directory.** Use for files that ship with (or are scoped to) the Ability folder.
 
 Allowed file types: `.txt`, `.csv`, `.json`, `.md`, `.log`, `.yaml`, `.yml`
 
-### Capability Context Storage (Key-Value)
+### Capability Context Storage API (Key-Value)
 
 For structured context (preferences, workflow state, feature flags), use CapabilityWorker's key-value storage:
 
@@ -501,11 +500,19 @@ else:
 
 ```python
 # ⚠️ BAD — this produces: {"name":"Chris"}{"name":"Mike"} (invalid JSON)
-await self.capability_worker.write_file("prefs.json", json.dumps(new_prefs), False)
+await self.capability_worker.write_file(
+    "prefs.json",
+    json.dumps(new_prefs),
+    in_ability_directory=False
+)
 
 # ✅ GOOD — delete first, then write fresh
-await self.capability_worker.delete_file("prefs.json", False)
-await self.capability_worker.write_file("prefs.json", json.dumps(new_prefs), False)
+await self.capability_worker.delete_file("prefs.json", in_ability_directory=False)
+await self.capability_worker.write_file(
+    "prefs.json",
+    json.dumps(new_prefs),
+    in_ability_directory=False
+)
 ```
 
 Always delete then write for JSON files. For `.txt` or `.log` files where you're appending lines, the default behavior works perfectly.
@@ -526,17 +533,19 @@ This is one of the most useful persistence patterns. Check if a file exists to d
 
 ```python
 async def boot(self):
-    if await self.capability_worker.check_if_file_exists("user_prefs.json", False):
+    if await self.capability_worker.check_if_file_exists("user_prefs.json", in_ability_directory=False):
         # Returning user — load their preferences
-        raw = await self.capability_worker.read_file("user_prefs.json", False)
+        raw = await self.capability_worker.read_file("user_prefs.json", in_ability_directory=False)
         self.user_prefs = json.loads(raw)
         await self.capability_worker.speak(f"Welcome back, {self.user_prefs['name']}.")
     else:
         # First run — collect preferences
         self.user_prefs = await self.run_onboarding()
-        await self.capability_worker.delete_file("user_prefs.json", False)
+        await self.capability_worker.delete_file("user_prefs.json", in_ability_directory=False)
         await self.capability_worker.write_file(
-            "user_prefs.json", json.dumps(self.user_prefs), False
+            "user_prefs.json",
+            json.dumps(self.user_prefs),
+            in_ability_directory=False
         )
 ```
 
@@ -546,19 +555,21 @@ For journals, workout trackers, or anything that accumulates entries over time, 
 
 ```python
 entry = f"\n{timestamp}: {user_input}"
-await self.capability_worker.write_file("journal.txt", entry, False)
+await self.capability_worker.write_file("journal.txt", entry, in_ability_directory=False)
 ```
 
 Each session just appends new entries. No need to read-modify-write.
 
-### Pattern: Session Cache
+### Pattern: Ability-Directory File Access
 
-Use `temp=True` for data you only need during the current session — like caching an API response so you don't re-fetch it every time the user asks a follow-up:
+Use `in_ability_directory=True` when you intentionally want to read or write in the Ability directory:
 
 ```python
-# Cache the calendar data for this session
+# Example: write a file in the Ability directory
 await self.capability_worker.write_file(
-    "cal_cache.json", json.dumps(calendar_data), True  # temp=True
+    "cal_cache.json",
+    json.dumps(calendar_data),
+    in_ability_directory=True
 )
 ```
 
@@ -633,7 +644,7 @@ Before submitting an Ability, run through this list:
 | ☐ | Multi-turn flows allow cancellation at any point ("never mind", "cancel") |
 | ☐ | Filler speech ("One sec") plays before any API call that takes > 1 second |
 | ☐ | API keys are placeholder constants with comments, not hardcoded real keys |
-| ☐ | No blocked imports (redis, connection_manager, user_config, open()) |
+| ☐ | No blocked imports (redis, user_config, open()) |
 | ☐ | For `background.py` daemons: file is named exactly `background.py` and uses `call(self, worker, background_daemon_mode)` |
 | ☐ | For `background.py` daemons: loop uses `while True` + `session_tasks.sleep()` (not `asyncio.sleep()`) |
 | ☐ | For `background.py` daemons: call `send_interrupt_signal()` before daemon `speak()`/audio playback |
