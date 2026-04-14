@@ -49,3 +49,4 @@ Format: - **@username** — ability-name ([ability-name](community/ability-name/
 - **[@francip](https://github.com/francip)** — kortexa-weather ([kortexa-weather](community/kortexa-weather/)), kortexa-radio ([kortexa-radio](community/kortexa-radio/))
 - **[@Mmiless](https://github.com/Mmiless)** — google-calendar ([google-calendar](community/google-calendar/))
 - **[@uchebuzz-coder](https://github.com/uchebuzz-coder)** — zoom-meeting-manager ([zoom-meeting-manager](community/zoom-meeting-manager/))
+- **[@SpkArtZen](https://github.com/SpkArtZen)** — podcast-player ([podcast-player](community/podcast-player/))
