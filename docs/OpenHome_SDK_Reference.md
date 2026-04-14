@@ -773,16 +773,16 @@ Always fetch them at runtime with `get_api_keys("key_name")` — never hardcode 
 You can declare a custom API key in either of two ways:
 
 - **While creating/editing the Ability:** Under **Ability Behavior → API Keys**, add each key by name and optionally include a provider URL. The key *value* is not set here — values are always managed from **Settings → API Keys**.
-![Declaring API keys in the Ability editor](../../docs/openhome_icons/sdk_images/add_api_keys.png)
+![Declaring API keys in the Ability editor](openhome_icons/sdk_images/add_api_keys.png)
 
 - **From Settings:** Go to **Settings → API Keys → Third-party Keys** and create the key directly, then link it to an Ability by creating or editing one in the Ability editor.
-![Pre-creating third-party API keys from Settings](../../docs/openhome_icons/sdk_images/add_api_keys_from_settings.png)
+![Pre-creating third-party API keys from Settings](openhome_icons/sdk_images/add_api_keys_from_settings.png)
 
 **Step 2 — Tag keys as required**
 
 After declaring a key, under **Ability Behavior → API Keys**, *tag* the API Keys to mark it as required. This tells the platform to prompt users for the value at install time.
 
-![Tagging a required API key in the Ability editor](../../docs/openhome_icons/sdk_images/api_key_tags.png)
+![Tagging a required API key in the Ability editor](openhome_icons/sdk_images/api_key_tags.png)
 
 > **Important:** Untagged keys will not trigger an install-time prompt for users.
 
@@ -800,7 +800,7 @@ if not openai_key:
 
 When installing an Ability from the marketplace, a pop-up lists all required keys with direct links to each provider — enter values immediately or skip and add them later from **Settings → API Keys**. The Ability will not work until all required keys have a value set.
 
-![Install-time prompt for required API keys](../../docs/openhome_icons/sdk_images/custom_api_keys_on_user_install.png)
+![Install-time prompt for required API keys](openhome_icons/sdk_images/custom_api_keys_on_user_install.png)
 
 ---
 
