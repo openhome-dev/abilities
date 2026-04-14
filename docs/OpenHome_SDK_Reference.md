@@ -45,11 +45,12 @@ Inside any Ability, you have access to two objects:
 12. [Logging](#12-logging)
 13. [Session Tasks](#13-session-tasks)
 14. [User Connection Info](#14-user-connection-info)
-15. [Conversation Memory & History](#15-conversation-memory--history)
-16. [Music Mode](#16-music-mode)
-17. [Common Patterns](#17-common-patterns)
-18. [Appendix: What You CAN'T Do (Yet)](#18-appendix-what-you-cant-do-yet)
-19. [Appendix: Blocked Imports](#19-appendix-blocked-imports)
+15. [Custom API Keys](#15-custom-api-keys)
+16. [Conversation Memory & History](#16-conversation-memory--history)
+17. [Music Mode](#17-music-mode)
+18. [Common Patterns](#18-common-patterns)
+19. [Appendix: What You CAN'T Do (Yet)](#19-appendix-what-you-cant-do-yet)
+20. [Appendix: Blocked Imports](#20-appendix-blocked-imports)
 
 ---
 
@@ -686,19 +687,17 @@ await self.worker.session_tasks.sleep(5.0)
 
 ### `get_timezone()`
 Returns the timezone for the active user/session when available.
-
 ```python
 timezone = self.capability_worker.get_timezone()
 ```
 
 - **Async:** No (synchronous)
-- **Returns:** Timezone string (for example `America/Chicago`) or empty/`None` when unavailable
+- **Returns:** Timezone string (e.g. `America/Chicago`) or empty/`None` when unavailable
 - **Use case:** Time-aware scheduling, local date/time formatting, reminders
 - **Common daemon use:** Alarm/reminder checks aligned to the user's local timezone
 
 ### `get_token(platform)`
 Returns the linked account access token for the current user.
-
 ```python
 token = self.capability_worker.get_token("google")
 self.worker.editor_logging_handler.info(token)
@@ -706,20 +705,20 @@ self.worker.editor_logging_handler.info(token)
 
 - **Async:** No (synchronous)
 - **Parameters:**
-  - `platform` (str): Platform name. Supported values: Google (`"google"`), Slack (`"slack"`), Discord (`"discord"`)
+  - `platform` (str): Platform name. Supported values: Google (`"google"`), Slack (`"slack"`), Discord (`"discord"`), Microsoft (`"microsoft"`), Tesla (`"tesla"`)
 - **Returns:** Access token string for that linked platform
-- **Use case:** Calling Google/Slack/Discord APIs on behalf of the linked user account
+- **Use case:** Calling Google/Slack/Discord/Microsoft/Tesla APIs on behalf of the linked user account
 
 ### `user_socket.client.host`
 The user's public IP address at connection time.
-
 ```python
 user_ip = self.worker.user_socket.client.host
 self.worker.editor_logging_handler.info(f"User connected from: {user_ip}")
 ```
 
 - **Use case:** IP-based geolocation, timezone detection, personalization
-- **Tip:** Cloud/datacenter IPs won't give you useful location data. Check the ISP name for keywords like "amazon", "aws", "google cloud" before using for geolocation.
+- **Tip:** Cloud/datacenter IPs won't give useful location data. Check the ISP name
+  for keywords like `"amazon"`, `"aws"`, `"google cloud"` before using for geolocation.
 
 ### Example: IP Geolocation
 
@@ -755,7 +754,98 @@ def get_user_location(self):
 
 ---
 
-## 15. Conversation Memory & History
+## 15. Custom API Keys
+
+### Overview
+
+Custom API keys let your Ability connect to third-party services (e.g. OpenAI, ElevenLabs, Twilio) that aren't covered by built-in OpenHome integrations. Third-party API key values are stored securely and can be managed in **Settings → API Keys**.
+
+Always fetch them at runtime with `get_api_keys("key_name")` — never hardcode secrets in your Ability files.
+
+---
+
+### Setup Flow
+
+#### For Developers
+
+**Step 1 — Declare keys**
+
+You can declare a custom API key in either of two ways:
+
+- **While creating/editing the Ability:** Under **Ability Behavior → API Keys**, add each key by name and optionally include a provider URL. The key *value* is not set here — values are always managed from **Settings → API Keys**.
+![Declaring API keys in the Ability editor](../../docs/openhome_icons/sdk_images/add_api_keys.png)
+
+- **From Settings:** Go to **Settings → API Keys → Third-party Keys** and create the key directly, then link it to an Ability by creating or editing one in the Ability editor.
+![Pre-creating third-party API keys from Settings](../../docs/openhome_icons/sdk_images/add_api_keys_from_settings.png)
+
+**Step 2 — Tag keys as required**
+
+After declaring a key, under **Ability Behavior → API Keys**, *tag* the API Keys to mark it as required. This tells the platform to prompt users for the value at install time.
+
+![Tagging a required API key in the Ability editor](../../docs/openhome_icons/sdk_images/api_key_tags.png)
+
+> **Important:** Untagged keys will not trigger an install-time prompt for users.
+
+**Step 3 — Read values at runtime**
+
+```python
+openai_key = self.capability_worker.get_api_keys("openai_api_key")
+if not openai_key:
+    self.worker.editor_logging_handler.warning("Missing openai_api_key")
+```
+
+---
+
+#### For Users
+
+When installing an Ability from the marketplace, a pop-up lists all required keys with direct links to each provider — enter values immediately or skip and add them later from **Settings → API Keys**. The Ability will not work until all required keys have a value set.
+
+![Install-time prompt for required API keys](../../docs/openhome_icons/sdk_images/custom_api_keys_on_user_install.png)
+
+---
+
+### Runtime Example
+
+```python
+async def call(self, worker):
+    self.worker = worker
+    self.capability_worker = CapabilityWorker(self)
+
+    required_keys = ["openai_api_key", "sendgrid_api_key"]
+    keys = {name: self.capability_worker.get_api_keys(name) for name in required_keys}
+    missing = [name for name, value in keys.items() if not value]
+
+    if missing:
+        await self.capability_worker.speak(
+            f"I'm missing required keys: {', '.join(missing)}. "
+            "Please set them in Settings under API Keys."
+        )
+        self.capability_worker.resume_normal_flow()
+        return
+
+    # Proceed with openai_key and sendgrid_key
+```
+
+---
+
+### `get_api_keys` vs `get_token`
+
+| | `get_api_keys("key_name")` | `get_token(platform)` |
+|---|---|---|
+| **Use case** | Any third-party API key or secret | OAuth token for a linked platform account |
+| **Set by** | User sets value in Settings or at install | OAuth flow when linking an account |
+| **Supported services** | Any (OpenAI, Twilio, SendGrid, etc.) | OpenHome built-in integrations only |
+| **Returns** | `str` or `None` | `str` |
+
+---
+
+> **Warning:** Never hardcode secrets in your Ability code — always use `get_api_keys("key_name")` at runtime. Avoid logging full key values.
+
+> **Tip:** Use lowercase snake_case for key names (e.g. `openai_api_key`, `twilio_auth_token`) and always include provider URLs so users can generate keys faster during install.
+
+---
+
+## 16. Conversation Memory & History
 
 ### `get_full_message_history()`
 Access the full conversation message history from the current session through `CapabilityWorker`.
@@ -768,6 +858,13 @@ self.worker.editor_logging_handler.info(f"Messages so far: {len(history)}")
 - **Returns:** The complete message history for the active session
 - **Use case:** Building context-aware abilities that know what was said before the ability was triggered
 - **Common daemon use:** Live conversation monitoring for note-taking, summarization, and event detection
+
+### `delete_conversation_history()`
+You can use `self.capability_worker.delete_conversation_history()` to delete your conversation history.
+
+```python
+self.capability_worker.delete_conversation_history()
+```
 
 ### `update_personality_agent_prompt(prompt_addition)`
 Append additional instructions/context to the active Agent personality prompt.
@@ -822,7 +919,7 @@ After an Ability finishes, you can carry context forward in a few ways. When `re
 
 ---
 
-## 16. Music Mode
+## 17. Music Mode
 
 When playing audio that's longer than a TTS utterance (music, sound effects, long recordings), you need to signal the system to stop listening and not interrupt.
 
@@ -846,7 +943,7 @@ async def play_track(self, audio_bytes):
 
 ---
 
-## 17. Common Patterns
+## 18. Common Patterns
 
 ### LLM as Intent Router
 
@@ -920,7 +1017,7 @@ Full catalog with 40+ voices available in the [OpenHome Dashboard](https://app.o
 
 ---
 
-## 18. Appendix: What You CAN'T Do (Yet)
+## 19. Appendix: What You CAN'T Do (Yet)
 
 Being explicit about limitations saves developers hours of guessing:
 
@@ -939,7 +1036,7 @@ Being explicit about limitations saves developers hours of guessing:
 
 ---
 
-## 19. Appendix: Blocked Imports
+## 20. Appendix: Blocked Imports
 
 These will cause your Ability to be rejected by the sandbox:
 
