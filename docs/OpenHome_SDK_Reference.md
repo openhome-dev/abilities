@@ -772,7 +772,7 @@ Always fetch them at runtime with `get_api_keys("key_name")` — never hardcode 
 
 You can declare a custom API key in either of two ways:
 
-- **While creating/editing the Ability:** Under **Ability Behavior → API Keys**, add each key by name and optionally include a provider URL. The key *value* is not set here — values are always managed from **Settings → API Keys**.
+- **While creating/editing the Ability:** Under **Ability Behavior → API Keys**, add each key by name and include a provider URL (required). The key *value* is not set here — values are always managed from **Settings → API Keys**.
 ![Declaring API keys in the Ability editor](openhome_icons/sdk_images/add_api_keys.png)
 
 - **From Settings:** Go to **Settings → API Keys → Third-party Keys** and create the key directly, then link it to an Ability by creating or editing one in the Ability editor.
