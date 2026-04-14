@@ -1,68 +1,161 @@
-# X News Feed Analysis
+# X News Feed
 
-A voice-powered OpenHome ability that searches and reads aloud trending topics and news from X (Twitter).
+A voice-powered OpenHome ability that fetches the top tweets for any topic on X (Twitter), scores them by engagement, cleans them for natural speech, and reads them aloud.
+
+---
 
 ## What It Does
 
-This ability lets you stay updated on what's trending on X through natural voice commands. It can:
+- **Demo mode** — No API key needed. Presents 5 curated topics as a numbered menu. User picks one and hears the top 3 pre-scored tweets for that topic.
+- **Live mode** — With an API key, asks the user to name any topic freely, fetches up to 30 real tweets, scores them, and reads the top 3.
+- **Tweet cleaning** — Strips URLs, hashtags, mentions, and HTML entities before speaking, then uses the LLM to rewrite each tweet as a single natural sentence.
+- **Quick mode** — Reads the top 2 tweets, then offers the 3rd.
+- **Full mode** — Reads all 3 tweets upfront, then opens an interactive Q&A session.
+- **Topic deep-dives** — Ask for more detail on any tweet by number during Q&A.
+- **Smart exit** — Multiple natural phrases to end the session gracefully.
 
-- **Read trending topics** - Get the top trending topics on X with tweet counts
-- **Quick mode** - Top 3 trends with option to hear more
-- **Full mode** - All 5 trends with interactive Q&A follow-ups
-- **Topic deep-dives** - Ask for more details on any specific trending topic (by number)
-- **Smart exit handling** - Multiple ways to exit naturally
+---
+
+## How It Works
+
+### Demo Mode vs Live Mode
+
+The ability checks whether a real Bearer Token is configured at startup:
+
+**Demo mode** (no token set):
+1. Reads out the 5 static `TOPIC_SEEDS` as a numbered list
+2. User says a number (1–5) or a topic name like "Crypto" or "Climate"
+3. The top 3 pre-scored demo tweets for that topic are read aloud
+
+**Live mode** (token configured):
+1. Asks the user to name any topic they want — no restrictions
+2. Fetches up to 30 real tweets from X Recent Search API using a plain synchronous `requests.get()` call
+3. Scores every tweet using weighted public metrics
+4. Keeps the top 3 highest-scoring tweets
+5. Sends them to the LLM for a short summary
+6. Reads them aloud after cleaning and polishing for speech
+
+### Tweet Cleaning Pipeline
+
+Every live tweet goes through a two-stage cleaning process before being spoken:
+
+**Stage 1 — Regex cleanup** (`clean_tweet_text`):
+- Removes all URLs (`https://t.co/...`)
+- Removes all hashtags (`#PAKvsBAN`)
+- Removes all mentions (`@SomeUser`)
+- Decodes HTML entities (`&amp;` → "and", `&lt;` → "less than", etc.)
+- Collapses extra whitespace and newlines
+
+**Stage 2 — LLM polish** (`polish_tweet_for_speech`):
+- Sends the cleaned text to the LLM with a prompt to rewrite it as a single natural-sounding sentence
+- Removes any leftover emoji or awkward fragments from URL/hashtag removal
+- Falls back to the regex-cleaned text if the LLM call fails
+
+**Example:**
+```
+Raw tweet:
+"#PAKvsBAN | 1st ODI 🇵🇰 Pakistan humbled in Bangladesh 🇧🇩;
+ hosts chase down target in 15.1 overs https://t.co/fJj7f4NqxN"
+
+After regex clean:
+"Pakistan humbled in Bangladesh; hosts chase down target in 15.1 overs"
+
+After LLM polish (spoken aloud):
+"Pakistan were humbled in the first ODI as Bangladesh chased down
+ the target in just 15 overs."
+```
+
+### Engagement Scoring
+
+Each fetched tweet is scored using weighted public metrics:
+
+| Metric | Weight | Reason |
+|--------|--------|--------|
+| `like_count` | ×3 | Strongest positive engagement |
+| `retweet_count` | ×2 | Indicates shareworthy content |
+| `quote_count` | ×2 | Signals conversation-worthy content |
+| `reply_count` | ×1 | Engagement but can be negative |
+| `bookmark_count` | ×1 | Quiet saves, moderate signal |
+| `impression_count` | ×0 | Excluded — reach, not quality |
+
+Tweets are sorted descending by score. The top 3 are kept.
+
+### Quick Mode vs Full Mode
+
+Mode is detected from the phrase used to trigger the ability:
+
+**Quick mode** (default):
+- Reads tweets 1 and 2
+- Offers: "There is one more tweet. Want to hear it, or are you all set?"
+- If the user says yes/more/sure → reads tweet 3
+- Exits after a short follow-up
+
+**Full mode** (triggered by phrases like "all tweets", "full briefing", "catch me up"):
+- Reads all 3 tweets upfront
+- Speaks the LLM-generated topic summary
+- Opens an interactive Q&A loop where the user can ask about specific tweets or the topic generally
+- Exits after the user says "done" or after 2 idle responses
+
+---
+
+## Topic Seeds (Demo Mode)
+
+```python
+TOPIC_SEEDS = [
+    "Artificial Intelligence",
+    "Crypto",
+    "Climate",
+    "Tech Innovation",
+    "Global Markets",
+]
+```
+
+In demo mode these are presented as a numbered menu. The user picks one by saying its number or name. In live mode these are not used — the user can name any topic freely.
+
+---
 
 ## Trigger Words
 
-Say any of these phrases to activate the ability:
-
-**For Quick Mode (Top 3):**
-- "What's trending on X?"
+**Quick mode:**
 - "Twitter trends"
 - "X news"
-- "Show me X trends"
-- "X trends"
+- "What's trending on X"
 - "Latest from X"
+- "X trends"
 
-**For Full Mode (All 5 with Q&A):**
+**Full mode:**
+- "All tweets"
 - "All trends"
-- "All five trends"
-- "X trending topics"
-- "What is trending on X?"
+- "Full briefing"
+- "Catch me up"
+- "Tell me everything"
+- "Deep dive"
+- "Show all"
 
-The ability automatically detects whether you want a quick update or a full interactive session based on which trigger phrase you use.
+---
 
 ## Setup
 
-### 1. Get an API Key (Optional but Recommended)
+### 1. Get a Bearer Token (for live mode)
 
-For live X/Twitter data, you'll need an X API Bearer Token:
-
-**Option A: X Developer Portal (Official)**
-1. Go to [X Developer Portal](https://developer.twitter.com/en/portal/dashboard)
+1. Go to [developer.twitter.com](https://developer.twitter.com/en/portal/dashboard)
 2. Create a project and app
-3. Generate Bearer Token
-4. Copy your Bearer Token
+3. Generate a Bearer Token with access to the **v2 Recent Search** endpoint
+4. Copy the token
 
-**Option B: RapidAPI Twitter154 (Easier)**
-1. Go to [RapidAPI Twitter154 API](https://rapidapi.com/omarmhaimdat/api/twitter154/)
-2. Sign up for a free account
-3. Subscribe to the free tier
-4. Copy your API key
+The ability works without a token using built-in demo data — useful for testing and demonstrations.
 
 ### 2. Configure the Ability
 
-Open `main.py` and add your API key:
+Open `main.py` and replace the placeholder:
 
 ```python
-# Replace this line:
-X_API_BEARER_TOKEN = "REPLACE_WITH_YOUR_KEY"
+# Replace this:
+X_API_BEARER_TOKEN = "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
 
-# With your actual Bearer Token:
+# With your token:
 X_API_BEARER_TOKEN = "your_bearer_token_here"
 ```
-
-**Note:** The ability works without an API key using demo trending data for testing. This is perfect for development, demonstration, and your Loom video.
 
 ### 3. Upload to OpenHome
 
@@ -71,225 +164,161 @@ X_API_BEARER_TOKEN = "your_bearer_token_here"
 3. Set trigger words in the OpenHome dashboard
 4. Test using "Start Live Test"
 
-## How It Works
+---
 
-### Quick Mode
+## Example Conversations
 
-When you ask a specific question like "What's trending on X?" or "Twitter trends", the ability:
+### Quick Mode (Live)
 
-1. Speaks a filler phrase ("One sec, checking what's hot on X")
-2. Fetches the top 5 trending topics
-3. Reads the top 3 aloud with tweet counts
-4. Asks "Want to hear more, or are you all set?"
-5. If you say "more" or "continue" → reads the remaining 2 trends
-6. Exits cleanly when you say "done", "bye", or similar
-
-**Example:**
 ```
-You: "What's trending on X?"
-Ability: "One sec, checking what's hot on X..."
-Ability: "Hey there, here are the top 3 trending topics right now:"
-Ability: "Number 1: Artificial Intelligence, with 125 thousand posts."
-Ability: "Number 2: Climate Summit 2026, with 98 thousand posts."
-Ability: "Number 3: Mars Mission Update, with 87 thousand posts."
-Ability: "Want to hear more, or are you all set?"
-You: "Continue"
-Ability: "Here are the remaining trends:"
-Ability: "Number 4: Tech Innovation Awards, with 76 thousand posts."
-Ability: "Number 5: Global Markets Rally, with 65 thousand posts."
-Ability: "That's all 5. Anything else?"
-You: "All good"
-Ability: "Take care!"
+You:      "Twitter trends"
+Ability:  "Hey there, let us check what is buzzing on X."
+Ability:  "What topic would you like to explore? You can say anything,
+           for example Space Exploration, Football, or Electric Vehicles."
+You:      "Artificial Intelligence"
+Ability:  "One moment, fetching top tweets on Artificial Intelligence."
+Ability:  "Here are the top 2 tweets on Artificial Intelligence:"
+Ability:  "Tweet 1: Developers are rethinking how AI fits into workflows
+           at every level, from junior engineers building foundations
+           to seniors orchestrating entire agent teams."
+Ability:  "Tweet 2: Every company is becoming an AI company whether they
+           want to or not — those who adapt their workflows will come out ahead."
+Ability:  "There is one more tweet. Want to hear it, or are you all set?"
+You:      "Sure"
+Ability:  "Tweet 3: AI agents are not here to replace engineers —
+           they are taking over the repetitive work, leaving
+           the creative thinking to humans."
+Ability:  "That is the top 3. Anything else?"
+You:      "Done"
+Ability:  "Stay informed!"
 ```
 
-### Full Mode
+### Full Mode (Demo)
 
-When you ask for a briefing like "All trends" or "All five trends", the ability:
-
-1. Speaks a filler phrase
-2. Fetches the top 5 trending topics
-3. Reads all 5 aloud with tweet counts
-4. Opens an interactive Q&A session
-5. You can ask about specific topics by number ("Tell me about number 2")
-6. You can ask to hear them again ("Read them again")
-7. Exits when you say "done" or after 2 idle responses
-
-**Example:**
 ```
-You: "All trends"
-Ability: "One sec, checking what's hot on X..."
-Ability: "Hey there, here's your full rundown of the top 5 trending topics on X:"
-Ability: "Number 1: Artificial Intelligence, with 125 thousand posts."
-Ability: "Number 2: Climate Summit 2026, with 98 thousand posts."
-Ability: "Number 3: Mars Mission Update, with 87 thousand posts."
-Ability: "Number 4: Tech Innovation Awards, with 76 thousand posts."
-Ability: "Number 5: Global Markets Rally, with 65 thousand posts."
-Ability: "Want to know more about any of these? Ask away, or say done when you're finished."
-You: "Tell me about number two"
-Ability: "About Climate Summit 2026: [LLM-generated 2-sentence explanation of why it's trending]"
-Ability: "What else would you like to know?"
-You: "Goodbye"
-Ability: "Stay curious!"
+You:      "Full briefing"
+Ability:  "Hey there, welcome to X News! I will help you catch up on
+           the latest tweets for any topic you care about."
+Ability:  "Here are the available topics: 1. Artificial Intelligence,
+           2. Crypto, 3. Climate, 4. Tech Innovation, 5. Global Markets.
+           Just say the number or the topic name."
+You:      "Three"
+Ability:  "Here is the full rundown of the top 3 tweets on Climate:"
+Ability:  "Tweet 1: The Climate Summit 2026 concluded with 47 nations
+           signing binding emissions targets, the most ambitious global
+           agreement since Paris."
+Ability:  "Tweet 2: Solar is now the cheapest energy source in history,
+           and every new coal plant built today will be a stranded asset
+           within a decade."
+Ability:  "Tweet 3: Carbon capture technology just hit a new efficiency
+           milestone, suggesting we may have more tools available than
+           previously thought."
+Ability:  "Overall: Climate Summit 2026 has produced a landmark multi-nation
+           commitment on emissions, reigniting optimism about coordinated
+           global climate action."
+Ability:  "Want to know more about any of these? Ask away, or say done
+           when finished."
+You:      "Tell me more about tweet two"
+Ability:  "More on tweet 2: The falling cost of solar is accelerating
+           the retirement of fossil fuel infrastructure globally,
+           making clean energy the default economic choice."
+Ability:  "What else would you like to know?"
+You:      "Goodbye"
+Ability:  "Catch you later!"
 ```
 
-## Voice Design Principles
+---
 
-This ability follows OpenHome's voice-first design guidelines:
+## SDK Patterns Used
 
-- **Short responses** - 1-2 sentences per turn, progressive disclosure
-- **Filler speech** - "One sec, pulling up the latest from X" before API calls
-- **Natural numbers** - "125 thousand" instead of "125,000"
-- **Exit handling** - Multiple ways to exit: "done", "stop", "bye", "that's all"
-- **Idle detection** - Offers to sign off after 2 silent responses
-- **Confirmation-free** - Reading data doesn't need confirmation (low stakes)
-
-## SDK Usage
-
-### Core Patterns Used
-
-**Critical: Capturing User Input**
+**Capturing the trigger phrase (runs first):**
 ```python
-# IMPORTANT: Wait for user input FIRST before processing
 user_input = await self.capability_worker.wait_for_complete_transcription()
 ```
-This ensures the trigger phrase is properly captured before the ability starts processing.
 
 **Speaking:**
 ```python
 await self.capability_worker.speak("Message to user")
 ```
 
-**Listening:**
+**Listening for a reply:**
 ```python
 user_input = await self.capability_worker.user_response()
 ```
 
-**LLM for Classification & Analysis:**
+**LLM text generation (synchronous — no await):**
 ```python
-# No await! This is synchronous
 response = self.capability_worker.text_to_text_response(prompt)
 ```
 
-**API Calls with asyncio.to_thread:**
+**HTTP calls (plain synchronous — no asyncio or threading):**
 ```python
-import asyncio
-response = await asyncio.to_thread(
-    requests.get, url, headers=headers, params=params, timeout=10
-)
+resp = requests.get(url, headers=headers, timeout=10)
 ```
 
-**Patient Input Waiting:**
+**Managed sleep (use instead of asyncio.sleep):**
 ```python
-# Custom helper that polls patiently for user input
-user_input = await self.wait_for_input(max_attempts=5, wait_seconds=3.0)
+await self.worker.session_tasks.sleep(0.4)
 ```
 
-**Exit:**
+**Per-user file storage:**
 ```python
-self.capability_worker.resume_normal_flow()  # Always call this when done!
+await self.capability_worker.write_file("prefs.json", json.dumps(data), False)
+raw = await self.capability_worker.read_file("prefs.json", False)
 ```
 
-### Architecture Highlights
-
-- **Input capture fix** - Uses `wait_for_complete_transcription()` to ensure trigger phrase is captured
-- **Mode detection from trigger** - Analyzes the actual user input to determine quick vs full mode
-- **Patient input polling** - Custom `wait_for_input()` helper that retries multiple times
-- **File persistence** - Saves user preferences across sessions using the file storage API
-- **Demo data fallback** - Works without API key for testing/demos
-- **LLM-powered topic analysis** - Uses the LLM to generate explanations for trending topics
-- **Contextual goodbyes** - LLM generates natural sign-off messages
-
-## API Information
-
-**Provider:** X (Twitter) Official API  
-**Endpoint:** `https://api.twitter.com/1.1/trends/place.json`  
-**Authentication:** Bearer Token  
-**Rate Limits:** Depends on your X API tier (Free tier: 500 requests/month)  
-**Required Header:** `Authorization: Bearer YOUR_TOKEN`
-
-### Demo Data
-
-The ability includes demo trending data that's used when no API key is configured:
-
+**Always call at the end:**
 ```python
-DEMO_TRENDS = [
-    {"name": "Artificial Intelligence", "tweet_count": 125000},
-    {"name": "Climate Summit 2026", "tweet_count": 98000},
-    {"name": "Mars Mission Update", "tweet_count": 87000},
-    {"name": "Tech Innovation Awards", "tweet_count": 76000},
-    {"name": "Global Markets Rally", "tweet_count": 65000}
-]
+self.capability_worker.resume_normal_flow()
 ```
 
-This lets you:
-- Test the full conversation flow without API costs
-- Demonstrate the ability in videos
-- Develop and iterate without rate limits
-- Submit working code to GitHub
+---
 
-Replace with live data when ready by adding your Bearer Token.
+## Demo Data
 
-## Customization Ideas
-
-- **Add time context** - "This morning's trending topics" vs "Tonight's buzz"
-- **Filter by category** - Tech, sports, politics, entertainment
-- **Save favorites** - Use file storage to remember topics user cares about
-- **Reading preferences** - Let users set how many topics to read (3, 5, 10)
-- **Tweet summaries** - Fetch and summarize actual tweets about trending topics
-- **Personalized greetings** - Use saved user name from preferences file
-
-## Technical Notes
-
-### Critical Input Capture Fix
-
-This ability includes an important fix for a common OpenHome issue where abilities would miss the user's trigger phrase. The solution:
+When no API token is configured, `DEMO_TRENDS` provides 3 pre-scored tweets per topic:
 
 ```python
-async def capture_user_input(self):
-    """Wait for and capture the user's input that triggered this ability."""
-    user_input = await self.capability_worker.wait_for_complete_transcription()
-    if user_input and user_input.strip():
-        self.trigger_phrase = user_input.strip().lower()
+DEMO_TRENDS = {
+    "Artificial Intelligence": {
+        "summary": "Developers are debating how AI changes workflows...",
+        "tweets": [
+            {"text": "2026 is the year of AI...", "score": 420},
+            {"text": "Every company is now an AI company...", "score": 310},
+            {"text": "AI agents are not replacing engineers...", "score": 275},
+        ],
+    },
+    ...
+}
 ```
 
-This ensures the trigger phrase is captured **before** any processing begins, allowing for accurate mode detection and context-aware responses.
+Demo tweets are pre-cleaned and require no LLM polishing before being spoken.
 
-### Patient Input Polling
+---
 
-The ability uses a custom `wait_for_input()` helper that patiently polls for user responses:
+## Customisation
 
-```python
-async def wait_for_input(self, max_attempts: int = 5, wait_seconds: float = 3.0):
-    """Poll for user input patiently. Returns first non-empty response."""
-    for attempt in range(max_attempts):
-        await self.worker.session_tasks.sleep(wait_seconds)
-        user_input = await self.capability_worker.user_response()
-        if user_input and user_input.strip():
-            return user_input.strip()
-    return ""
-```
+- **Change topics** — Edit `TOPIC_SEEDS`. Demo menu and filler speech update automatically.
+- **Adjust scoring** — Modify `score_tweet()` to weight metrics differently.
+- **Change result count** — Update `max_results=10` in `RECENT_SEARCH_URL` (max 100 on Basic tier).
+- **Add time filters** — Append `start_time` to the API query for "this morning's tweets".
 
-This handles voice transcription delays gracefully without timing out prematurely.
+---
 
-## Testing Without API Key
+## Allowed Libraries
 
-The ability includes mock trending data for testing:
+This ability uses only OpenHome-approved imports:
 
-```python
-def get_mock_trending_data(self) -> list:
-    return [
-        {"name": "AI Safety Summit", "tweet_count": 125000},
-        {"name": "Climate Action", "tweet_count": 98000},
-        # ... more topics
-    ]
-```
+| Import | Purpose |
+|--------|---------|
+| `json` | Preferences file serialisation |
+| `re` | Tweet text cleaning (regex) |
+| `random` | Random filler phrase selection |
+| `requests` | HTTP calls to X API |
 
-This lets you:
-- Test the full conversation flow
-- Demonstrate the ability in videos
-- Develop without API costs
+No `asyncio`, `concurrent`, `threading`, or `signal` — all blocked by the OpenHome sandbox.
 
-Replace with live data when ready by adding your API key.
+---
 
 ## Troubleshooting
 
@@ -303,26 +332,28 @@ Replace with live data when ready by adding your API key.
 - Try more specific phrases: "What's trending on X" vs just "trending"
 - Check ability is enabled and saved
 
-**Response is too long/robotic**
-- Adjust `format_trending_summary()` to be more concise
-- Reduce number of topics read (currently 3 for quick, 5 for full)
-- Simplify number formatting in `format_number_for_speech()`
+**Ability does not trigger**
+- Confirm trigger words in the dashboard match your `config.json`
+- Try an explicit phrase: "Twitter trends" or "X news"
+- Confirm the ability is enabled and saved
 
-## Contributing
+**Token is set but still getting demo data**
+- Make sure the token is not still the placeholder `"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"`
+- Test manually with `curl`:
+  ```bash
+  curl -H "Authorization: Bearer YOUR_TOKEN" \
+  "https://api.twitter.com/2/tweets/search/recent?query=AI&max_results=10"
+  ```
 
-Found a bug or have an improvement? Here's how to help:
+---
 
-1. Fork the OpenHome abilities repo
-2. Make your changes to this ability
-3. Test thoroughly using "Start Live Test"
-4. Submit a PR with:
-   - Clear description of what changed
-   - Why the change improves the ability
-   - Test results showing it works
+## API Reference
 
-## License
-
-Open source under the same license as the OpenHome project.
+**Endpoint:** `GET https://api.twitter.com/2/tweets/search/recent`  
+**Auth:** `Authorization: Bearer YOUR_TOKEN`  
+**Fields:** `text, public_metrics`  
+**Filters:** `-is:retweet -is:reply lang:en`  
+**Results:** `max_results=10`
 
 ---
 
