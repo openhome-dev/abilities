@@ -61,15 +61,20 @@ class MultiSalesMonitorCapability(MatchingCapability):
                 return json.loads(content)
         except Exception as e:
             self.worker.editor_logging_handler.error(f"Failed to load prefs: {e}")
+<<<<<<< HEAD
         
         return {}
+=======
+
+        return {"demo_mode": DEMO_MODE}
+>>>>>>> 5adfb7dd295ade6e7bf01a043b52550c77f7e4e1
 
     async def _save_prefs(self, prefs: Dict[str, Any]):
         """Save preferences using SDK-compliant delete-then-write pattern."""
         try:
             if await self.capability_worker.check_if_file_exists(PREFS_FILE, False):
                 await self.capability_worker.delete_file(PREFS_FILE, False)
-            
+
             await self.capability_worker.write_file(
                 PREFS_FILE,
                 json.dumps(prefs, indent=2),
@@ -85,13 +90,21 @@ class MultiSalesMonitorCapability(MatchingCapability):
     ) -> List[Dict[str, Any]]:
         """Fetch sales from Gumroad API."""
         prefs = await self._load_prefs()
+<<<<<<< HEAD
         
+=======
+
+        if prefs.get("demo_mode", DEMO_MODE):
+            return self._generate_demo_gumroad_sales()
+
+>>>>>>> 5adfb7dd295ade6e7bf01a043b52550c77f7e4e1
         try:
             access_token = prefs.get("gumroad_access_token")
-            
+
             if not access_token:
                 self.worker.editor_logging_handler.warning("No Gumroad token configured")
                 return []
+<<<<<<< HEAD
             
             url = f"{GUMROAD_API_BASE}/sales"
             headers = {"Authorization": f"Bearer {access_token}"}
@@ -99,8 +112,22 @@ class MultiSalesMonitorCapability(MatchingCapability):
             
             self.worker.editor_logging_handler.info(f"Calling Gumroad API: {url}")
             response = requests.get(url, headers=headers, params=params, timeout=15)
+=======
+
+            # Gumroad API call
+            url = f"{GUMROAD_API_BASE}/sales"
+            headers = {"Authorization": f"Bearer {access_token}"}
+            params = {
+                "after": start_date,
+                "before": end_date,
+            }
+
+            self.worker.editor_logging_handler.info(f"Calling Gumroad API: {url}")
+            response = requests.get(url, headers=headers, params=params, timeout=15)
+
+>>>>>>> 5adfb7dd295ade6e7bf01a043b52550c77f7e4e1
             self.worker.editor_logging_handler.info(f"Gumroad response: {response.status_code}")
-            
+
             if response.status_code == 200:
                 data = response.json()
                 sales = data.get("sales", [])
@@ -111,7 +138,7 @@ class MultiSalesMonitorCapability(MatchingCapability):
                     f"Gumroad API error: {response.status_code} - {response.text}"
                 )
                 return []
-                
+
         except Exception as e:
             self.worker.editor_logging_handler.error(f"Gumroad fetch error: {e}")
             return []
@@ -123,15 +150,27 @@ class MultiSalesMonitorCapability(MatchingCapability):
     ) -> List[Dict[str, Any]]:
         """Fetch orders from Shopify API."""
         prefs = await self._load_prefs()
+<<<<<<< HEAD
         
+=======
+
+        if prefs.get("demo_mode", DEMO_MODE):
+            return self._generate_demo_shopify_orders()
+
+>>>>>>> 5adfb7dd295ade6e7bf01a043b52550c77f7e4e1
         try:
             shop_url = prefs.get("shopify_shop_url")
             access_token = prefs.get("shopify_access_token")
-            
+
             if not shop_url or not access_token:
                 self.worker.editor_logging_handler.warning("No Shopify credentials configured")
                 return []
+<<<<<<< HEAD
             
+=======
+
+            # Shopify API call
+>>>>>>> 5adfb7dd295ade6e7bf01a043b52550c77f7e4e1
             url = f"https://{shop_url}/admin/api/{SHOPIFY_API_VERSION}/orders.json"
             headers = {"X-Shopify-Access-Token": access_token}
             params = {
@@ -140,11 +179,15 @@ class MultiSalesMonitorCapability(MatchingCapability):
                 "status": "any",
                 "limit": 250,
             }
-            
+
             self.worker.editor_logging_handler.info(f"Calling Shopify API: {url}")
             response = requests.get(url, headers=headers, params=params, timeout=15)
+<<<<<<< HEAD
+=======
+
+>>>>>>> 5adfb7dd295ade6e7bf01a043b52550c77f7e4e1
             self.worker.editor_logging_handler.info(f"Shopify response: {response.status_code}")
-            
+
             if response.status_code == 200:
                 data = response.json()
                 orders = data.get("orders", [])
@@ -155,7 +198,7 @@ class MultiSalesMonitorCapability(MatchingCapability):
                     f"Shopify API error: {response.status_code} - {response.text}"
                 )
                 return []
-                
+
         except Exception as e:
             self.worker.editor_logging_handler.error(f"Shopify fetch error: {e}")
             return []
@@ -168,14 +211,29 @@ class MultiSalesMonitorCapability(MatchingCapability):
         """Aggregate sales data from both platforms."""
         gumroad_revenue = sum(sale.get("price", 0) / 100 for sale in gumroad_sales)
         gumroad_count = len(gumroad_sales)
+<<<<<<< HEAD
         
         shopify_revenue = sum(float(order.get("total_price", 0)) for order in shopify_orders)
         shopify_count = len(shopify_orders)
         
         total_revenue = gumroad_revenue + shopify_revenue
         total_count = gumroad_count + shopify_count
+=======
+
+        # Calculate Shopify totals
+        shopify_revenue = sum(
+            float(order.get("total_price", 0)) for order in shopify_orders
+        )
+        shopify_count = len(shopify_orders)
+
+        # Combined totals
+        total_revenue = gumroad_revenue + shopify_revenue
+        total_count = gumroad_count + shopify_count
+
+        # Average order value
+>>>>>>> 5adfb7dd295ade6e7bf01a043b52550c77f7e4e1
         avg_order_value = total_revenue / total_count if total_count > 0 else 0
-        
+
         return {
             "total_revenue": total_revenue,
             "total_count": total_count,
@@ -209,6 +267,7 @@ class MultiSalesMonitorCapability(MatchingCapability):
         """Classify user intent using LLM via text_to_text_response."""
         if not user_input:
             return "unknown"
+<<<<<<< HEAD
         
         # Use LLM to extract intent from natural language
         prompt = f"""Classify this sales query into ONE category:
@@ -227,6 +286,54 @@ class MultiSalesMonitorCapability(MatchingCapability):
 - trends (growth, today vs yesterday)
 - product_count (how many products)
 - unknown (anything else)
+=======
+
+        text = user_input.lower()
+
+        # Digital vs physical (MUST come before "compare" check)
+        if ("digital" in text and "physical" in text) or \
+           ("digital" in text and ("vs" in text or "versus" in text)) or \
+           ("physical" in text and ("vs" in text or "versus" in text)):
+            return "digital_vs_physical"
+
+        # Platform-specific queries (includes "breakdown" and "platform")
+        if "gumroad" in text or "shopify" in text or "breakdown" in text or "platform" in text:
+            return "platform_breakdown"
+
+        # Time-based queries
+        if "week" in text or "weekly" in text:
+            return "this_week"
+        if "month" in text or "monthly" in text:
+            return "this_month"
+        if "all time" in text or "total revenue" in text or "lifetime" in text or "since" in text or "overall" in text:
+            return "all_time"
+        if "yesterday" in text:
+            return "yesterday"
+
+        # Product queries
+        if "best" in text or "top" in text or "most popular" in text:
+            return "best_seller"
+        if "product" in text and ("how many" in text or "total" in text or "catalog" in text):
+            return "product_count"
+
+        # Customer count
+        if "customer" in text:
+            return "customer_count"
+
+        # Average order
+        if "average" in text:
+            return "average_order"
+
+        # Trends (MUST come AFTER digital_vs_physical)
+        if "trend" in text or "compare" in text or "growth" in text:
+            return "trends"
+
+        # Default to total sales for general queries
+        if any(word in text for word in ["total", "how much", "revenue", "sales", "made", "earning", "today"]):
+            return "total_sales"
+
+        return "unknown"
+>>>>>>> 5adfb7dd295ade6e7bf01a043b52550c77f7e4e1
 
 User query: "{user_input}"
 
@@ -262,11 +369,12 @@ Respond with ONLY the category name, nothing else."""
         try:
             # Start with shortened dashboard summary (already asks a question)
             await self._handle_dashboard_summary()
-            
+
             # Conversation loop
             while True:
                 # Wait for user response (don't ask another question yet - summary already asked)
                 response = await self.capability_worker.user_response()
+<<<<<<< HEAD
                 
                 if not response:
                     await self.capability_worker.speak("Okay, talk to you later!")
@@ -280,6 +388,16 @@ Respond with ONLY the category name, nothing else."""
                 elif intent == "full_breakdown":
                     await self._handle_full_breakdown()
                 elif intent == "total_sales":
+=======
+
+                if not response or self._is_exit_word(response):
+                    await self.capability_worker.speak("Okay, talk to you later!")
+                    break
+
+                intent = self._classify_intent(response)
+
+                if intent == "total_sales":
+>>>>>>> 5adfb7dd295ade6e7bf01a043b52550c77f7e4e1
                     await self._handle_total_sales()
                 elif intent == "this_week":
                     await self._handle_this_week()
@@ -343,27 +461,28 @@ Respond with ONLY the category name, nothing else."""
     async def _handle_full_breakdown(self) -> None:
         """Provide comprehensive breakdown with week, month, platforms, and best seller."""
         today = datetime.now(timezone.utc).date()
-        
+
         # Today's data
         today_start = today.isoformat()
         today_end = (today + timedelta(days=1)).isoformat()
         gumroad_today = await self._fetch_gumroad_sales(today_start, today_end)
         shopify_today = await self._fetch_shopify_orders(today_start, today_end)
         today_stats = self._aggregate_sales_data(gumroad_today, shopify_today)
-        
+
         # This week's data
         week_start = today - timedelta(days=today.weekday())
         week_start_str = week_start.isoformat()
         gumroad_week = await self._fetch_gumroad_sales(week_start_str, today_end)
         shopify_week = await self._fetch_shopify_orders(week_start_str, today_end)
         week_stats = self._aggregate_sales_data(gumroad_week, shopify_week)
-        
+
         # This month's data
         month_start = today.replace(day=1)
         month_start_str = month_start.isoformat()
         gumroad_month = await self._fetch_gumroad_sales(month_start_str, today_end)
         shopify_month = await self._fetch_shopify_orders(month_start_str, today_end)
         month_stats = self._aggregate_sales_data(gumroad_month, shopify_month)
+<<<<<<< HEAD
         
         # First speak - This week and month
         week_str = self._format_currency(week_stats["total_revenue"])
@@ -379,31 +498,68 @@ Respond with ONLY the category name, nothing else."""
         best_seller_info = await self._get_best_seller_info()
         if best_seller_info:
             await self.capability_worker.speak(f"Your best seller this month is {best_seller_info}.")
+=======
+
+        # Build summary
+        parts = []
+
+        # Today's sales
+        if today_stats["total_count"] == 0:
+            parts.append("No sales yet today")
+        else:
+            today_str = self._format_currency(today_stats["total_revenue"])
+            parts.append(f"Today: {today_str} from {today_stats['total_count']} sales")
+
+        # This week
+        if week_stats["total_count"] > 0:
+            week_str = self._format_currency(week_stats["total_revenue"])
+            parts.append(f"This week: {week_str}")
+
+        # This month
+        if month_stats["total_count"] > 0:
+            month_str = self._format_currency(month_stats["total_revenue"])
+            parts.append(f"This month: {month_str}")
+
+        # Platform breakdown (today)
+        if today_stats["gumroad_count"] > 0 or today_stats["shopify_count"] > 0:
+            gumroad_str = self._format_currency(today_stats["gumroad_revenue"])
+            shopify_str = self._format_currency(today_stats["shopify_revenue"])
+            parts.append(f"Gumroad: {gumroad_str}, Shopify: {shopify_str}")
+
+        # Best seller (last 30 days)
+        best_seller_info = await self._get_best_seller_info()
+        if best_seller_info:
+            parts.append(f"Best seller: {best_seller_info}")
+
+        # Combine into natural speech
+        summary = ". ".join(parts) + "."
+        await self.capability_worker.speak(summary)
+>>>>>>> 5adfb7dd295ade6e7bf01a043b52550c77f7e4e1
 
     async def _get_best_seller_info(self) -> Optional[str]:
         """Get best seller information for summary."""
         today = datetime.now(timezone.utc).date()
         start_date = (today - timedelta(days=30)).isoformat()
         end_date = (today + timedelta(days=1)).isoformat()
-        
+
         gumroad_sales = await self._fetch_gumroad_sales(start_date, end_date)
         shopify_orders = await self._fetch_shopify_orders(start_date, end_date)
-        
+
         product_sales = {}
-        
+
         for sale in gumroad_sales:
             product = sale.get("product_name", "Unknown Product")
             product_sales[product] = product_sales.get(product, 0) + 1
-        
+
         for order in shopify_orders:
             for item in order.get("line_items", []):
                 product = item.get("title", "Unknown Product")
                 quantity = item.get("quantity", 1)
                 product_sales[product] = product_sales.get(product, 0) + quantity
-        
+
         if not product_sales:
             return None
-        
+
         best_seller = max(product_sales.items(), key=lambda x: x[1])
         product_name, count = best_seller
         return f"{product_name} with {count} units"
@@ -413,13 +569,17 @@ Respond with ONLY the category name, nothing else."""
         today = datetime.now(timezone.utc).date()
         start_date = today.isoformat()
         end_date = (today + timedelta(days=1)).isoformat()
-        
+
         gumroad_sales = await self._fetch_gumroad_sales(start_date, end_date)
         shopify_orders = await self._fetch_shopify_orders(start_date, end_date)
+<<<<<<< HEAD
+=======
+
+>>>>>>> 5adfb7dd295ade6e7bf01a043b52550c77f7e4e1
         stats = self._aggregate_sales_data(gumroad_sales, shopify_orders)
         
         total_str = self._format_currency(stats["total_revenue"])
-        
+
         if stats["total_count"] == 0:
             await self.capability_worker.speak("You haven't made any sales today yet.")
         elif stats["total_count"] == 1:
@@ -432,13 +592,18 @@ Respond with ONLY the category name, nothing else."""
         today = datetime.now(timezone.utc).date()
         start_date = today.isoformat()
         end_date = (today + timedelta(days=1)).isoformat()
-        
+
         gumroad_sales = await self._fetch_gumroad_sales(start_date, end_date)
         shopify_orders = await self._fetch_shopify_orders(start_date, end_date)
+<<<<<<< HEAD
+=======
+
+>>>>>>> 5adfb7dd295ade6e7bf01a043b52550c77f7e4e1
         stats = self._aggregate_sales_data(gumroad_sales, shopify_orders)
-        
+
         gumroad_str = self._format_currency(stats["gumroad_revenue"])
         shopify_str = self._format_currency(stats["shopify_revenue"])
+<<<<<<< HEAD
         
         # Detect which platform user asked about
         user_query_lower = user_query.lower()
@@ -446,6 +611,15 @@ Respond with ONLY the category name, nothing else."""
         asking_shopify = "shopify" in user_query_lower
         
         # If user asked about specific platform, only report that one
+=======
+
+        # Check if they asked about a specific platform
+        user_query_lower = user_query.lower()
+        asking_gumroad = "gumroad" in user_query_lower
+        asking_shopify = "shopify" in user_query_lower
+
+        # If they asked about only one platform, report only that one
+>>>>>>> 5adfb7dd295ade6e7bf01a043b52550c77f7e4e1
         if asking_gumroad and not asking_shopify:
             # Only Gumroad
             if stats["gumroad_count"] == 0:
@@ -488,11 +662,15 @@ Respond with ONLY the category name, nothing else."""
         today = datetime.now(timezone.utc).date()
         start_date = today.isoformat()
         end_date = (today + timedelta(days=1)).isoformat()
-        
+
         gumroad_sales = await self._fetch_gumroad_sales(start_date, end_date)
         shopify_orders = await self._fetch_shopify_orders(start_date, end_date)
+<<<<<<< HEAD
+=======
+
+>>>>>>> 5adfb7dd295ade6e7bf01a043b52550c77f7e4e1
         stats = self._aggregate_sales_data(gumroad_sales, shopify_orders)
-        
+
         total = stats["total_revenue"]
         if total > 0:
             digital_pct = (stats["digital_revenue"] / total) * 100
@@ -500,10 +678,10 @@ Respond with ONLY the category name, nothing else."""
         else:
             digital_pct = 0
             physical_pct = 0
-        
+
         digital_str = self._format_currency(stats["digital_revenue"])
         physical_str = self._format_currency(stats["physical_revenue"])
-        
+
         if total == 0:
             await self.capability_worker.speak("No sales to compare yet today.")
         elif stats["digital_revenue"] == 0:
@@ -525,10 +703,15 @@ Respond with ONLY the category name, nothing else."""
         today = datetime.now(timezone.utc).date()
         start_date = today.isoformat()
         end_date = (today + timedelta(days=1)).isoformat()
-        
+
         gumroad_sales = await self._fetch_gumroad_sales(start_date, end_date)
         shopify_orders = await self._fetch_shopify_orders(start_date, end_date)
+<<<<<<< HEAD
         
+=======
+
+        # Count unique emails
+>>>>>>> 5adfb7dd295ade6e7bf01a043b52550c77f7e4e1
         emails = set()
         for sale in gumroad_sales:
             if sale.get("email"):
@@ -536,9 +719,9 @@ Respond with ONLY the category name, nothing else."""
         for order in shopify_orders:
             if order.get("customer", {}).get("email"):
                 emails.add(order["customer"]["email"])
-        
+
         customer_count = len(emails)
-        
+
         if customer_count == 0:
             await self.capability_worker.speak("No customers yet today.")
         elif customer_count == 1:
@@ -551,11 +734,15 @@ Respond with ONLY the category name, nothing else."""
         today = datetime.now(timezone.utc).date()
         start_date = today.isoformat()
         end_date = (today + timedelta(days=1)).isoformat()
-        
+
         gumroad_sales = await self._fetch_gumroad_sales(start_date, end_date)
         shopify_orders = await self._fetch_shopify_orders(start_date, end_date)
+<<<<<<< HEAD
+=======
+
+>>>>>>> 5adfb7dd295ade6e7bf01a043b52550c77f7e4e1
         stats = self._aggregate_sales_data(gumroad_sales, shopify_orders)
-        
+
         if stats["total_count"] == 0:
             await self.capability_worker.speak("No sales yet to calculate an average.")
         else:
@@ -568,13 +755,17 @@ Respond with ONLY the category name, nothing else."""
         week_start = today - timedelta(days=today.weekday())
         start_date = week_start.isoformat()
         end_date = (today + timedelta(days=1)).isoformat()
-        
+
         gumroad_sales = await self._fetch_gumroad_sales(start_date, end_date)
         shopify_orders = await self._fetch_shopify_orders(start_date, end_date)
+<<<<<<< HEAD
+=======
+
+>>>>>>> 5adfb7dd295ade6e7bf01a043b52550c77f7e4e1
         stats = self._aggregate_sales_data(gumroad_sales, shopify_orders)
         
         total_str = self._format_currency(stats["total_revenue"])
-        
+
         if stats["total_count"] == 0:
             await self.capability_worker.speak("No sales this week yet.")
         else:
@@ -588,13 +779,17 @@ Respond with ONLY the category name, nothing else."""
         month_start = today.replace(day=1)
         start_date = month_start.isoformat()
         end_date = (today + timedelta(days=1)).isoformat()
-        
+
         gumroad_sales = await self._fetch_gumroad_sales(start_date, end_date)
         shopify_orders = await self._fetch_shopify_orders(start_date, end_date)
+<<<<<<< HEAD
+=======
+
+>>>>>>> 5adfb7dd295ade6e7bf01a043b52550c77f7e4e1
         stats = self._aggregate_sales_data(gumroad_sales, shopify_orders)
         
         total_str = self._format_currency(stats["total_revenue"])
-        
+
         if stats["total_count"] == 0:
             await self.capability_worker.speak("No sales this month yet.")
         else:
@@ -606,13 +801,17 @@ Respond with ONLY the category name, nothing else."""
         year_ago = today - timedelta(days=365)
         start_date = year_ago.isoformat()
         end_date = (today + timedelta(days=1)).isoformat()
-        
+
         gumroad_sales = await self._fetch_gumroad_sales(start_date, end_date)
         shopify_orders = await self._fetch_shopify_orders(start_date, end_date)
+<<<<<<< HEAD
+=======
+
+>>>>>>> 5adfb7dd295ade6e7bf01a043b52550c77f7e4e1
         stats = self._aggregate_sales_data(gumroad_sales, shopify_orders)
         
         total_str = self._format_currency(stats["total_revenue"])
-        
+
         if stats["total_count"] == 0:
             await self.capability_worker.speak("No sales in the past year.")
         else:
@@ -624,13 +823,17 @@ Respond with ONLY the category name, nothing else."""
         yesterday = today - timedelta(days=1)
         start_date = yesterday.isoformat()
         end_date = today.isoformat()
-        
+
         gumroad_sales = await self._fetch_gumroad_sales(start_date, end_date)
         shopify_orders = await self._fetch_shopify_orders(start_date, end_date)
+<<<<<<< HEAD
+=======
+
+>>>>>>> 5adfb7dd295ade6e7bf01a043b52550c77f7e4e1
         stats = self._aggregate_sales_data(gumroad_sales, shopify_orders)
         
         total_str = self._format_currency(stats["total_revenue"])
-        
+
         if stats["total_count"] == 0:
             await self.capability_worker.speak("No sales yesterday.")
         else:
@@ -641,22 +844,27 @@ Respond with ONLY the category name, nothing else."""
         today = datetime.now(timezone.utc).date()
         start_date = (today - timedelta(days=30)).isoformat()
         end_date = (today + timedelta(days=1)).isoformat()
-        
+
         gumroad_sales = await self._fetch_gumroad_sales(start_date, end_date)
         shopify_orders = await self._fetch_shopify_orders(start_date, end_date)
+<<<<<<< HEAD
         
+=======
+
+        # Count product sales
+>>>>>>> 5adfb7dd295ade6e7bf01a043b52550c77f7e4e1
         product_sales = {}
-        
+
         for sale in gumroad_sales:
             product = sale.get("product_name", "Unknown Product")
             product_sales[product] = product_sales.get(product, 0) + 1
-        
+
         for order in shopify_orders:
             for item in order.get("line_items", []):
                 product = item.get("title", "Unknown Product")
                 quantity = item.get("quantity", 1)
                 product_sales[product] = product_sales.get(product, 0) + quantity
-        
+
         if not product_sales:
             await self.capability_worker.speak("No products sold in the last month.")
         else:
@@ -671,25 +879,30 @@ Respond with ONLY the category name, nothing else."""
         today = datetime.now(timezone.utc).date()
         start_date = (today - timedelta(days=90)).isoformat()
         end_date = (today + timedelta(days=1)).isoformat()
-        
+
         gumroad_sales = await self._fetch_gumroad_sales(start_date, end_date)
         shopify_orders = await self._fetch_shopify_orders(start_date, end_date)
+<<<<<<< HEAD
         
+=======
+
+        # Count unique products
+>>>>>>> 5adfb7dd295ade6e7bf01a043b52550c77f7e4e1
         products = set()
-        
+
         for sale in gumroad_sales:
             product = sale.get("product_name")
             if product:
                 products.add(product)
-        
+
         for order in shopify_orders:
             for item in order.get("line_items", []):
                 product = item.get("title")
                 if product:
                     products.add(product)
-        
+
         count = len(products)
-        
+
         if count == 0:
             await self.capability_worker.speak("No products sold recently.")
         elif count == 1:
@@ -701,22 +914,32 @@ Respond with ONLY the category name, nothing else."""
         """Compare today vs yesterday."""
         today = datetime.now(timezone.utc).date()
         yesterday = today - timedelta(days=1)
+<<<<<<< HEAD
         
+=======
+
+        # Today's sales
+>>>>>>> 5adfb7dd295ade6e7bf01a043b52550c77f7e4e1
         today_start = today.isoformat()
         today_end = (today + timedelta(days=1)).isoformat()
         gumroad_today = await self._fetch_gumroad_sales(today_start, today_end)
         shopify_today = await self._fetch_shopify_orders(today_start, today_end)
         today_stats = self._aggregate_sales_data(gumroad_today, shopify_today)
+<<<<<<< HEAD
         
+=======
+
+        # Yesterday's sales
+>>>>>>> 5adfb7dd295ade6e7bf01a043b52550c77f7e4e1
         yesterday_start = yesterday.isoformat()
         yesterday_end = today.isoformat()
         gumroad_yesterday = await self._fetch_gumroad_sales(yesterday_start, yesterday_end)
         shopify_yesterday = await self._fetch_shopify_orders(yesterday_start, yesterday_end)
         yesterday_stats = self._aggregate_sales_data(gumroad_yesterday, shopify_yesterday)
-        
+
         today_rev = today_stats["total_revenue"]
         yesterday_rev = yesterday_stats["total_revenue"]
-        
+
         if yesterday_rev == 0 and today_rev == 0:
             await self.capability_worker.speak("No sales today or yesterday.")
         elif yesterday_rev == 0:
