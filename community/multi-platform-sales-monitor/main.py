@@ -4,10 +4,11 @@ Voice-activated sales dashboard for Gumroad and Shopify.
 Combines revenue data from multiple platforms into unified analytics.
 
 Author: Ammad Yousaf
-Version: 1.0
+Version: 1.1
 """
 
 import json
+import random
 from datetime import datetime, timezone, timedelta
 from typing import Optional, Dict, List, Any
 
@@ -16,16 +17,21 @@ from src.agent.capability import MatchingCapability
 from src.agent.capability_worker import CapabilityWorker
 from src.main import AgentWorker
 
-# Demo mode - set to False when you have real credentials
-DEMO_MODE = True  # Default: demo mode with realistic test data
-
 # API Configuration
 GUMROAD_API_BASE = "https://api.gumroad.com/v2"
 SHOPIFY_API_VERSION = "2024-01"
 
+# Varied follow-up prompts (inspired by Audius capability pattern)
+CONTINUE_PROMPTS = [
+    "What else would you like to know?",
+    "Anything else?",
+    "Want to know more?",
+    "What else can I tell you?",
+    "Need anything else?",
+]
+
 # Cache settings
 CACHE_TTL = 900  # 15 minutes
-EXIT_WORDS = ["stop", "quit", "exit", "done", "cancel", "thanks", "thank you"]
 PREFS_FILE = "sales_monitor_prefs.json"
 
 # Hardcoded configuration
@@ -56,12 +62,11 @@ class MultiSalesMonitorCapability(MatchingCapability):
         except Exception as e:
             self.worker.editor_logging_handler.error(f"Failed to load prefs: {e}")
         
-        return {"demo_mode": DEMO_MODE}
+        return {}
 
     async def _save_prefs(self, prefs: Dict[str, Any]):
         """Save preferences using SDK-compliant delete-then-write pattern."""
         try:
-            # SDK requirement: delete file before writing
             if await self.capability_worker.check_if_file_exists(PREFS_FILE, False):
                 await self.capability_worker.delete_file(PREFS_FILE, False)
             
@@ -81,9 +86,6 @@ class MultiSalesMonitorCapability(MatchingCapability):
         """Fetch sales from Gumroad API."""
         prefs = await self._load_prefs()
         
-        if prefs.get("demo_mode", DEMO_MODE):
-            return self._generate_demo_gumroad_sales()
-        
         try:
             access_token = prefs.get("gumroad_access_token")
             
@@ -91,17 +93,12 @@ class MultiSalesMonitorCapability(MatchingCapability):
                 self.worker.editor_logging_handler.warning("No Gumroad token configured")
                 return []
             
-            # Gumroad API call
             url = f"{GUMROAD_API_BASE}/sales"
             headers = {"Authorization": f"Bearer {access_token}"}
-            params = {
-                "after": start_date,
-                "before": end_date,
-            }
+            params = {"after": start_date, "before": end_date}
             
             self.worker.editor_logging_handler.info(f"Calling Gumroad API: {url}")
             response = requests.get(url, headers=headers, params=params, timeout=15)
-            
             self.worker.editor_logging_handler.info(f"Gumroad response: {response.status_code}")
             
             if response.status_code == 200:
@@ -119,36 +116,6 @@ class MultiSalesMonitorCapability(MatchingCapability):
             self.worker.editor_logging_handler.error(f"Gumroad fetch error: {e}")
             return []
 
-    def _generate_demo_gumroad_sales(self) -> List[Dict[str, Any]]:
-        """Generate demo Gumroad sales data."""
-        now = datetime.now(timezone.utc)
-        return [
-            {
-                "id": "sale_1",
-                "product_name": "React Mastery Course",
-                "price": 9900,  # Gumroad uses cents
-                "currency": "usd",
-                "created_at": (now - timedelta(hours=2)).isoformat(),
-                "email": "customer1@example.com",
-            },
-            {
-                "id": "sale_2",
-                "product_name": "Python Guide eBook",
-                "price": 4900,
-                "currency": "usd",
-                "created_at": (now - timedelta(hours=5)).isoformat(),
-                "email": "customer2@example.com",
-            },
-            {
-                "id": "sale_3",
-                "product_name": "Notion Templates Pack",
-                "price": 2900,
-                "currency": "usd",
-                "created_at": (now - timedelta(hours=8)).isoformat(),
-                "email": "customer3@example.com",
-            },
-        ]
-
     # ========== SHOPIFY API ==========
 
     async def _fetch_shopify_orders(
@@ -156,9 +123,6 @@ class MultiSalesMonitorCapability(MatchingCapability):
     ) -> List[Dict[str, Any]]:
         """Fetch orders from Shopify API."""
         prefs = await self._load_prefs()
-        
-        if prefs.get("demo_mode", DEMO_MODE):
-            return self._generate_demo_shopify_orders()
         
         try:
             shop_url = prefs.get("shopify_shop_url")
@@ -168,19 +132,17 @@ class MultiSalesMonitorCapability(MatchingCapability):
                 self.worker.editor_logging_handler.warning("No Shopify credentials configured")
                 return []
             
-            # Shopify API call
             url = f"https://{shop_url}/admin/api/{SHOPIFY_API_VERSION}/orders.json"
             headers = {"X-Shopify-Access-Token": access_token}
             params = {
                 "created_at_min": start_date,
                 "created_at_max": end_date,
                 "status": "any",
-                "limit": 250,  # Max per request
+                "limit": 250,
             }
             
             self.worker.editor_logging_handler.info(f"Calling Shopify API: {url}")
             response = requests.get(url, headers=headers, params=params, timeout=15)
-            
             self.worker.editor_logging_handler.info(f"Shopify response: {response.status_code}")
             
             if response.status_code == 200:
@@ -198,66 +160,20 @@ class MultiSalesMonitorCapability(MatchingCapability):
             self.worker.editor_logging_handler.error(f"Shopify fetch error: {e}")
             return []
 
-    def _generate_demo_shopify_orders(self) -> List[Dict[str, Any]]:
-        """Generate demo Shopify orders data."""
-        now = datetime.now(timezone.utc)
-        return [
-            {
-                "id": 12345,
-                "created_at": (now - timedelta(hours=1)).isoformat(),
-                "total_price": "59.98",
-                "currency": "USD",
-                "line_items": [
-                    {"title": "Logo T-Shirt", "price": "29.99", "quantity": 2}
-                ],
-                "customer": {"email": "customer4@example.com"},
-            },
-            {
-                "id": 12346,
-                "created_at": (now - timedelta(hours=4)).isoformat(),
-                "total_price": "89.99",
-                "currency": "USD",
-                "line_items": [
-                    {"title": "Coffee Mug", "price": "19.99", "quantity": 1},
-                    {"title": "Sticker Pack", "price": "14.99", "quantity": 1},
-                ],
-                "customer": {"email": "customer5@example.com"},
-            },
-            {
-                "id": 12347,
-                "created_at": (now - timedelta(hours=6)).isoformat(),
-                "total_price": "149.99",
-                "currency": "USD",
-                "line_items": [
-                    {"title": "Premium Hoodie", "price": "79.99", "quantity": 1},
-                ],
-                "customer": {"email": "customer6@example.com"},
-            },
-        ]
-
     # ========== DATA AGGREGATION ==========
 
     def _aggregate_sales_data(
         self, gumroad_sales: List, shopify_orders: List
     ) -> Dict[str, Any]:
         """Aggregate sales data from both platforms."""
-        # Calculate Gumroad totals (Gumroad uses cents)
-        gumroad_revenue = sum(
-            sale.get("price", 0) / 100 for sale in gumroad_sales
-        )
+        gumroad_revenue = sum(sale.get("price", 0) / 100 for sale in gumroad_sales)
         gumroad_count = len(gumroad_sales)
         
-        # Calculate Shopify totals
-        shopify_revenue = sum(
-            float(order.get("total_price", 0)) for order in shopify_orders
-        )
+        shopify_revenue = sum(float(order.get("total_price", 0)) for order in shopify_orders)
         shopify_count = len(shopify_orders)
         
-        # Combined totals
         total_revenue = gumroad_revenue + shopify_revenue
         total_count = gumroad_count + shopify_count
-        
-        # Average order value
         avg_order_value = total_revenue / total_count if total_count > 0 else 0
         
         return {
@@ -267,8 +183,8 @@ class MultiSalesMonitorCapability(MatchingCapability):
             "gumroad_count": gumroad_count,
             "shopify_revenue": shopify_revenue,
             "shopify_count": shopify_count,
-            "digital_revenue": gumroad_revenue,  # Gumroad = digital
-            "physical_revenue": shopify_revenue,  # Shopify = physical
+            "digital_revenue": gumroad_revenue,
+            "physical_revenue": shopify_revenue,
             "avg_order_value": avg_order_value,
         }
 
@@ -287,85 +203,83 @@ class MultiSalesMonitorCapability(MatchingCapability):
         """Format percentage for voice."""
         return f"{round(value)} percent"
 
-    # ========== INTENT CLASSIFICATION ==========
+    # ========== LLM INTENT CLASSIFICATION ==========
 
-    def _classify_intent(self, user_input: str) -> str:
-        """Classify user intent using simple keyword matching."""
+    async def _classify_intent(self, user_input: str) -> str:
+        """Classify user intent using LLM via text_to_text_response."""
         if not user_input:
             return "unknown"
         
-        text = user_input.lower()
-        
-        # Digital vs physical (MUST come before "compare" check)
-        if ("digital" in text and "physical" in text) or \
-           ("digital" in text and ("vs" in text or "versus" in text)) or \
-           ("physical" in text and ("vs" in text or "versus" in text)):
-            return "digital_vs_physical"
-        
-        # Platform-specific queries (includes "breakdown" and "platform")
-        if "gumroad" in text or "shopify" in text or "breakdown" in text or "platform" in text:
-            return "platform_breakdown"
-        
-        # Time-based queries
-        if "week" in text or "weekly" in text:
-            return "this_week"
-        if "month" in text or "monthly" in text:
-            return "this_month"
-        if "all time" in text or "total revenue" in text or "lifetime" in text or "since" in text or "overall" in text:
-            return "all_time"
-        if "yesterday" in text:
-            return "yesterday"
-        
-        # Product queries
-        if "best" in text or "top" in text or "most popular" in text:
-            return "best_seller"
-        if "product" in text and ("how many" in text or "total" in text or "catalog" in text):
-            return "product_count"
-        
-        # Customer count
-        if "customer" in text:
-            return "customer_count"
-        
-        # Average order
-        if "average" in text:
-            return "average_order"
-        
-        # Trends (MUST come AFTER digital_vs_physical)
-        if "trend" in text or "compare" in text or "growth" in text:
-            return "trends"
-        
-        # Default to total sales for general queries
-        if any(word in text for word in ["total", "how much", "revenue", "sales", "made", "earning", "today"]):
-            return "total_sales"
-        
-        return "unknown"
+        # Use LLM to extract intent from natural language
+        prompt = f"""Classify this sales query into ONE category:
+- exit (if user wants to stop/quit/exit/done/thanks)
+- full_breakdown (if user says yes/sure/go ahead/show me everything/full breakdown/tell me more)
+- total_sales (general sales, "how much", "what did I make")
+- platform_breakdown (Gumroad vs Shopify, platform comparison)
+- digital_vs_physical (digital vs physical products)
+- best_seller (top products)
+- customer_count (how many customers)
+- average_order (average order value)
+- this_week (this week's sales)
+- this_month (this month's sales)
+- yesterday (yesterday's sales)
+- all_time (all-time/overall revenue)
+- trends (growth, today vs yesterday)
+- product_count (how many products)
+- unknown (anything else)
 
-    def _is_exit_word(self, text: Optional[str]) -> bool:
-        """Check if user said an exit word."""
-        if not text:
-            return False
-        return any(word in text.lower() for word in EXIT_WORDS)
+User query: "{user_input}"
+
+Respond with ONLY the category name, nothing else."""
+
+        try:
+            # text_to_text_response is NOT async - don't use await
+            intent = self.capability_worker.text_to_text_response(prompt)
+            intent = intent.strip().lower()
+            
+            # Validate intent
+            valid_intents = [
+                "exit", "full_breakdown", "total_sales", "platform_breakdown", "digital_vs_physical",
+                "best_seller", "customer_count", "average_order", "this_week",
+                "this_month", "yesterday", "all_time", "trends", "product_count"
+            ]
+            
+            if intent in valid_intents:
+                self.worker.editor_logging_handler.info(f"Intent classified: {intent}")
+                return intent
+            
+            self.worker.editor_logging_handler.warning(f"Unknown intent: {intent}")
+            return "unknown"
+            
+        except Exception as e:
+            self.worker.editor_logging_handler.error(f"Intent classification error: {e}")
+            return "unknown"
 
     # ========== MAIN LOOP ==========
 
     async def run_sales_monitor(self) -> None:
         """Main conversation loop for sales monitoring."""
         try:
-            # Start with comprehensive dashboard summary
+            # Start with shortened dashboard summary (already asks a question)
             await self._handle_dashboard_summary()
             
             # Conversation loop
             while True:
-                await self.capability_worker.speak("What else would you like to know?")
+                # Wait for user response (don't ask another question yet - summary already asked)
                 response = await self.capability_worker.user_response()
                 
-                if not response or self._is_exit_word(response):
+                if not response:
                     await self.capability_worker.speak("Okay, talk to you later!")
                     break
                 
-                intent = self._classify_intent(response)
+                intent = await self._classify_intent(response)
                 
-                if intent == "total_sales":
+                if intent == "exit":
+                    await self.capability_worker.speak("Okay, talk to you later!")
+                    break
+                elif intent == "full_breakdown":
+                    await self._handle_full_breakdown()
+                elif intent == "total_sales":
                     await self._handle_total_sales()
                 elif intent == "this_week":
                     await self._handle_this_week()
@@ -380,6 +294,7 @@ class MultiSalesMonitorCapability(MatchingCapability):
                 elif intent == "product_count":
                     await self._handle_product_count()
                 elif intent == "platform_breakdown":
+                    # Pass user query to detect specific platform
                     await self._handle_platform_breakdown(response)
                 elif intent == "digital_vs_physical":
                     await self._handle_digital_vs_physical()
@@ -391,8 +306,13 @@ class MultiSalesMonitorCapability(MatchingCapability):
                     await self._handle_trends()
                 else:
                     await self.capability_worker.speak(
-                        "I can help with your total sales, platform breakdown, or compare digital versus physical sales. What would you like to know?"
+                        "I can help with sales totals, platform breakdown, or trends. What would you like?"
                     )
+                
+                # Now ask varied follow-up prompt AFTER handling the intent
+                prompt = random.choice(CONTINUE_PROMPTS)
+                await self.capability_worker.speak(prompt)
+                    
         except Exception as e:
             self.worker.editor_logging_handler.error(f"Sales monitor error: {e}")
             await self.capability_worker.speak("Something went wrong. Try again later.")
@@ -402,7 +322,26 @@ class MultiSalesMonitorCapability(MatchingCapability):
     # ========== INTENT HANDLERS ==========
 
     async def _handle_dashboard_summary(self) -> None:
-        """Provide comprehensive sales dashboard overview."""
+        """Provide shortened dashboard summary with offer to go deeper."""
+        today = datetime.now(timezone.utc).date()
+        today_start = today.isoformat()
+        today_end = (today + timedelta(days=1)).isoformat()
+        
+        gumroad_today = await self._fetch_gumroad_sales(today_start, today_end)
+        shopify_today = await self._fetch_shopify_orders(today_start, today_end)
+        today_stats = self._aggregate_sales_data(gumroad_today, shopify_today)
+        
+        # Shortened summary - just today's headline
+        if today_stats["total_count"] == 0:
+            await self.capability_worker.speak("No sales yet today. Want to check other time periods?")
+        else:
+            today_str = self._format_currency(today_stats["total_revenue"])
+            await self.capability_worker.speak(
+                f"Today you're at {today_str} from {today_stats['total_count']} sales. Want the full breakdown?"
+            )
+
+    async def _handle_full_breakdown(self) -> None:
+        """Provide comprehensive breakdown with week, month, platforms, and best seller."""
         today = datetime.now(timezone.utc).date()
         
         # Today's data
@@ -426,40 +365,20 @@ class MultiSalesMonitorCapability(MatchingCapability):
         shopify_month = await self._fetch_shopify_orders(month_start_str, today_end)
         month_stats = self._aggregate_sales_data(gumroad_month, shopify_month)
         
-        # Build summary
-        parts = []
+        # First speak - This week and month
+        week_str = self._format_currency(week_stats["total_revenue"])
+        month_str = self._format_currency(month_stats["total_revenue"])
+        await self.capability_worker.speak(f"This week you're at {week_str}, and this month {month_str}.")
         
-        # Today's sales
-        if today_stats["total_count"] == 0:
-            parts.append("No sales yet today")
-        else:
-            today_str = self._format_currency(today_stats["total_revenue"])
-            parts.append(f"Today: {today_str} from {today_stats['total_count']} sales")
+        # Second speak - Platform breakdown
+        gumroad_str = self._format_currency(today_stats["gumroad_revenue"])
+        shopify_str = self._format_currency(today_stats["shopify_revenue"])
+        await self.capability_worker.speak(f"Today, Gumroad's at {gumroad_str} and Shopify's at {shopify_str}.")
         
-        # This week
-        if week_stats["total_count"] > 0:
-            week_str = self._format_currency(week_stats["total_revenue"])
-            parts.append(f"This week: {week_str}")
-        
-        # This month
-        if month_stats["total_count"] > 0:
-            month_str = self._format_currency(month_stats["total_revenue"])
-            parts.append(f"This month: {month_str}")
-        
-        # Platform breakdown (today)
-        if today_stats["gumroad_count"] > 0 or today_stats["shopify_count"] > 0:
-            gumroad_str = self._format_currency(today_stats["gumroad_revenue"])
-            shopify_str = self._format_currency(today_stats["shopify_revenue"])
-            parts.append(f"Gumroad: {gumroad_str}, Shopify: {shopify_str}")
-        
-        # Best seller (last 30 days)
+        # Third speak - Best seller
         best_seller_info = await self._get_best_seller_info()
         if best_seller_info:
-            parts.append(f"Best seller: {best_seller_info}")
-        
-        # Combine into natural speech
-        summary = ". ".join(parts) + "."
-        await self.capability_worker.speak(summary)
+            await self.capability_worker.speak(f"Your best seller this month is {best_seller_info}.")
 
     async def _get_best_seller_info(self) -> Optional[str]:
         """Get best seller information for summary."""
@@ -497,44 +416,38 @@ class MultiSalesMonitorCapability(MatchingCapability):
         
         gumroad_sales = await self._fetch_gumroad_sales(start_date, end_date)
         shopify_orders = await self._fetch_shopify_orders(start_date, end_date)
-        
         stats = self._aggregate_sales_data(gumroad_sales, shopify_orders)
+        
         total_str = self._format_currency(stats["total_revenue"])
         
         if stats["total_count"] == 0:
-            await self.capability_worker.speak(
-                "You haven't made any sales today yet. But hey, the day's not over!"
-            )
+            await self.capability_worker.speak("You haven't made any sales today yet.")
         elif stats["total_count"] == 1:
-            await self.capability_worker.speak(
-                f"You've got one sale today for {total_str}. Not bad!"
-            )
+            await self.capability_worker.speak(f"You've got one sale today for {total_str}.")
         else:
-            await self.capability_worker.speak(
-                f"Nice! You've made {total_str} today from {stats['total_count']} sales."
-            )
+            await self.capability_worker.speak(f"You've made {total_str} today from {stats['total_count']} sales.")
 
     async def _handle_platform_breakdown(self, user_query: str = "") -> None:
-        """Break down sales by platform."""
+        """Break down sales by platform - detect if user asked for specific platform."""
         today = datetime.now(timezone.utc).date()
         start_date = today.isoformat()
         end_date = (today + timedelta(days=1)).isoformat()
         
         gumroad_sales = await self._fetch_gumroad_sales(start_date, end_date)
         shopify_orders = await self._fetch_shopify_orders(start_date, end_date)
-        
         stats = self._aggregate_sales_data(gumroad_sales, shopify_orders)
         
         gumroad_str = self._format_currency(stats["gumroad_revenue"])
         shopify_str = self._format_currency(stats["shopify_revenue"])
         
-        # Check if they asked about a specific platform
+        # Detect which platform user asked about
         user_query_lower = user_query.lower()
         asking_gumroad = "gumroad" in user_query_lower
         asking_shopify = "shopify" in user_query_lower
         
-        # If they asked about only one platform, report only that one
+        # If user asked about specific platform, only report that one
         if asking_gumroad and not asking_shopify:
+            # Only Gumroad
             if stats["gumroad_count"] == 0:
                 await self.capability_worker.speak("No Gumroad sales yet today.")
             else:
@@ -542,6 +455,7 @@ class MultiSalesMonitorCapability(MatchingCapability):
                     f"Gumroad's at {gumroad_str} from {stats['gumroad_count']} sales."
                 )
         elif asking_shopify and not asking_gumroad:
+            # Only Shopify
             if stats["shopify_count"] == 0:
                 await self.capability_worker.speak("No Shopify orders yet today.")
             else:
@@ -549,34 +463,34 @@ class MultiSalesMonitorCapability(MatchingCapability):
                     f"Shopify's at {shopify_str} from {stats['shopify_count']} orders."
                 )
         else:
-            # They asked for both or for a comparison
+            # User asked for both or general breakdown - report both
             if stats["gumroad_count"] == 0 and stats["shopify_count"] == 0:
-                await self.capability_worker.speak(
-                    "No sales on either platform today."
-                )
-            elif stats["gumroad_count"] == 0:
-                await self.capability_worker.speak(
-                    f"All your sales came from Shopify today - {shopify_str} from {stats['shopify_count']} orders. Nothing on Gumroad yet."
-                )
-            elif stats["shopify_count"] == 0:
-                await self.capability_worker.speak(
-                    f"All your sales came from Gumroad today - {gumroad_str} from {stats['gumroad_count']} sales. Nothing on Shopify yet."
-                )
+                await self.capability_worker.speak("No sales on either platform today.")
             else:
-                await self.capability_worker.speak(
-                    f"Gumroad's at {gumroad_str} from {stats['gumroad_count']} sales, "
-                    f"and Shopify's at {shopify_str} from {stats['shopify_count']} orders."
-                )
+                # First speak call - Gumroad
+                if stats["gumroad_count"] > 0:
+                    await self.capability_worker.speak(
+                        f"Gumroad's at {gumroad_str} from {stats['gumroad_count']} sales."
+                    )
+                else:
+                    await self.capability_worker.speak("No Gumroad sales yet today.")
+                
+                # Second speak call - Shopify (gives user moment to absorb)
+                if stats["shopify_count"] > 0:
+                    await self.capability_worker.speak(
+                        f"Shopify's at {shopify_str} from {stats['shopify_count']} orders."
+                    )
+                else:
+                    await self.capability_worker.speak("No Shopify orders yet today.")
 
     async def _handle_digital_vs_physical(self) -> None:
-        """Compare digital vs physical product sales."""
+        """Compare digital vs physical - split into two speak calls."""
         today = datetime.now(timezone.utc).date()
         start_date = today.isoformat()
         end_date = (today + timedelta(days=1)).isoformat()
         
         gumroad_sales = await self._fetch_gumroad_sales(start_date, end_date)
         shopify_orders = await self._fetch_shopify_orders(start_date, end_date)
-        
         stats = self._aggregate_sales_data(gumroad_sales, shopify_orders)
         
         total = stats["total_revenue"]
@@ -591,20 +505,18 @@ class MultiSalesMonitorCapability(MatchingCapability):
         physical_str = self._format_currency(stats["physical_revenue"])
         
         if total == 0:
-            await self.capability_worker.speak(
-                "No sales to compare yet today."
-            )
+            await self.capability_worker.speak("No sales to compare yet today.")
         elif stats["digital_revenue"] == 0:
-            await self.capability_worker.speak(
-                f"All physical products today - {physical_str} total. No digital sales yet."
-            )
+            await self.capability_worker.speak(f"All physical products today, {physical_str} total.")
         elif stats["physical_revenue"] == 0:
-            await self.capability_worker.speak(
-                f"All digital products today - {digital_str} total. No physical sales yet."
-            )
+            await self.capability_worker.speak(f"All digital products today, {digital_str} total.")
         else:
+            # First speak call - Digital
             await self.capability_worker.speak(
-                f"Digital's at {digital_str}, that's about {self._format_percentage(digital_pct)} of your revenue. "
+                f"Digital's at {digital_str}, that's {self._format_percentage(digital_pct)}."
+            )
+            # Second speak call - Physical (gives user moment to absorb)
+            await self.capability_worker.speak(
                 f"Physical's at {physical_str}, which is {self._format_percentage(physical_pct)}."
             )
 
@@ -617,7 +529,6 @@ class MultiSalesMonitorCapability(MatchingCapability):
         gumroad_sales = await self._fetch_gumroad_sales(start_date, end_date)
         shopify_orders = await self._fetch_shopify_orders(start_date, end_date)
         
-        # Count unique emails
         emails = set()
         for sale in gumroad_sales:
             if sale.get("email"):
@@ -629,13 +540,11 @@ class MultiSalesMonitorCapability(MatchingCapability):
         customer_count = len(emails)
         
         if customer_count == 0:
-            await self.capability_worker.speak("No customers yet today, but the day's still young!")
+            await self.capability_worker.speak("No customers yet today.")
         elif customer_count == 1:
             await self.capability_worker.speak("Just one customer so far today.")
-        elif customer_count < 5:
-            await self.capability_worker.speak(f"You've had {customer_count} customers today.")
         else:
-            await self.capability_worker.speak(f"Nice! {customer_count} customers today.")
+            await self.capability_worker.speak(f"You've had {customer_count} customers today.")
 
     async def _handle_average_order(self) -> None:
         """Report average order value."""
@@ -645,16 +554,13 @@ class MultiSalesMonitorCapability(MatchingCapability):
         
         gumroad_sales = await self._fetch_gumroad_sales(start_date, end_date)
         shopify_orders = await self._fetch_shopify_orders(start_date, end_date)
-        
         stats = self._aggregate_sales_data(gumroad_sales, shopify_orders)
         
         if stats["total_count"] == 0:
-            await self.capability_worker.speak("No sales yet, so no average to calculate.")
+            await self.capability_worker.speak("No sales yet to calculate an average.")
         else:
             avg_str = self._format_currency(stats["avg_order_value"])
-            await self.capability_worker.speak(
-                f"Your average order today is {avg_str}."
-            )
+            await self.capability_worker.speak(f"Your average order today is {avg_str}.")
 
     async def _handle_this_week(self) -> None:
         """Report this week's sales."""
@@ -665,8 +571,8 @@ class MultiSalesMonitorCapability(MatchingCapability):
         
         gumroad_sales = await self._fetch_gumroad_sales(start_date, end_date)
         shopify_orders = await self._fetch_shopify_orders(start_date, end_date)
-        
         stats = self._aggregate_sales_data(gumroad_sales, shopify_orders)
+        
         total_str = self._format_currency(stats["total_revenue"])
         
         if stats["total_count"] == 0:
@@ -685,16 +591,14 @@ class MultiSalesMonitorCapability(MatchingCapability):
         
         gumroad_sales = await self._fetch_gumroad_sales(start_date, end_date)
         shopify_orders = await self._fetch_shopify_orders(start_date, end_date)
-        
         stats = self._aggregate_sales_data(gumroad_sales, shopify_orders)
+        
         total_str = self._format_currency(stats["total_revenue"])
         
         if stats["total_count"] == 0:
             await self.capability_worker.speak("No sales this month yet.")
         else:
-            await self.capability_worker.speak(
-                f"This month you've made {total_str} from {stats['total_count']} sales so far."
-            )
+            await self.capability_worker.speak(f"This month you've made {total_str}.")
 
     async def _handle_all_time(self) -> None:
         """Report all-time revenue (last 365 days as proxy)."""
@@ -705,16 +609,14 @@ class MultiSalesMonitorCapability(MatchingCapability):
         
         gumroad_sales = await self._fetch_gumroad_sales(start_date, end_date)
         shopify_orders = await self._fetch_shopify_orders(start_date, end_date)
-        
         stats = self._aggregate_sales_data(gumroad_sales, shopify_orders)
+        
         total_str = self._format_currency(stats["total_revenue"])
         
         if stats["total_count"] == 0:
             await self.capability_worker.speak("No sales in the past year.")
         else:
-            await self.capability_worker.speak(
-                f"In the past year, you've made {total_str} from {stats['total_count']} total sales."
-            )
+            await self.capability_worker.speak(f"In the past year, you've made {total_str}.")
 
     async def _handle_yesterday(self) -> None:
         """Report yesterday's sales."""
@@ -725,16 +627,14 @@ class MultiSalesMonitorCapability(MatchingCapability):
         
         gumroad_sales = await self._fetch_gumroad_sales(start_date, end_date)
         shopify_orders = await self._fetch_shopify_orders(start_date, end_date)
-        
         stats = self._aggregate_sales_data(gumroad_sales, shopify_orders)
+        
         total_str = self._format_currency(stats["total_revenue"])
         
         if stats["total_count"] == 0:
             await self.capability_worker.speak("No sales yesterday.")
         else:
-            await self.capability_worker.speak(
-                f"Yesterday you made {total_str} from {stats['total_count']} sales."
-            )
+            await self.capability_worker.speak(f"Yesterday you made {total_str}.")
 
     async def _handle_best_seller(self) -> None:
         """Report best-selling product."""
@@ -745,7 +645,6 @@ class MultiSalesMonitorCapability(MatchingCapability):
         gumroad_sales = await self._fetch_gumroad_sales(start_date, end_date)
         shopify_orders = await self._fetch_shopify_orders(start_date, end_date)
         
-        # Count product sales
         product_sales = {}
         
         for sale in gumroad_sales:
@@ -759,16 +658,16 @@ class MultiSalesMonitorCapability(MatchingCapability):
                 product_sales[product] = product_sales.get(product, 0) + quantity
         
         if not product_sales:
-            await self.capability_worker.speak("No products sold in the last 30 days.")
+            await self.capability_worker.speak("No products sold in the last month.")
         else:
             best_seller = max(product_sales.items(), key=lambda x: x[1])
             product_name, count = best_seller
             await self.capability_worker.speak(
-                f"Your best seller in the last month is {product_name} with {count} sales."
+                f"Your best seller is {product_name} with {count} sales."
             )
 
     async def _handle_product_count(self) -> None:
-        """Report total products available (demo approximation)."""
+        """Report total products sold recently."""
         today = datetime.now(timezone.utc).date()
         start_date = (today - timedelta(days=90)).isoformat()
         end_date = (today + timedelta(days=1)).isoformat()
@@ -776,7 +675,6 @@ class MultiSalesMonitorCapability(MatchingCapability):
         gumroad_sales = await self._fetch_gumroad_sales(start_date, end_date)
         shopify_orders = await self._fetch_shopify_orders(start_date, end_date)
         
-        # Count unique products
         products = set()
         
         for sale in gumroad_sales:
@@ -793,27 +691,23 @@ class MultiSalesMonitorCapability(MatchingCapability):
         count = len(products)
         
         if count == 0:
-            await self.capability_worker.speak("I haven't seen any products sold recently.")
+            await self.capability_worker.speak("No products sold recently.")
         elif count == 1:
-            await self.capability_worker.speak("You have 1 product that's been sold recently.")
+            await self.capability_worker.speak("One product has sold recently.")
         else:
-            await self.capability_worker.speak(
-                f"You have {count} different products that have sold in the last 90 days."
-            )
+            await self.capability_worker.speak(f"{count} different products have sold recently.")
 
     async def _handle_trends(self) -> None:
         """Compare today vs yesterday."""
         today = datetime.now(timezone.utc).date()
         yesterday = today - timedelta(days=1)
         
-        # Today's sales
         today_start = today.isoformat()
         today_end = (today + timedelta(days=1)).isoformat()
         gumroad_today = await self._fetch_gumroad_sales(today_start, today_end)
         shopify_today = await self._fetch_shopify_orders(today_start, today_end)
         today_stats = self._aggregate_sales_data(gumroad_today, shopify_today)
         
-        # Yesterday's sales
         yesterday_start = yesterday.isoformat()
         yesterday_end = today.isoformat()
         gumroad_yesterday = await self._fetch_gumroad_sales(yesterday_start, yesterday_end)
@@ -824,21 +718,19 @@ class MultiSalesMonitorCapability(MatchingCapability):
         yesterday_rev = yesterday_stats["total_revenue"]
         
         if yesterday_rev == 0 and today_rev == 0:
-            await self.capability_worker.speak("No sales today or yesterday to compare.")
+            await self.capability_worker.speak("No sales today or yesterday.")
         elif yesterday_rev == 0:
             today_str = self._format_currency(today_rev)
-            await self.capability_worker.speak(
-                f"Today you're at {today_str}, compared to zero yesterday. Looking up!"
-            )
+            await self.capability_worker.speak(f"You're at {today_str} today, up from zero yesterday.")
         else:
             change_pct = ((today_rev - yesterday_rev) / yesterday_rev) * 100
             if change_pct > 0:
                 await self.capability_worker.speak(
-                    f"You're up {self._format_percentage(abs(change_pct))} compared to yesterday. Nice!"
+                    f"You're up {self._format_percentage(abs(change_pct))} compared to yesterday."
                 )
             elif change_pct < 0:
                 await self.capability_worker.speak(
-                    f"You're down {self._format_percentage(abs(change_pct))} compared to yesterday."
+                    f"You're down {self._format_percentage(abs(change_pct))} from yesterday."
                 )
             else:
                 await self.capability_worker.speak("Same as yesterday.")
