@@ -61,13 +61,15 @@ class MultiSalesMonitorCapability(MatchingCapability):
                 return json.loads(content)
         except Exception as e:
             self.worker.editor_logging_handler.error(f"Failed to load prefs: {e}")
-<<<<<<< HEAD
-        
+
+
+<< << << < HEAD
+
         return {}
-=======
+== == == =
 
         return {"demo_mode": DEMO_MODE}
->>>>>>> 5adfb7dd295ade6e7bf01a043b52550c77f7e4e1
+>>>>>> > 5adfb7dd295ade6e7bf01a043b52550c77f7e4e1
 
     async def _save_prefs(self, prefs: Dict[str, Any]):
         """Save preferences using SDK-compliant delete-then-write pattern."""
@@ -90,29 +92,29 @@ class MultiSalesMonitorCapability(MatchingCapability):
     ) -> List[Dict[str, Any]]:
         """Fetch sales from Gumroad API."""
         prefs = await self._load_prefs()
-<<<<<<< HEAD
-        
-=======
+<< << << < HEAD
+
+== == == =
 
         if prefs.get("demo_mode", DEMO_MODE):
             return self._generate_demo_gumroad_sales()
 
->>>>>>> 5adfb7dd295ade6e7bf01a043b52550c77f7e4e1
+>>>>>> > 5adfb7dd295ade6e7bf01a043b52550c77f7e4e1
         try:
             access_token = prefs.get("gumroad_access_token")
 
             if not access_token:
                 self.worker.editor_logging_handler.warning("No Gumroad token configured")
                 return []
-<<<<<<< HEAD
-            
+<< << << < HEAD
+
             url = f"{GUMROAD_API_BASE}/sales"
             headers = {"Authorization": f"Bearer {access_token}"}
             params = {"after": start_date, "before": end_date}
-            
+
             self.worker.editor_logging_handler.info(f"Calling Gumroad API: {url}")
             response = requests.get(url, headers=headers, params=params, timeout=15)
-=======
+== == == =
 
             # Gumroad API call
             url = f"{GUMROAD_API_BASE}/sales"
@@ -125,7 +127,7 @@ class MultiSalesMonitorCapability(MatchingCapability):
             self.worker.editor_logging_handler.info(f"Calling Gumroad API: {url}")
             response = requests.get(url, headers=headers, params=params, timeout=15)
 
->>>>>>> 5adfb7dd295ade6e7bf01a043b52550c77f7e4e1
+>>>>>> > 5adfb7dd295ade6e7bf01a043b52550c77f7e4e1
             self.worker.editor_logging_handler.info(f"Gumroad response: {response.status_code}")
 
             if response.status_code == 200:
