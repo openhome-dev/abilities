@@ -41,6 +41,7 @@ class MultiSalesMonitorCapability(MatchingCapability):
     worker: AgentWorker = None
     capability_worker: CapabilityWorker = None
 
+    # {{register_capability}}
     @classmethod
     def register_capability(cls) -> "MatchingCapability":
         return cls(
