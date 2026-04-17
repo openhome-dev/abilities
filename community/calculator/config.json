@@ -1,0 +1,6 @@
+{
+  "unique_name": "calculator",
+  "description": "Perform math calculations by voice — addition, subtraction, multiplication, division, powers, square roots, and percentages",
+  "category": "skill",
+  "matching_hotwords": ["calculate", "calculator", "what is", "how much is", "math", "compute", "equals", "solve", "square root", "percent of"]
+}

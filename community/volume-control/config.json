@@ -1,0 +1,6 @@
+{
+  "unique_name": "volume-control",
+  "description": "Control speaker volume with voice — raise, lower, mute, max, or set to a specific level",
+  "category": "skill",
+  "matching_hotwords": ["volume", "turn up", "turn down", "louder", "quieter", "mute", "unmute", "raise volume", "lower volume", "volume control"]
+}

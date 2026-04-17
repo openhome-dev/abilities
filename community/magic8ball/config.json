@@ -1,0 +1,13 @@
+{
+  "unique_name": "magic8ball",
+  "description": "Ask the Magic 8-Ball a yes/no question and receive a cryptic answer",
+  "category": "fun",
+  "matching_hotwords": [
+    "magic 8 ball",
+    "eight ball",
+    "ask the ball",
+    "magic ball",
+    "shake the ball",
+    "8 ball"
+  ]
+}
