@@ -1,4 +1,5 @@
 import json
+import re
 from datetime import datetime
 from typing import Optional
 
@@ -20,7 +21,11 @@ from src.main import AgentWorker
 
 QUEUE_FILE = "curiosity_queue.json"
 POLL_INTERVAL = 15.0
-SAVE_EVERY_N_POLLS = 20
+SAVE_EVERY_N_POLLS = 20       # re-sync settings every ~5 minutes
+MAX_LLM_CALLS_PER_POLL = 3   # rate-limit Phase 2 LLM calls per cycle (UX-7)
+STARTUP_NOTIFY_MIN = 3        # min pending items to announce on connect (UX-1)
+DAILY_BRIEF_MIN = 3           # min pending items to trigger daily briefing (UX-10)
+MAX_PERSONALITY_INJECTIONS = 3  # cap personality prompt injections per session (UX-2)
 
 # ── Phase 1: Fast keyword filter (no LLM) ───────────────────────────────────
 CURIOSITY_TRIGGERS = [
@@ -36,6 +41,17 @@ CURIOSITY_TRIGGERS = [
     "interesting how", "funny how", "weird how", "strange how",
 ]
 
+# ── BUG-3 fix: phrases that match triggers but are NOT curiosity ─────────────
+# These are checked BEFORE Phase 1 to avoid LLM calls on conversational speech.
+SKIP_PHRASES = [
+    "how do you", "how are you", "how can you", "how should you",
+    "how do i", "how should i", "how can i", "how will i",
+    "why are you", "why do you", "why don't you", "why cant you", "why can't you",
+    "why would you", "why did you", "why does it matter",
+    "what do you", "what should i", "what can you", "what will you",
+    "can you", "could you", "would you", "will you", "shall we",
+]
+
 
 def _new_state() -> dict:
     """Return fresh mutable state dict — lives as a local var, never on self."""
@@ -43,6 +59,10 @@ def _new_state() -> dict:
         "last_processed_index": 0,
         "polls_since_save": 0,
         "instant_explain_enabled": False,
+        "startup_notified": False,       # UX-1: only announce once per session
+        "last_brief_date": "",           # UX-10: track daily briefing
+        "briefed_today": False,          # UX-10: only brief once per day
+        "personality_injected_count": 0, # UX-2: cap personality injections
     }
 
 
@@ -51,8 +71,12 @@ def _empty_queue_data() -> dict:
     return {
         "queue": [],
         "history": [],
-        "settings": {"instant_explain": False},
+        "settings": {
+            "instant_explain": False,
+            "last_brief_date": "",       # UX-10: persists across reconnects
+        },
         "stats": {"total_captured": 0, "total_answered": 0},
+        "meta": {"last_processed_length": 0},  # BUG-5: persists pointer
     }
 
 
@@ -97,17 +121,39 @@ class CuriosityQueueBackground(MatchingCapability):
             )
 
     async def _restore_from_file(self, s: dict) -> dict:
-        """Load persisted queue and seed state from settings."""
+        """
+        Load persisted queue and seed state from settings.
+        BUG-5: restores last_processed_index from meta to avoid re-processing
+        old messages on reconnect.
+        """
         data = await self._load_queue()
-        s["instant_explain_enabled"] = data.get("settings", {}).get("instant_explain", False)
+        settings = data.get("settings", {})
+        meta = data.get("meta", {})
+
+        s["instant_explain_enabled"] = settings.get("instant_explain", False)
+        s["last_brief_date"] = settings.get("last_brief_date", "")
+        # BUG-5: restore pointer so old messages aren't re-evaluated
+        s["last_processed_index"] = meta.get("last_processed_length", 0)
+
+        pending_count = len([i for i in data.get("queue", []) if not i.get("answered")])
         self.worker.editor_logging_handler.info(
-            f"[CuriosityQueue] Restored — {len(data.get('queue', []))} items in queue"
+            f"[CuriosityQueue] Restored — {pending_count} pending, "
+            f"pointer at {s['last_processed_index']}"
         )
         return data
 
     # ------------------------------------------------------------------
-    # Detection helpers (sync — called inside async watch_loop)
+    # Detection helpers (sync — no await, called inside async watch_loop)
     # ------------------------------------------------------------------
+
+    def _skip_phrase_filter(self, text: str) -> bool:
+        """
+        BUG-3: Return True if the text is a conversational question directed
+        at the assistant, not genuine intellectual curiosity.
+        These are checked BEFORE Phase 1 to avoid unnecessary LLM calls.
+        """
+        text_lower = text.lower()
+        return any(phrase in text_lower for phrase in SKIP_PHRASES)
 
     def _phase1_fast_filter(self, text: str) -> bool:
         """Quick keyword scan — returns True if any curiosity trigger word found."""
@@ -127,7 +173,7 @@ class CuriosityQueueBackground(MatchingCapability):
     def _phase2_llm_extract(self, text: str) -> Optional[dict]:
         """
         LLM-based curiosity classifier and topic extractor.
-        Called ONLY after Phase 1 fast filter passes.
+        Called ONLY after skip-phrase and Phase 1 filters pass.
         Returns parsed dict {capture, topic, category} or None on failure.
         """
         prompt = (
@@ -174,26 +220,41 @@ class CuriosityQueueBackground(MatchingCapability):
 
     def _is_duplicate(self, topic: str, data: dict) -> bool:
         """
-        60% word-overlap dedup check against unanswered queue items.
-        Prevents capturing the same curiosity twice.
+        Word-overlap dedup.
+        BUG-4: Checks both unanswered queue items (60% threshold) AND
+        recent history items (50% threshold) to prevent re-capturing
+        recently-answered curiosities.
         """
-        import re
         words_new = set(re.findall(r'\b[a-z]+\b', topic.lower()))
         if not words_new:
             return False
+
+        # Check unanswered queue — strict 60% threshold
         for item in data.get("queue", []):
             if item.get("answered"):
                 continue
-            existing_topic = item.get("topic", "")
-            words_existing = set(re.findall(r'\b[a-z]+\b', existing_topic.lower()))
+            words_existing = set(re.findall(r'\b[a-z]+\b', item.get("topic", "").lower()))
             if not words_existing:
                 continue
             overlap = len(words_new & words_existing) / max(len(words_new), len(words_existing))
             if overlap >= 0.60:
                 self.worker.editor_logging_handler.info(
-                    f"[CuriosityQueue] Duplicate skipped ({int(overlap*100)}% overlap): {topic}"
+                    f"[CuriosityQueue] Duplicate (queue, {int(overlap*100)}%): {topic}"
                 )
                 return True
+
+        # BUG-4: Also check last 20 history items — looser 50% threshold
+        for item in data.get("history", [])[-20:]:
+            words_h = set(re.findall(r'\b[a-z]+\b', item.get("topic", "").lower()))
+            if not words_h:
+                continue
+            overlap = len(words_new & words_h) / max(len(words_new), len(words_h))
+            if overlap >= 0.50:
+                self.worker.editor_logging_handler.info(
+                    f"[CuriosityQueue] Duplicate (history, {int(overlap*100)}%): {topic}"
+                )
+                return True
+
         return False
 
     # ------------------------------------------------------------------
@@ -207,6 +268,7 @@ class CuriosityQueueBackground(MatchingCapability):
             "topic": topic,
             "raw": text[:500],
             "captured_at": datetime.now().strftime("%Y-%m-%dT%H:%M:%S"),
+            "answered_at": None,  # BUG-8: track when answered, not just captured
             "date": datetime.now().strftime("%Y-%m-%d"),
             "answered": False,
             "answer": None,
@@ -245,7 +307,19 @@ class CuriosityQueueBackground(MatchingCapability):
             "[CuriosityQueue] daemon started — monitoring for curiosity moments (15s interval)"
         )
 
-        await self._restore_from_file(s)
+        data = await self._restore_from_file(s)
+
+        # UX-1: Startup notification — tell user about pending curiosities once
+        pending_on_start = [i for i in data.get("queue", []) if not i.get("answered")]
+        if len(pending_on_start) >= STARTUP_NOTIFY_MIN and not s["startup_notified"]:
+            count = len(pending_on_start)
+            await self.capability_worker.send_interrupt_signal()
+            await self.capability_worker.speak(
+                f"By the way — you have {count} "
+                f"{'curiosity' if count == 1 else 'curiosities'} waiting in your queue. "
+                "Say 'curiosity queue' whenever you're ready to explore."
+            )
+            s["startup_notified"] = True
 
         while True:
             try:
@@ -253,7 +327,7 @@ class CuriosityQueueBackground(MatchingCapability):
                 history = history or []
                 current_length = len(history)
 
-                # First-run skip guard: avoid processing large backlog on startup
+                # BUG-5: First-run guard only needed when pointer wasn't restored
                 if s["last_processed_index"] == 0 and current_length > 10:
                     s["last_processed_index"] = current_length - 10
                     self.worker.editor_logging_handler.info(
@@ -270,6 +344,8 @@ class CuriosityQueueBackground(MatchingCapability):
                 new_msgs = history[s["last_processed_index"]:]
                 s["last_processed_index"] = current_length
 
+                llm_calls_this_poll = 0  # UX-7: rate-limit LLM calls
+
                 for msg in new_msgs:
                     if msg.get("role") != "user":
                         continue
@@ -282,12 +358,25 @@ class CuriosityQueueBackground(MatchingCapability):
                     if not text or len(text.split()) < 5:
                         continue
 
+                    # BUG-3: Skip conversational questions directed at the assistant
+                    if self._skip_phrase_filter(text):
+                        continue
+
                     # Phase 1: fast keyword filter (no LLM cost)
                     if not self._phase1_fast_filter(text):
                         continue
 
+                    # UX-7: Rate-limit — max 3 LLM calls per poll cycle
+                    if llm_calls_this_poll >= MAX_LLM_CALLS_PER_POLL:
+                        self.worker.editor_logging_handler.info(
+                            "[CuriosityQueue] LLM rate limit reached for this poll"
+                        )
+                        break
+
                     # Phase 2: LLM extraction — only runs if Phase 1 passes
                     result = self._phase2_llm_extract(text)
+                    llm_calls_this_poll += 1
+
                     if result is None:
                         continue
 
@@ -302,35 +391,72 @@ class CuriosityQueueBackground(MatchingCapability):
 
                     # Capture it
                     data = await self._add_to_queue(text, topic, category, data)
+
+                    # BUG-5: persist pointer in meta before saving
+                    data.setdefault("meta", {})["last_processed_length"] = s["last_processed_index"]
                     await self._save_queue(data)
                     s["polls_since_save"] = 0
 
-                    # Re-sync instant_explain setting from what we just saved
+                    # Re-sync setting from saved data
                     s["instant_explain_enabled"] = data["settings"].get("instant_explain", False)
 
                     self.worker.editor_logging_handler.info(
                         f"[CuriosityQueue] Captured [{category}]: {topic}"
                     )
 
+                    # UX-2: Inject into agent personality (capped per session)
+                    if s["personality_injected_count"] < MAX_PERSONALITY_INJECTIONS:
+                        try:
+                            self.capability_worker.update_personality_agent_prompt(
+                                f"[Curiosity noted]: {topic}"
+                            )
+                            s["personality_injected_count"] += 1
+                        except Exception:
+                            pass
+
                     # Instant explain: notify only — never await user_response() in daemon
                     if s["instant_explain_enabled"]:
+                        # UX-9: Better notification copy
                         await self.capability_worker.send_interrupt_signal()
                         await self.capability_worker.speak(
-                            f"Just added to your curiosity queue: {topic}. "
-                            "Ask me to explain it anytime."
+                            f"Curious about {topic}? Noted — "
+                            "say 'explain my curiosity' anytime and I'll break it down."
                         )
+
+                # UX-10: Daily briefing — on first poll of a new day with pending items
+                today = datetime.now().strftime("%Y-%m-%d")
+                if today != s["last_brief_date"] and not s["briefed_today"]:
+                    data_fresh = await self._load_queue()
+                    pending = [i for i in data_fresh.get("queue", []) if not i.get("answered")]
+                    if len(pending) >= DAILY_BRIEF_MIN:
+                        await self.capability_worker.send_interrupt_signal()
+                        await self.capability_worker.speak(
+                            f"New day! You have {len(pending)} "
+                            f"{'curiosity' if len(pending) == 1 else 'curiosities'} "
+                            "waiting to explore. Say 'curiosity queue' whenever you're ready."
+                        )
+                    # Update both in-memory and persisted last_brief_date
+                    data_fresh["settings"]["last_brief_date"] = today
+                    await self._save_queue(data_fresh)
+                    s["last_brief_date"] = today
+                    s["briefed_today"] = True
 
             except Exception as e:
                 self.worker.editor_logging_handler.error(
                     f"[CuriosityQueue] Loop error: {e}"
                 )
 
-            # Periodic settings re-sync (picks up toggles from main.py)
+            # Periodic settings re-sync (picks up toggles made by main.py)
             s["polls_since_save"] += 1
             if s["polls_since_save"] >= SAVE_EVERY_N_POLLS:
                 try:
                     fresh = await self._load_queue()
-                    s["instant_explain_enabled"] = fresh["settings"].get("instant_explain", False)
+                    settings = fresh.get("settings", {})
+                    s["instant_explain_enabled"] = settings.get("instant_explain", False)
+                    s["last_brief_date"] = settings.get("last_brief_date", s["last_brief_date"])
+                    # BUG-5: also persist pointer on periodic sync
+                    fresh.setdefault("meta", {})["last_processed_length"] = s["last_processed_index"]
+                    await self._save_queue(fresh)
                     s["polls_since_save"] = 0
                 except Exception:
                     pass

@@ -17,6 +17,7 @@ from src.main import AgentWorker
 # =============================================================================
 
 QUEUE_FILE = "curiosity_queue.json"
+EXPLORE_ALL_CAP = 5  # BUG-10: max items per explore-all batch
 
 HOTWORDS = {
     "what am i curious about",
@@ -40,11 +41,12 @@ HOTWORDS = {
     "things i wonder about",
 }
 
-EXIT_WORDS = {
-    "stop", "exit", "quit", "done", "cancel", "bye", "goodbye",
-    "never mind", "nevermind", "no thanks", "that's all", "thats all",
-    "nothing", "nah", "no",
-}
+# BUG-2: Whole-word regex exit detection — prevents false exits on "no, explain..."
+_EXIT_PATTERN = re.compile(
+    r'\b(stop|exit|quit|done|cancel|bye|goodbye|never\s*mind|no\s*thanks|'
+    r"that'?s\s*all|nothing|nah)\b",
+    re.IGNORECASE,
+)
 
 ANSWER_SYSTEM_PROMPT = (
     "You're answering a genuine curiosity in 3-4 conversational sentences. "
@@ -58,6 +60,17 @@ ORDINALS = {
     "1st": 1, "2nd": 2, "3rd": 3, "4th": 4, "5th": 5,
     "one": 1, "two": 2, "three": 3, "four": 4, "five": 5,
 }
+
+
+# BUG-9: Single shared empty-data factory — used in all three _load_queue paths
+def _empty_queue_data() -> dict:
+    return {
+        "queue": [],
+        "history": [],
+        "settings": {"instant_explain": False, "last_brief_date": ""},
+        "stats": {"total_captured": 0, "total_answered": 0},
+        "meta": {"last_processed_length": 0},
+    }
 
 
 class CuriosityQueueCapability(MatchingCapability):
@@ -80,9 +93,13 @@ class CuriosityQueueCapability(MatchingCapability):
     # ------------------------------------------------------------------
 
     def _is_exit(self, text: str) -> bool:
-        if not text:
+        """BUG-2: Whole-word exit check — 'no' only triggers on standalone 'no', not in phrases."""
+        if not text or not text.strip():
             return True
-        return any(w in text.lower() for w in EXIT_WORDS)
+        stripped = text.strip().rstrip(".,!?").strip().lower()
+        if stripped == "no":
+            return True
+        return bool(_EXIT_PATTERN.search(text))
 
     def _strip_json_fences(self, raw: str) -> str:
         raw = raw.strip()
@@ -136,13 +153,59 @@ class CuriosityQueueCapability(MatchingCapability):
         return "LIST"
 
     def _build_topic_list(self, items: list) -> str:
-        """Build a spoken numbered list of topics, capped at 10."""
+        """Build a spoken flat numbered list of topics, capped at 10."""
         capped = items[:10]
         parts = [f"{i + 1}. {item['topic']}" for i, item in enumerate(capped)]
         result = ". ".join(parts)
         if len(items) > 10:
             result += f". And {len(items) - 10} more."
         return result
+
+    def _build_grouped_topic_list(self, items: list) -> str:
+        """UX-3: Group topics by category (how/why/what/other) for clarity."""
+        capped = items[:10]
+
+        groups: dict = {}
+        for item in capped:
+            cat = item.get("category", "other")
+            if cat not in groups:
+                groups[cat] = []
+            groups[cat].append(item)
+
+        # Fall back to flat list when all items share a single category
+        if len(groups) == 1:
+            return self._build_topic_list(items)
+
+        parts = []
+        idx = 1
+        for cat in ["how", "why", "what", "other"]:
+            if cat not in groups:
+                continue
+            group_items = groups[cat]
+            n = len(group_items)
+            if cat == "other":
+                heading = f"{n} {'other' if n == 1 else 'others'}"
+            else:
+                heading = f"{n} '{cat}' {'question' if n == 1 else 'questions'}"
+            nums = [f"{idx + j}. {item['topic']}" for j, item in enumerate(group_items)]
+            parts.append(f"{heading}: {'. '.join(nums)}")
+            idx += n
+
+        result = ". ".join(parts)
+        if len(items) > 10:
+            result += f". And {len(items) - 10} more."
+        return result
+
+    def _infer_category(self, topic: str) -> str:
+        """UX-6: Lightweight keyword-based category inference for manually-added topics."""
+        t = topic.lower().strip()
+        if re.search(r'\bhow\b', t):
+            return "how"
+        if re.search(r'\bwhy\b', t):
+            return "why"
+        if re.search(r'\bwhat\b', t):
+            return "what"
+        return "other"
 
     def _select_item(self, pending: list, hint: str) -> Optional[dict]:
         """
@@ -196,7 +259,10 @@ class CuriosityQueueCapability(MatchingCapability):
                 system_prompt=ANSWER_SYSTEM_PROMPT,
             )
         except Exception:
-            return f"That's a fascinating topic — {topic}. I wasn't able to generate a full answer right now, but it's worth exploring!"
+            return (
+                f"That's a fascinating topic — {topic}. "
+                "I wasn't able to generate a full answer right now, but it's definitely worth exploring!"
+            )
 
     # ------------------------------------------------------------------
     # File I/O
@@ -206,14 +272,14 @@ class CuriosityQueueCapability(MatchingCapability):
         try:
             exists = await self.capability_worker.check_if_file_exists(QUEUE_FILE, False)
             if not exists:
-                return {"queue": [], "history": [], "settings": {"instant_explain": False}, "stats": {"total_captured": 0, "total_answered": 0}}
+                return _empty_queue_data()  # BUG-9
             raw = await self.capability_worker.read_file(QUEUE_FILE, False)
             if not raw or not raw.strip():
-                return {"queue": [], "history": [], "settings": {"instant_explain": False}, "stats": {"total_captured": 0, "total_answered": 0}}
+                return _empty_queue_data()  # BUG-9
             return json.loads(raw)
         except Exception as e:
             self.worker.editor_logging_handler.error(f"[CuriosityQueue] Load error: {e}")
-            return {"queue": [], "history": [], "settings": {"instant_explain": False}, "stats": {"total_captured": 0, "total_answered": 0}}
+            return _empty_queue_data()  # BUG-9
 
     async def _save_queue(self, data: dict):
         try:
@@ -247,7 +313,8 @@ class CuriosityQueueCapability(MatchingCapability):
             return
 
         count = len(pending)
-        topic_list = self._build_topic_list(pending)
+        # UX-3: Grouped list by category
+        topic_list = self._build_grouped_topic_list(pending)
         await self.capability_worker.speak(
             f"You have {count} {'curiosity' if count == 1 else 'curiosities'} waiting. {topic_list}."
         )
@@ -263,6 +330,9 @@ class CuriosityQueueCapability(MatchingCapability):
         await self._handle_explore(data, reply)
 
     async def _handle_explore(self, data: dict, hint: str = "", depth: int = 0):
+        # UX-8: Reload fresh data at each explore to catch background daemon additions
+        data = await self._load_queue()
+
         # Recursion depth cap
         if depth >= 3:
             await self.capability_worker.speak(
@@ -279,7 +349,9 @@ class CuriosityQueueCapability(MatchingCapability):
 
         selected = self._select_item(pending, hint)
         if selected is None:
-            await self.capability_worker.speak("I couldn't find that one — let me explain the first item instead.")
+            await self.capability_worker.speak(
+                "I couldn't find that one — let me explain the first item instead."
+            )
             selected = pending[0]
 
         topic = selected["topic"]
@@ -288,21 +360,33 @@ class CuriosityQueueCapability(MatchingCapability):
         # Generate answer (sync LLM call)
         answer = self._generate_answer(topic)
 
-        # Mark answered in the data
+        # BUG-7: Use found flag to detect race with background daemon; BUG-8: record answered_at
+        found = False
         for item in data["queue"]:
             if item["id"] == selected["id"]:
                 item["answered"] = True
                 item["answer"] = answer
+                item["answered_at"] = datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
+                found = True
                 break
+        if not found:
+            self.worker.editor_logging_handler.error(
+                f"[CuriosityQueue] Item not found in queue after answer: {selected['id']}"
+            )
 
         data["stats"]["total_answered"] = data["stats"].get("total_answered", 0) + 1
         await self._save_queue(data)
 
         await self.capability_worker.speak(answer)
 
-        # Offer to continue if there are more
+        # Check remaining after marking answered
         remaining = self._pending(data)
-        if remaining:
+        if not remaining:
+            # UX-4: Warm closure when queue is fully explored
+            await self.capability_worker.speak(
+                "That's your last curiosity — all caught up! Keep wondering and I'll keep capturing."
+            )
+        else:
             remaining_count = len(remaining)
             await self.capability_worker.speak(
                 f"You have {remaining_count} more {'curiosity' if remaining_count == 1 else 'curiosities'}. "
@@ -318,12 +402,21 @@ class CuriosityQueueCapability(MatchingCapability):
             await self.capability_worker.speak("Your curiosity queue is empty — nothing to explore!")
             return
 
-        count = len(pending)
-        await self.capability_worker.speak(
-            f"I'll give you a quick overview of all {count} {'curiosity' if count == 1 else 'curiosities'}."
-        )
+        total_pending = len(pending)
+        # BUG-10: Cap at EXPLORE_ALL_CAP (5) per invocation to avoid multi-minute blocking
+        batch = pending[:EXPLORE_ALL_CAP]
 
-        for item in pending:
+        if total_pending <= EXPLORE_ALL_CAP:
+            await self.capability_worker.speak(
+                f"I'll give you a quick overview of all {total_pending} "
+                f"{'curiosity' if total_pending == 1 else 'curiosities'}."
+            )
+        else:
+            await self.capability_worker.speak(
+                f"You have {total_pending} curiosities — I'll walk through the first {EXPLORE_ALL_CAP}."
+            )
+
+        for item in batch:
             topic = item["topic"]
             try:
                 brief = self.capability_worker.text_to_text_response(
@@ -337,12 +430,27 @@ class CuriosityQueueCapability(MatchingCapability):
 
             item["answered"] = True
             item["answer"] = brief
+            item["answered_at"] = datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
 
-        data["stats"]["total_answered"] = data["stats"].get("total_answered", 0) + count
+        batch_count = len(batch)
+        data["stats"]["total_answered"] = data["stats"].get("total_answered", 0) + batch_count
         await self._save_queue(data)
-        await self.capability_worker.speak(
-            "All done! Your curiosity queue is now empty. Keep wondering — I'll keep capturing."
-        )
+
+        # BUG-10: Offer next batch if more remain
+        if total_pending > EXPLORE_ALL_CAP:
+            still_remaining = total_pending - EXPLORE_ALL_CAP
+            await self.capability_worker.speak(
+                f"That's {EXPLORE_ALL_CAP}. You have {still_remaining} more. "
+                "Want me to continue with the next batch?"
+            )
+            reply = await self.capability_worker.user_response()
+            if not self._is_exit(reply):
+                fresh = await self._load_queue()
+                await self._handle_explore_all(fresh)
+        else:
+            await self.capability_worker.speak(
+                "All done! Your curiosity queue is now empty. Keep wondering — I'll keep capturing."
+            )
 
     async def _handle_add(self, data: dict, trigger_text: str):
         # Try to extract topic from trigger text
@@ -373,7 +481,23 @@ class CuriosityQueueCapability(MatchingCapability):
             await self.capability_worker.speak("I didn't catch a topic. No worries!")
             return
 
-        # Build entry directly (manual add — no LLM detection)
+        # BUG-6: Dedup check — same 60% word-overlap threshold as the background daemon
+        topic_words = set(re.findall(r'\b[a-z]+\b', topic.lower()))
+        for existing in data.get("queue", []):
+            if existing.get("answered"):
+                continue
+            existing_words = set(re.findall(r'\b[a-z]+\b', existing.get("topic", "").lower()))
+            if existing_words:
+                overlap = len(topic_words & existing_words) / max(len(topic_words), len(existing_words), 1)
+                if overlap >= 0.60:
+                    await self.capability_worker.speak(
+                        "That's already in your queue! Say 'curiosity queue' to explore it."
+                    )
+                    return
+
+        # UX-6: Infer category from topic text
+        category = self._infer_category(topic)
+
         entry = {
             "id": str(int(datetime.now().timestamp() * 1000)),
             "topic": topic,
@@ -382,12 +506,13 @@ class CuriosityQueueCapability(MatchingCapability):
             "date": datetime.now().strftime("%Y-%m-%d"),
             "answered": False,
             "answer": None,
-            "category": "other",
+            "answered_at": None,
+            "category": category,
         }
         data.setdefault("queue", []).append(entry)
         data["stats"]["total_captured"] = data["stats"].get("total_captured", 0) + 1
 
-        # Overflow: max 50 items
+        # Overflow: max 50 items — archive oldest answered item, or oldest if all unanswered
         if len(data["queue"]) > 50:
             answered = [i for i in data["queue"] if i.get("answered")]
             oldest = min(
@@ -463,9 +588,10 @@ class CuriosityQueueCapability(MatchingCapability):
         history_items = data.get("history", [])
 
         all_answered = answered_queue + history_items
+        # BUG-8: Sort by answered_at (when it was actually explored), fallback to captured_at
         all_answered_sorted = sorted(
             all_answered,
-            key=lambda x: x.get("captured_at", ""),
+            key=lambda x: x.get("answered_at") or x.get("captured_at", ""),
             reverse=True,
         )
         recent = all_answered_sorted[:5]
@@ -480,8 +606,17 @@ class CuriosityQueueCapability(MatchingCapability):
             f"{i + 1}. {item['topic']}" for i, item in enumerate(recent)
         )
         await self.capability_worker.speak(
-            f"Here are your {len(recent)} most recently answered curiosities. {topic_list}."
+            f"Here are your {len(recent)} most recently explored curiosities. {topic_list}."
         )
+
+        # UX-5: Append lifetime stats
+        total_captured = data["stats"].get("total_captured", 0)
+        total_answered = data["stats"].get("total_answered", 0)
+        if total_captured > 0:
+            await self.capability_worker.speak(
+                f"You've explored {total_answered} of {total_captured} "
+                f"{'curiosity' if total_captured == 1 else 'curiosities'} total."
+            )
 
     # ------------------------------------------------------------------
     # Main run loop
