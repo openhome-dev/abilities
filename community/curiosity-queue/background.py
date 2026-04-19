@@ -62,7 +62,7 @@ def _new_state() -> dict:
         "startup_notified": False,       # UX-1: only announce once per session
         "last_brief_date": "",           # UX-10: track daily briefing
         "briefed_today": False,          # UX-10: only brief once per day
-        "personality_injected_count": 0, # UX-2: cap personality injections
+        "personality_injected_count": 0,  # UX-2: cap personality injections
     }
 
 
@@ -86,7 +86,7 @@ class CuriosityQueueBackground(MatchingCapability):
     background_daemon_mode: bool = False
 
     # Do not change following tag of register capability
-    #{{register capability}}
+    # {{register capability}}
 
     # ------------------------------------------------------------------
     # File I/O
