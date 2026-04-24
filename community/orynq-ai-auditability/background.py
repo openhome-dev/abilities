@@ -87,14 +87,23 @@ def _hash_str(data: str) -> str:
 
 
 def _new_state() -> dict:
-    """Mutable state held as a local dict (Pydantic blocks arbitrary self.*)."""
+    """Mutable state held as a local dict (Pydantic blocks arbitrary self.*).
+
+    State versioning: v2 replaces the single-session `last_seen_index`
+    pointer with a `session_pointers` map so concurrent / restarted
+    sessions no longer corrupt each other's capture position. The old
+    field is retained for read-only migration tolerance but never
+    written.
+    """
     return {
-        "last_seen_index": 0,
-        "chain": [],          # list of entry dicts
-        "head": ZERO_HASH,    # current chain head (last entry's chain_hash)
-        "last_anchor": None,  # {content_hash, status, sponsored, ts} or None
-        "consent_granted_until": 0,  # epoch seconds; 0 = require consent each anchor
+        "chain": [],              # persistent list of entry dicts across sessions
+        "head": ZERO_HASH,        # current chain head (last entry's chain_hash)
+        "last_anchor": None,      # {content_hash, chain_len, ts, ts_epoch, ...} or None
+        "session_pointers": {},   # {session_id: last_seen_index_in_that_session}
         "polls_since_save": 0,
+        "upload_consec_failures": 0,
+        "last_upload_failure_at": 0,
+        "state_version": 2,
     }
 
 
@@ -302,15 +311,36 @@ class OrynqAuditabilityBackground(MatchingCapability):
                     pass
 
             if data is None:
+                self.worker.editor_logging_handler.info(
+                    "[OrynqAudit] load: no file on disk, starting with _new_state()"
+                )
                 return _new_state()
 
             state = _new_state()
+
+            # Migration: pre-v2 files stored a single user-scoped
+            # `last_seen_index`. That field is ignored going forward — fresh
+            # sessions reliably start at 0 via `session_pointers.get(id, 0)`.
+            # We just log the observed format so post-mortems can tell.
+            legacy_pointer = data.get("last_seen_index")
+            if "session_pointers" not in data and legacy_pointer is not None:
+                self.worker.editor_logging_handler.info(
+                    "[OrynqAudit] load: migrating pre-v2 state "
+                    + "(discarding legacy last_seen_index=" + str(legacy_pointer) + ")"
+                )
+
+            sp = data.get("session_pointers", {}) or {}
+            if not isinstance(sp, dict):
+                sp = {}
+
             state.update({
-                "last_seen_index": int(data.get("last_seen_index", 0)),
                 "chain": data.get("chain", []) or [],
                 "head": data.get("head", ZERO_HASH),
                 "last_anchor": data.get("last_anchor"),
-                "consent_granted_until": int(data.get("consent_granted_until", 0) or 0),
+                "session_pointers": sp,
+                "upload_consec_failures": int(data.get("upload_consec_failures", 0) or 0),
+                "last_upload_failure_at": int(data.get("last_upload_failure_at", 0) or 0),
+                "state_version": int(data.get("state_version", 1) or 1),
             })
             return state
         except Exception as e:
@@ -331,11 +361,13 @@ class OrynqAuditabilityBackground(MatchingCapability):
         _compact_if_needed(state)
 
         data = {
-            "last_seen_index": state["last_seen_index"],
+            "state_version": 2,
             "chain": state["chain"],
             "head": state["head"],
             "last_anchor": state["last_anchor"],
-            "consent_granted_until": state["consent_granted_until"],
+            "session_pointers": state.get("session_pointers", {}),
+            "upload_consec_failures": int(state.get("upload_consec_failures", 0) or 0),
+            "last_upload_failure_at": int(state.get("last_upload_failure_at", 0) or 0),
             "chain_length": len(state["chain"]),
             "updated_ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         }
@@ -415,6 +447,9 @@ class OrynqAuditabilityBackground(MatchingCapability):
     def _extend_chain(self, state: dict, new_messages: list) -> int:
         """Append hash entries for each new message. Returns number appended."""
         added = 0
+        total = len(new_messages)
+        skip_counts = {"no_role": 0, "empty_string": 0, "unserializable": 0, "empty_structured": 0}
+
         # Determine the next sequence number. Using len(chain) would
         # collide with existing seqs once compaction has prepended a
         # synthetic marker or trimmed older entries, so we walk backward
@@ -426,10 +461,16 @@ class OrynqAuditabilityBackground(MatchingCapability):
             next_seq = int(existing.get("seq", -1)) + 1
             break
 
-        for msg in new_messages:
+        for idx, msg in enumerate(new_messages):
             role = msg.get("role", "")
             if not role:
                 # No label, no audit value. Skip.
+                skip_counts["no_role"] += 1
+                self.worker.editor_logging_handler.info(
+                    "[OrynqAudit] extend[" + str(idx) + "/" + str(total)
+                    + "]: skip no_role (content_type="
+                    + type(msg.get("content")).__name__ + ")"
+                )
                 continue
 
             content = msg.get("content", "")
@@ -443,28 +484,55 @@ class OrynqAuditabilityBackground(MatchingCapability):
             if isinstance(content, str):
                 normalized = content.strip()
                 if not normalized:
+                    skip_counts["empty_string"] += 1
+                    self.worker.editor_logging_handler.info(
+                        "[OrynqAudit] extend[" + str(idx) + "/" + str(total)
+                        + "]: skip empty_string (role=" + role + ")"
+                    )
                     continue
             else:
                 try:
                     normalized = _canonical_json(content)
                 except (TypeError, ValueError) as e:
-                    # bytes, sets, non-string dict keys, custom classes, etc.
-                    # Log and move on — the audit guarantee is "if it hashed,
-                    # it's in the chain"; unhashable events are beyond scope.
+                    skip_counts["unserializable"] += 1
                     self.worker.editor_logging_handler.warning(
-                        "[OrynqAudit] skipping unserializable content for role "
-                        + str(role) + ": " + str(e)
+                        "[OrynqAudit] extend[" + str(idx) + "/" + str(total)
+                        + "]: skip unserializable role=" + str(role)
+                        + " err=" + str(e)
                     )
                     continue
-                # Empty containers or null — no information to anchor.
                 if normalized in ("", "{}", "[]", "null"):
+                    skip_counts["empty_structured"] += 1
+                    self.worker.editor_logging_handler.info(
+                        "[OrynqAudit] extend[" + str(idx) + "/" + str(total)
+                        + "]: skip empty_structured (role=" + role
+                        + " normalized=" + normalized + ")"
+                    )
                     continue
 
             entry = _build_entry(role, normalized, state["head"], next_seq)
             state["chain"].append(entry)
             state["head"] = entry["chain_hash"]
+            self.worker.editor_logging_handler.info(
+                "[OrynqAudit] extend[" + str(idx) + "/" + str(total)
+                + "]: ADD role=" + role + " seq=" + str(next_seq)
+                + " content_type=" + ("str" if isinstance(content, str) else type(content).__name__)
+                + " normalized_len=" + str(len(normalized))
+                + " content_hash=" + entry["content_hash"][:16]
+                + " chain_hash=" + entry["chain_hash"][:16]
+            )
             next_seq += 1
             added += 1
+
+        if total > 0:
+            self.worker.editor_logging_handler.info(
+                "[OrynqAudit] extend summary: total=" + str(total)
+                + " added=" + str(added)
+                + " skip_no_role=" + str(skip_counts["no_role"])
+                + " skip_empty_str=" + str(skip_counts["empty_string"])
+                + " skip_empty_structured=" + str(skip_counts["empty_structured"])
+                + " skip_unserializable=" + str(skip_counts["unserializable"])
+            )
         return added
 
     # ------------------------------------------------------------------
@@ -472,39 +540,126 @@ class OrynqAuditabilityBackground(MatchingCapability):
     # ------------------------------------------------------------------
 
     async def watch_loop(self):
+        # STEP-BY-STEP LOGGING — we need to see EXACTLY how far we get.
         self.worker.editor_logging_handler.info(
-            "[OrynqAudit] daemon started — silent capture every "
-            + str(int(POLL_INTERVAL)) + "s"
+            "[OrynqAudit] watch_loop STEP A: entered coroutine"
+        )
+
+        # Resolve session_id. Daemons are per-session but persisted state
+        # is user-scoped, so we must key pointers by session_id to avoid
+        # cross-session contamination. Fallback to daemon-instance id if
+        # SDK doesn't expose session_id.
+        try:
+            if hasattr(self.worker, "session_id") and self.worker.session_id:
+                session_id = str(self.worker.session_id)
+                sid_source = "worker.session_id"
+            else:
+                session_id = "daemon-" + str(int(time.time() * 1000))
+                sid_source = "fallback-instance-id"
+            self._session_id = session_id
+            self.worker.editor_logging_handler.info(
+                "[OrynqAudit] watch_loop STEP B: session_id=" + session_id
+                + " (src=" + sid_source + ")"
+            )
+        except Exception as e:
+            self.worker.editor_logging_handler.error(
+                "[OrynqAudit] watch_loop STEP B FAILED: " + str(e)
+            )
+            return
+
+        # HEARTBEAT FILE — written on daemon start. If this file appears in
+        # Persistent Memory's periodic file-list snapshot, we have proof
+        # call() fired + watch_loop started. If NOT, the cloud is not
+        # loading this ability at all.
+        try:
+            hb_payload = json.dumps({
+                "session_id": session_id,
+                "sid_source": sid_source,
+                "started_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                "started_at_epoch": int(time.time()),
+                "note": "This file is written on daemon start — its existence proves call() + watch_loop fired.",
+            }, indent=2)
+            await self.capability_worker.write_file(
+                "orynq_audit_heartbeat.json", hb_payload, False
+            )
+            self.worker.editor_logging_handler.info(
+                "[OrynqAudit] watch_loop STEP C: heartbeat file written OK"
+            )
+        except Exception as e:
+            self.worker.editor_logging_handler.error(
+                "[OrynqAudit] watch_loop STEP C FAILED: heartbeat write raised: "
+                + str(e)
+            )
+            # Keep going — heartbeat is diagnostic, not essential.
+
+        self.worker.editor_logging_handler.info(
+            "[OrynqAudit] watch_loop STEP D: daemon started — session_id=" + session_id
+            + " poll every " + str(int(POLL_INTERVAL)) + "s"
         )
 
         state = await self._load_state()
 
+        # Dump loaded state for post-mortem diagnosis.
+        sp = state.get("session_pointers", {}) or {}
+        la = state.get("last_anchor") or {}
+        self.worker.editor_logging_handler.info(
+            "[OrynqAudit] loaded state: version=" + str(state.get("state_version", "pre-v2"))
+            + " chain_len=" + str(len(state.get("chain", [])))
+            + " head=" + str(state.get("head", ""))[:16]
+            + " session_pointers=" + json.dumps(sp)
+            + " last_anchor_chain_len=" + str(la.get("chain_len", "none"))
+            + " last_anchor_ts=" + str(la.get("ts", "none"))
+            + " upload_consec_failures=" + str(state.get("upload_consec_failures", 0))
+        )
+
+        poll_count = 0
         while True:
             try:
+                poll_count += 1
                 history = self.capability_worker.get_full_message_history() or []
                 current_length = len(history)
-                prev_seen = state["last_seen_index"]
 
-                # Pointer hygiene — if history was rewritten or trimmed, back off
-                if state["last_seen_index"] > current_length:
+                # Per-session pointer. Fresh sessions default to 0 and capture
+                # the full session history. The prior design used a single
+                # user-scoped pointer that broke the moment a second session
+                # saw shorter history.
+                session_pointers = state.get("session_pointers", {})
+                if not isinstance(session_pointers, dict):
+                    session_pointers = {}
+                    state["session_pointers"] = session_pointers
+                prev_seen = int(session_pointers.get(session_id, 0) or 0)
+
+                # Sanity: if this session's own history shrunk (context reset
+                # mid-session — rare but possible), clamp down.
+                shrunk = False
+                if prev_seen > current_length:
                     self.worker.editor_logging_handler.info(
-                        "[OrynqAudit] history shrunk, resetting pointer"
+                        "[OrynqAudit] within-session history shrunk: "
+                        + "session=" + session_id
+                        + " prev_seen=" + str(prev_seen)
+                        + " current_length=" + str(current_length)
                     )
-                    state["last_seen_index"] = current_length
+                    prev_seen = current_length
+                    shrunk = True
 
-                new_messages = history[state["last_seen_index"]:]
-                state["last_seen_index"] = current_length
+                new_messages = history[prev_seen:]
+                session_pointers[session_id] = current_length
 
                 added = self._extend_chain(state, new_messages)
 
                 state["polls_since_save"] = state.get("polls_since_save", 0) + 1
 
                 self.worker.editor_logging_handler.info(
-                    "[OrynqAudit] poll: hist_len=" + str(current_length)
-                    + " seen_prev=" + str(prev_seen)
+                    "[OrynqAudit] poll#" + str(poll_count)
+                    + ": session=" + session_id
+                    + " hist_len=" + str(current_length)
+                    + " prev_seen=" + str(prev_seen)
+                    + " shrunk=" + str(shrunk)
                     + " new_msgs=" + str(len(new_messages))
                     + " added=" + str(added)
                     + " chain_len=" + str(len(state.get("chain", [])))
+                    + " head=" + str(state.get("head", ""))[:16]
+                    + " sessions_tracked=" + str(len(session_pointers))
                 )
 
                 if added > 0:
@@ -717,11 +872,49 @@ class OrynqAuditabilityBackground(MatchingCapability):
     # Entry point
     # ------------------------------------------------------------------
 
-    def call(self, worker: AgentWorker, background_daemon_mode: bool):
+    def call(self, worker: AgentWorker, background_daemon_mode: bool = False):
+        # MAXIMUM INSTRUMENTATION — log every step so if we stall, we see
+        # exactly where. Default `background_daemon_mode=False` so the
+        # cloud can call this with either `call(worker)` (skill pattern)
+        # or `call(worker, True)` (background_daemon pattern) without a
+        # TypeError — a defensive hedge in case the cloud's invocation
+        # differs across category paths.
+        try:
+            worker.editor_logging_handler.info(
+                "[OrynqAudit] call() STEP 1: entered, bd_mode="
+                + str(background_daemon_mode)
+            )
+        except Exception:
+            pass  # can't even log — nothing we can do
         self.worker = worker
         self.background_daemon_mode = background_daemon_mode
-        self.capability_worker = CapabilityWorker(self.worker)
-        self.worker.editor_logging_handler.info(
-            "[OrynqAudit] background.py call() — launching watch_loop"
-        )
-        self.worker.session_tasks.create(self.watch_loop())
+        try:
+            self.worker.editor_logging_handler.info(
+                "[OrynqAudit] call() STEP 2: self.worker + bd_mode assigned"
+            )
+        except Exception:
+            pass
+        try:
+            self.capability_worker = CapabilityWorker(self.worker)
+            self.worker.editor_logging_handler.info(
+                "[OrynqAudit] call() STEP 3: CapabilityWorker created"
+            )
+        except Exception as e:
+            self.worker.editor_logging_handler.error(
+                "[OrynqAudit] call() STEP 3 FAILED: CapabilityWorker init raised: "
+                + str(e)
+            )
+            return
+        try:
+            self.worker.editor_logging_handler.info(
+                "[OrynqAudit] call() STEP 4: about to session_tasks.create(watch_loop)"
+            )
+            self.worker.session_tasks.create(self.watch_loop())
+            self.worker.editor_logging_handler.info(
+                "[OrynqAudit] call() STEP 5: session_tasks.create returned OK"
+            )
+        except Exception as e:
+            self.worker.editor_logging_handler.error(
+                "[OrynqAudit] call() STEP 4/5 FAILED: session_tasks.create raised: "
+                + str(e)
+            )
