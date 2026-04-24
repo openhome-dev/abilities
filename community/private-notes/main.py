@@ -55,6 +55,7 @@ Rules:
 - ask_followup is only for missing or ambiguous user intent. Do not use ask_followup to confirm overwrite or delete.
 - For delete requests, call delete_notes with the matching ids. Python will ask the yes/no confirmation.
 - For overwrite requests, call write_note with the matching id. Python will ask the yes/no confirmation.
+- If the user asks to update or overwrite a note but does not provide the new content, use ask_followup to ask what should change.
 - For topic or keyword searches, call search_notes with the user's search phrase.
 - Create short, useful titles. Prefer noun phrases like "Parking", "Travel Prep", or "Dentist". Do not title notes "my note", "your parking note", "the note", or similar UI phrases.
 - Keep content faithful to the user's meaning. Do not add extra tasks or advice.
@@ -142,6 +143,16 @@ class PrivateNotesCapability(MatchingCapability):
                     continue
                 tool_name = tool_call.get("name", "")
                 tool_args = tool_call.get("arguments", {})
+                if not isinstance(tool_args, dict):
+                    history.append({"role": "assistant", "content": llm_response})
+                    history.append({
+                        "role": "user",
+                        "content": (
+                            "Tool arguments must be a JSON object. Return ONLY valid JSON "
+                            "with a supported tool name and an object-valued arguments field."
+                        ),
+                    })
+                    continue
                 self.worker.editor_logging_handler.info(f"[PrivateNotes] Tool={tool_name}")
 
                 history.append({"role": "assistant", "content": llm_response})
@@ -152,17 +163,6 @@ class PrivateNotesCapability(MatchingCapability):
 
                 if tool_name == "ask_followup":
                     question = tool_args.get("question", "")
-                    if self._looks_like_destructive_confirmation(question):
-                        history.append({
-                            "role": "user",
-                            "content": (
-                                "Do not ask confirmation with ask_followup. "
-                                "Python handles delete and overwrite confirmation. "
-                                "Call delete_notes or write_note with the matching note ids now."
-                            ),
-                        })
-                        continue
-
                     await self.capability_worker.speak(question)
                     followup = await self._get_user_input(
                         "I didn't catch anything, so I didn't change your notes."
@@ -249,7 +249,7 @@ class PrivateNotesCapability(MatchingCapability):
         if not existing:
             return {"ok": False, "notes_changed": False, "error": "note not found"}
 
-        question = self._confirmation_question("Overwrite", [existing])
+        question = f"Overwrite note titled {existing.get('title') or 'Untitled note'}"
         if not await self.capability_worker.run_confirmation_loop(question):
             return {"ok": True, "notes_changed": False, "status": "cancelled"}
 
@@ -350,7 +350,9 @@ class PrivateNotesCapability(MatchingCapability):
                 "error": "no matching notes found",
             }
 
-        question = self._confirmation_question("Delete", matched_notes)
+        note_count = len(matched_notes)
+        noun = "note" if note_count == 1 else "notes"
+        question = f"Delete {note_count} matching private {noun}"
         if not await self.capability_worker.run_confirmation_loop(question):
             return {"ok": True, "notes_changed": False, "deleted_count": 0, "status": "cancelled"}
 
@@ -396,14 +398,6 @@ class PrivateNotesCapability(MatchingCapability):
             await self.capability_worker.speak(fallback_msg)
         return text or None
 
-    def _confirmation_question(self, action: str, notes: list[dict]) -> str:
-        """Build a consistent spoken yes/no confirmation for note changes."""
-        if len(notes) == 1:
-            title = notes[0].get("title") or "Untitled note"
-            return f'{action} "{title}"'
-
-        return f"{action} {len(notes)} notes"
-
     def _normalize_title(self, title: object) -> str:
         """Normalize title formatting without rewriting the user's meaning."""
         return str(title or "").strip().strip('"').strip("'").strip()
@@ -437,11 +431,3 @@ class PrivateNotesCapability(MatchingCapability):
         if not isinstance(tool_call, dict):
             raise TypeError("tool call must be a JSON object")
         return tool_call
-
-    def _looks_like_destructive_confirmation(self, question: str) -> bool:
-        """Detect when the LLM tries to confirm instead of calling a mutation tool."""
-        text = question.lower()
-        return any(
-            word in text
-            for word in ("delete", "remove", "overwrite", "update", "replace")
-        )

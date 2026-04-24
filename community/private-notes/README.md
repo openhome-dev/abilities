@@ -36,7 +36,7 @@ The ability uses a single LLM tool loop with conversation history. Python owns a
 - if no request is captured, the ability asks what the user wants to do
 - reads are capped to the 3 most recent matches to avoid long voice dumps
 - overwrite and delete actions always require confirmation
-- destructive confirmations use the SDK confirmation loop, with Python building a short prompt like `Delete "Travel Prep"`
+- destructive confirmations use the SDK confirmation loop, with Python building short prompts like `Overwrite note titled Travel Prep` or `Delete 2 matching private notes`
 - note titles are expected to be clean noun phrases from the LLM; Python only trims surrounding quotes and whitespace
 - final responses stay short, warm, and conversational, with some variation so the ability feels interactive rather than scripted
 

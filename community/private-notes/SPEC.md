@@ -113,7 +113,7 @@ Malformed storage is treated as unsafe. The ability refuses to change notes if `
 {"name": "delete_notes", "arguments": {"note_ids": ["uuid"]}}
 ```
 
-- Python asks the confirmation prompt. Always confirmed before deleting.
+- Python asks a count-based confirmation prompt like `Delete 2 matching private notes`. Always confirmed before deleting.
 - Confirmation prompts omit the final question mark because the SDK confirmation loop appends its own yes/no instruction.
 - If no ids match, Python returns an error result and does not ask for confirmation.
 
@@ -125,7 +125,6 @@ Malformed storage is treated as unsafe. The ability refuses to change notes if `
 
 - Used when the request is ambiguous.
 - Not used for delete or overwrite confirmation. For destructive actions, the LLM calls the mutation tool and Python asks the confirmation question.
-- If the LLM accidentally returns a destructive confirmation through `ask_followup`, the loop suppresses it and asks the LLM to call the mutation tool instead.
 
 ### `finish`
 
