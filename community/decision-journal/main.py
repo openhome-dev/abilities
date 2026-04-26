@@ -855,19 +855,12 @@ class DecisionJournalCapability(MatchingCapability):
 
     async def _run(self):
         try:
-            await self.capability_worker.wait_for_complete_transcription()
-
-            # Get trigger utterance from history
-            trigger_text = ""
-            try:
-                history = self.capability_worker.get_full_message_history()
-                history = history or []
-                user_msgs = [m for m in history if m.get("role") == "user"]
-                if user_msgs:
-                    trigger_text = user_msgs[-1].get("content", "") or ""
-                    if not isinstance(trigger_text, str):
-                        trigger_text = ""
-            except Exception:
+            # wait_for_complete_transcription returns the full transcribed utterance —
+            # this is the only reliable way to get the current message since
+            # get_full_message_history() does NOT include the current turn until
+            # after resume_normal_flow() is called.
+            trigger_text = await self.capability_worker.wait_for_complete_transcription()
+            if not trigger_text or not isinstance(trigger_text, str):
                 trigger_text = ""
 
             intent = self._classify_intent(trigger_text)

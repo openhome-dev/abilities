@@ -397,11 +397,13 @@ class DecisionJournalBackground(MatchingCapability):
                         )
                         data_fresh["settings"]["last_nudge_date"] = today
                         await self._save_journal(data_fresh)
-                    s["nudge_checked_today"] = True
                 except Exception as e:
                     self.worker.editor_logging_handler.error(
                         f"[DecisionJournal] Stale nudge error: {e}"
                     )
+                finally:
+                    # Always mark checked — even on exception — to prevent re-firing every poll
+                    s["nudge_checked_today"] = True
 
             # ------------------------------------------------------------------
             # Daily briefing (new day + enough pending-outcome decisions)
@@ -423,12 +425,14 @@ class DecisionJournalBackground(MatchingCapability):
                         )
                     data_fresh["settings"]["last_brief_date"] = today
                     await self._save_journal(data_fresh)
-                    s["last_brief_date"] = today
-                    s["briefed_today"] = True
                 except Exception as e:
                     self.worker.editor_logging_handler.error(
                         f"[DecisionJournal] Daily brief error: {e}"
                     )
+                finally:
+                    # Always mark briefed — even on exception — to prevent re-firing every poll
+                    s["last_brief_date"] = today
+                    s["briefed_today"] = True
 
             # ------------------------------------------------------------------
             # Periodic settings re-sync (~5 minutes)
