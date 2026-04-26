@@ -131,8 +131,10 @@ class DecisionJournalCapability(MatchingCapability):
 
     def _classify_intent(self, text: str) -> str:
         t = text.lower()
-        # Destructive first
-        if any(kw in t for kw in ("clear", "delete", "wipe", "remove")) and "all" in t:
+        # Destructive first — "clear my decisions" is a registered hotword so
+        # requiring "all" is too strict; match on any decision/journal/all context.
+        if any(kw in t for kw in ("clear", "delete", "wipe")) and \
+                ("all" in t or "decision" in t or "journal" in t):
             return "CLEAR_ALL"
         # Toggle notifications
         if any(kw in t for kw in ("stop notif", "no notif", "disable notif")):
