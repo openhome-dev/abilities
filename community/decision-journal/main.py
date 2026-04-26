@@ -123,6 +123,28 @@ class DecisionJournalCapability(MatchingCapability):
             return True
         return bool(_EXIT_PATTERN.search(text))
 
+    async def _intercept_redirect(self, reply: str, data: dict) -> bool:
+        """
+        Called after every user_response() to catch mid-flow intent changes.
+        If the user says something like 'clear my decisions' while the outcome
+        question is still open, this handles it and returns True so the caller
+        can break out of the current flow cleanly.
+        """
+        t = reply.lower().strip()
+        # Clear intent
+        if any(kw in t for kw in ("clear", "delete", "wipe")) and \
+                ("all" in t or "decision" in t or "journal" in t):
+            fresh = await self._load_journal()
+            await self._handle_clear_all(fresh)
+            return True
+        # Add intent
+        if any(kw in t for kw in ("add a decision", "log a decision")) or \
+                (("add" in t or "log" in t) and "decision" in t):
+            fresh = await self._load_journal()
+            await self._handle_add(fresh, reply)
+            return True
+        return False
+
     def _pending_outcome(self, data: dict) -> list:
         return [d for d in data.get("decisions", []) if d.get("status") == "pending_outcome"]
 
@@ -368,6 +390,8 @@ class DecisionJournalCapability(MatchingCapability):
         reply = await self.capability_worker.user_response()
         if self._is_exit(reply):
             return
+        if await self._intercept_redirect(reply, data):
+            return
 
         # Route reply
         r = reply.lower()
@@ -377,10 +401,13 @@ class DecisionJournalCapability(MatchingCapability):
             await self._handle_pattern(data)
         elif any(kw in r for kw in ("reflect", "why did", "think through")):
             await self._handle_reflect(data, reply)
+        elif any(kw in r for kw in ("add a decision", "log a decision", "add", "log", "new decision")) \
+                and any(kw in r for kw in ("decision", "add", "log")):
+            await self._handle_add(data, reply)
         else:
             await self._handle_explore(data, reply)
 
-    async def _handle_explore(self, data: dict, hint: str = "", depth: int = 0):
+    async def _handle_explore(self, data: dict, hint: str = "", depth: int = 0, exclude_id: str = ""):
         # Reload fresh data to catch any daemon additions
         data = await self._load_journal()
 
@@ -397,9 +424,22 @@ class DecisionJournalCapability(MatchingCapability):
             )
             return
 
-        selected = self._select_decision(all_decisions, hint)
+        # When user asks for "another" and we know what was just shown, exclude it.
+        # If nothing remains after exclusion, tell the user gracefully.
+        hint_lower = hint.lower()
+        candidates = all_decisions
+        if exclude_id and any(kw in hint_lower for kw in ("another", "different", "next", "other")):
+            candidates = [d for d in all_decisions if d.get("id") != exclude_id]
+            if not candidates:
+                await self.capability_worker.speak(
+                    "That's the only decision in your journal right now — "
+                    "keep talking and I'll capture more as you make them."
+                )
+                return
+
+        selected = self._select_decision(candidates, hint)
         if selected is None:
-            selected = all_decisions[0]
+            selected = candidates[0]
 
         summary = selected["summary"]
         category = selected.get("category", "other")
@@ -447,14 +487,20 @@ class DecisionJournalCapability(MatchingCapability):
         reply = await self.capability_worker.user_response()
         if self._is_exit(reply):
             return
+        if await self._intercept_redirect(reply, data):
+            return
 
         r = reply.lower()
         if any(kw in r for kw in ("outcome", "how did", "record", "turned out")):
             await self._handle_outcome(data, selected["summary"])
         elif any(kw in r for kw in ("reflect", "why", "think")):
             await self._handle_reflect(data, selected["summary"])
+        elif any(kw in r for kw in ("add a decision", "log a decision")) or \
+                (("add" in r or "log" in r) and "decision" in r):
+            await self._handle_add(data, reply)
         else:
-            await self._handle_explore(data, reply, depth + 1)
+            # Pass current decision's ID so "hear another" correctly skips it
+            await self._handle_explore(data, reply, depth + 1, exclude_id=selected.get("id", ""))
 
     async def _handle_outcome(self, data: dict, hint: str = ""):
         # Reload fresh data
@@ -515,6 +561,10 @@ class DecisionJournalCapability(MatchingCapability):
         sentiment_reply = await self.capability_worker.user_response()
         if self._is_exit(sentiment_reply):
             return
+        # If user says something like "clear my decisions" while this prompt is open,
+        # handle it as a redirect and exit the outcome flow cleanly.
+        if await self._intercept_redirect(sentiment_reply, data):
+            return
 
         sentiment = self._infer_outcome_sentiment(sentiment_reply)
 
@@ -524,7 +574,15 @@ class DecisionJournalCapability(MatchingCapability):
                 "One sentence — what did you learn from it?"
             )
             if reflection_reply and not self._is_exit(reflection_reply):
-                reflection = reflection_reply.strip()
+                # Don't save a redirect command as a reflection — it means the user
+                # changed their mind mid-flow (e.g. said "clear my decisions" here).
+                r = reflection_reply.lower()
+                is_redirect = (
+                    any(kw in r for kw in ("clear", "delete", "wipe")) and
+                    ("all" in r or "decision" in r or "journal" in r)
+                )
+                if not is_redirect:
+                    reflection = reflection_reply.strip()
 
         # Update the decision in data
         now_str = datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
