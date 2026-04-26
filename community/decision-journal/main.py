@@ -512,7 +512,7 @@ class DecisionJournalCapability(MatchingCapability):
             sentiment_word = {"positive": "a good call", "negative": "a tough lesson", "mixed": "a mixed one"}.get(sentiment, "noted")
             await self.capability_worker.speak(
                 f"Got it — marked '{summary}' as {sentiment_word}."
-                + (f" Saved your reflection too." if reflection else "")
+                + (" Saved your reflection too." if reflection else "")
             )
 
     async def _handle_reflect(self, data: dict, hint: str = "", depth: int = 0):
