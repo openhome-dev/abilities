@@ -578,8 +578,8 @@ class DecisionJournalCapability(MatchingCapability):
                 # changed their mind mid-flow (e.g. said "clear my decisions" here).
                 r = reflection_reply.lower()
                 is_redirect = (
-                    any(kw in r for kw in ("clear", "delete", "wipe")) and
-                    ("all" in r or "decision" in r or "journal" in r)
+                    any(kw in r for kw in ("clear", "delete", "wipe"))
+                    and ("all" in r or "decision" in r or "journal" in r)
                 )
                 if not is_redirect:
                     reflection = reflection_reply.strip()
