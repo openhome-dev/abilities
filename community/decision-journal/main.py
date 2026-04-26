@@ -151,8 +151,9 @@ class DecisionJournalCapability(MatchingCapability):
         # History
         if any(kw in t for kw in ("history", "past decisions", "already resolved", "already answered")):
             return "HISTORY"
-        # Add manually
-        if any(kw in t for kw in ("add a decision", "log a decision", "record a decision", "save a decision")):
+        # Add manually — catches both "add a decision" and "add to my decision journal"
+        if any(kw in t for kw in ("add a decision", "log a decision", "record a decision", "save a decision")) \
+                or (("add" in t or "log" in t) and "decision" in t):
             return "ADD"
         # Stats
         if any(kw in t for kw in ("stats", "how many decisions", "decision count")):
@@ -243,15 +244,54 @@ class DecisionJournalCapability(MatchingCapability):
         return result
 
     def _infer_outcome_sentiment(self, reply: str) -> str:
-        """Map user's natural language reply to a sentiment label."""
+        """Map user's natural language reply to a sentiment label.
+
+        Uses whole-word matching for short keywords to avoid substring traps:
+        "no" matches "know", "yes" matches "yesterday", etc.
+        Multi-word phrases ("too soon", "not yet", "worth it") are checked first
+        since they are unambiguous and more specific than single words.
+        """
         t = reply.lower()
-        for keyword, sentiment in SENTIMENT_MAP.items():
-            if keyword in t:
+
+        # Multi-word phrases first — unambiguous, checked before single words
+        MULTI_WORD = [
+            ("too soon", "too_soon"),
+            ("not yet", "too_soon"),
+            ("worth it", "positive"),
+            ("so-so", "mixed"),
+        ]
+        for phrase, sentiment in MULTI_WORD:
+            if phrase in t:
                 return sentiment
-        # If reply sounds positive in spirit
+
+        # Single-word keywords — whole-word only via regex to prevent "know"→"no", etc.
+        SINGLE_WORD = [
+            (r"\bgood\b", "positive"),
+            (r"\bgreat\b", "positive"),
+            (r"\bright\b", "positive"),
+            (r"\byes\b", "positive"),
+            (r"\bworked\b", "positive"),
+            (r"\bpositive\b", "positive"),
+            (r"\bbad\b", "negative"),
+            (r"\bwrong\b", "negative"),
+            (r"\bmistake\b", "negative"),
+            (r"\bregret\b", "negative"),
+            (r"\bnegative\b", "negative"),
+            (r"\bno\b", "negative"),
+            (r"\bmixed\b", "mixed"),
+            (r"\bokay\b", "mixed"),
+            (r"\balright\b", "mixed"),
+            (r"\bstill\b", "too_soon"),
+            (r"\bearly\b", "too_soon"),
+        ]
+        for pattern, sentiment in SINGLE_WORD:
+            if re.search(pattern, t):
+                return sentiment
+
+        # Spirit-level fallbacks
         if any(w in t for w in ("love", "happy", "glad", "thrilled", "perfect", "amazing")):
             return "positive"
-        if any(w in t for w in ("hate", "regret", "awful", "terrible", "horrible")):
+        if any(w in t for w in ("hate", "awful", "terrible", "horrible")):
             return "negative"
         return "mixed"
 
@@ -431,13 +471,25 @@ class DecisionJournalCapability(MatchingCapability):
             )
             return
 
-        # Try to match from hint directly
+        # Only auto-select when the hint has genuine keyword overlap with a decision
+        # summary. Generic trigger phrases like "record an outcome" have no overlap
+        # with decision summaries and must not silently pick the first item.
         selected = None
         if hint:
-            selected = self._select_decision(all_resolvable, hint)
+            hint_words = set(re.findall(r'\b[a-z]+\b', hint.lower()))
+            best_overlap, best_item = 0, None
+            for item in all_resolvable:
+                item_words = set(re.findall(r'\b[a-z]+\b', item.get("summary", "").lower()))
+                if item_words and hint_words:
+                    ov = len(hint_words & item_words) / max(len(hint_words), len(item_words), 1)
+                    if ov > best_overlap:
+                        best_overlap, best_item = ov, item
+            # Require at least one meaningful overlapping word
+            if best_overlap > 0:
+                selected = best_item
 
-        # If hint didn't resolve to a specific match or was empty, ask user to pick
-        if selected is None or not hint:
+        # No meaningful match — ask user to pick (or auto-pick when only one option)
+        if selected is None:
             if len(all_resolvable) == 1:
                 selected = all_resolvable[0]
             else:
@@ -672,19 +724,18 @@ class DecisionJournalCapability(MatchingCapability):
                     )
                     return
 
-        # Ask for category
+        # Ask for category — always start from keyword inference so even if user
+        # exits the question we still get the best available category label.
+        category = _infer_category(topic)
         cat_reply = await self.capability_worker.run_io_loop(
             "What category — career, financial, health, relationship, or personal?"
         )
-        category = "other"
         if cat_reply and not self._is_exit(cat_reply):
             cat_reply_lower = cat_reply.lower()
             for cat in ["career", "financial", "health", "relationship", "personal"]:
                 if cat in cat_reply_lower:
                     category = cat
                     break
-            if category == "other":
-                category = _infer_category(topic)
 
         # Ask for alternatives (optional)
         alt_reply = await self.capability_worker.run_io_loop(

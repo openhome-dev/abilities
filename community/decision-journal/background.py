@@ -68,6 +68,7 @@ def _new_state() -> dict:
         "briefed_today": False,
         "nudge_checked_today": False,
         "personality_injected_count": 0,
+        "current_day": "",   # tracks the calendar date so daily flags reset at midnight
     }
 
 
@@ -371,9 +372,17 @@ class DecisionJournalBackground(MatchingCapability):
                 self.worker.editor_logging_handler.error(f"[DecisionJournal] Loop error: {e}")
 
             # ------------------------------------------------------------------
-            # Stale-outcome nudge (once per day — HIGH significance, 14+ days old)
+            # Day-change reset — runs for long sessions that cross midnight
             # ------------------------------------------------------------------
             today = datetime.now().strftime("%Y-%m-%d")
+            if today != s["current_day"]:
+                s["current_day"] = today
+                s["nudge_checked_today"] = False
+                s["briefed_today"] = False
+
+            # ------------------------------------------------------------------
+            # Stale-outcome nudge (once per day — HIGH significance, 14+ days old)
+            # ------------------------------------------------------------------
             if not s["nudge_checked_today"]:
                 try:
                     stale_cutoff = (
