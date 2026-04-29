@@ -131,7 +131,22 @@ class DecisionJournalBackground(MatchingCapability):
         s["notify_on_capture"] = settings.get("notify_on_capture", False)
         s["last_brief_date"] = settings.get("last_brief_date", "")
         s["last_processed_index"] = meta.get("last_processed_length", 0)
+        # Skip the nudge check if it already fired today (persisted in settings).
+        today = datetime.now().strftime("%Y-%m-%d")
+        s["nudge_checked_today"] = settings.get("last_nudge_date", "") == today
         return data
+
+    async def _apply_notify_toggle(self, enable: bool, s: dict):
+        """Toggle notify_on_capture in memory and persist to the journal file."""
+        if s["notify_on_capture"] == enable:
+            return
+        s["notify_on_capture"] = enable
+        data = await self._load_journal()
+        data.setdefault("settings", {})["notify_on_capture"] = enable
+        await self._save_journal(data)
+        self.worker.editor_logging_handler.info(
+            f"[DecisionJournal] Notifications {'enabled' if enable else 'disabled'} via conversation"
+        )
 
     # ------------------------------------------------------------------
     # Detection helpers (sync)
@@ -275,21 +290,29 @@ class DecisionJournalBackground(MatchingCapability):
         s = _new_state()
         self.worker.editor_logging_handler.info("[DecisionJournal] daemon started")
         cached_data = await self._restore_from_file(s)
+        # Release normal flow immediately so the main agent can handle user input
+        # while the daemon runs in the background.  Without this, triggering the
+        # daemon via the hotword (background_daemon_mode=False) would block the
+        # conversation permanently since watch_loop() never returns.
+        self.capability_worker.resume_normal_flow()
 
         # Startup notification: pending-outcome decisions
-        pending_outcome = [
-            d for d in cached_data.get("decisions", [])
-            if d.get("status") == "pending_outcome"
-        ]
-        if len(pending_outcome) >= STARTUP_NOTIFY_MIN and not s["startup_notified"]:
-            count = len(pending_outcome)
-            await self.capability_worker.send_interrupt_signal()
-            await self.capability_worker.speak(
-                f"Just so you know — you have {count} "
-                f"{'decision' if count == 1 else 'decisions'} waiting for outcomes. "
-                "Say 'decision journal' anytime to update them."
-            )
-            s["startup_notified"] = True
+        try:
+            pending_outcome = [
+                d for d in cached_data.get("decisions", [])
+                if d.get("status") == "pending_outcome"
+            ]
+            if len(pending_outcome) >= STARTUP_NOTIFY_MIN and not s["startup_notified"]:
+                count = len(pending_outcome)
+                await self.capability_worker.send_interrupt_signal()
+                await self.capability_worker.speak(
+                    f"Just so you know — you have {count} "
+                    f"{'decision' if count == 1 else 'decisions'} waiting for outcomes. "
+                    "Say 'decision journal' anytime to update them."
+                )
+                s["startup_notified"] = True
+        except Exception:
+            pass
 
         while True:
             try:
@@ -316,6 +339,27 @@ class DecisionJournalBackground(MatchingCapability):
                     if not isinstance(text, str):
                         continue
                     text = text.strip()
+
+                    # Notification toggles — fallback for when the platform routes
+                    # these phrases to the main agent instead of the foreground
+                    # capability.  Checked before the word-count filter so short
+                    # "stop notifying me" phrases are not silently dropped.
+                    tl = text.lower()
+                    if any(p in tl for p in (
+                        "notify me when you capture",
+                        "let me know when you capture",
+                    )):
+                        await self._apply_notify_toggle(True, s)
+                        continue
+                    if any(p in tl for p in (
+                        "stop notifying me",
+                        "no more notifications",
+                        "stop letting me know about decisions",
+                        "turn off decision notifications",
+                    )):
+                        await self._apply_notify_toggle(False, s)
+                        continue
+
                     if len(text.split()) < 5:
                         continue
 

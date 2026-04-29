@@ -772,6 +772,11 @@ class DecisionJournalCapability(MatchingCapability):
             await self.capability_worker.speak("I didn't catch a decision. No worries!")
             return
 
+        # Reload fresh data before dedup — the background daemon may have captured
+        # this same decision from natural conversation while the user was formulating
+        # their ADD request.  Using stale data here lets duplicates slip through.
+        data = await self._load_journal()
+
         # Dedup check
         topic_words = set(re.findall(r'\b[a-z]+\b', topic.lower()))
         for existing in data.get("decisions", []):
