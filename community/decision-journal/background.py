@@ -355,10 +355,13 @@ class DecisionJournalBackground(MatchingCapability):
 
                     # Personality injection (cap at MAX_PERSONALITY_INJECTIONS)
                     if s["personality_injected_count"] < MAX_PERSONALITY_INJECTIONS:
-                        self.capability_worker.update_personality_agent_prompt(
-                            f"[Decision noted]: {result['summary']}"
-                        )
-                        s["personality_injected_count"] += 1
+                        try:
+                            self.capability_worker.update_personality_agent_prompt(
+                                f"[Decision noted]: {result['summary']}"
+                            )
+                            s["personality_injected_count"] += 1
+                        except Exception:
+                            pass
 
                     # Real-time notification (if enabled)
                     if s["notify_on_capture"]:
@@ -368,23 +371,21 @@ class DecisionJournalBackground(MatchingCapability):
                             "Say 'decision journal' anytime to reflect on it."
                         )
 
-            except Exception as e:
-                self.worker.editor_logging_handler.error(f"[DecisionJournal] Loop error: {e}")
+                # ------------------------------------------------------------------
+                # Day-change reset — resets daily flags when midnight passes
+                # ------------------------------------------------------------------
+                today = datetime.now().strftime("%Y-%m-%d")
+                if today != s["current_day"]:
+                    s["current_day"] = today
+                    s["nudge_checked_today"] = False
+                    s["briefed_today"] = False
 
-            # ------------------------------------------------------------------
-            # Day-change reset — runs for long sessions that cross midnight
-            # ------------------------------------------------------------------
-            today = datetime.now().strftime("%Y-%m-%d")
-            if today != s["current_day"]:
-                s["current_day"] = today
-                s["nudge_checked_today"] = False
-                s["briefed_today"] = False
-
-            # ------------------------------------------------------------------
-            # Stale-outcome nudge (once per day — HIGH significance, 14+ days old)
-            # ------------------------------------------------------------------
-            if not s["nudge_checked_today"]:
-                try:
+                # ------------------------------------------------------------------
+                # Stale-outcome nudge (once per day — HIGH significance, 14+ days old)
+                # Set flag FIRST so an exception in speak() never causes re-firing.
+                # ------------------------------------------------------------------
+                if not s["nudge_checked_today"]:
+                    s["nudge_checked_today"] = True
                     stale_cutoff = (
                         datetime.now() - timedelta(days=STALE_OUTCOME_DAYS)
                     ).strftime("%Y-%m-%d")
@@ -406,19 +407,14 @@ class DecisionJournalBackground(MatchingCapability):
                         )
                         data_fresh["settings"]["last_nudge_date"] = today
                         await self._save_journal(data_fresh)
-                except Exception as e:
-                    self.worker.editor_logging_handler.error(
-                        f"[DecisionJournal] Stale nudge error: {e}"
-                    )
-                finally:
-                    # Always mark checked — even on exception — to prevent re-firing every poll
-                    s["nudge_checked_today"] = True
 
-            # ------------------------------------------------------------------
-            # Daily briefing (new day + enough pending-outcome decisions)
-            # ------------------------------------------------------------------
-            if today != s["last_brief_date"] and not s["briefed_today"]:
-                try:
+                # ------------------------------------------------------------------
+                # Daily briefing (new day + enough pending-outcome decisions)
+                # Set flags FIRST so an exception in speak() never causes re-firing.
+                # ------------------------------------------------------------------
+                if today != s["last_brief_date"] and not s["briefed_today"]:
+                    s["last_brief_date"] = today
+                    s["briefed_today"] = True
                     data_fresh = await self._load_journal()
                     pending = [
                         d for d in data_fresh.get("decisions", [])
@@ -434,14 +430,9 @@ class DecisionJournalBackground(MatchingCapability):
                         )
                     data_fresh["settings"]["last_brief_date"] = today
                     await self._save_journal(data_fresh)
-                except Exception as e:
-                    self.worker.editor_logging_handler.error(
-                        f"[DecisionJournal] Daily brief error: {e}"
-                    )
-                finally:
-                    # Always mark briefed — even on exception — to prevent re-firing every poll
-                    s["last_brief_date"] = today
-                    s["briefed_today"] = True
+
+            except Exception as e:
+                self.worker.editor_logging_handler.error(f"[DecisionJournal] Loop error: {e}")
 
             # ------------------------------------------------------------------
             # Periodic settings re-sync (~5 minutes)
