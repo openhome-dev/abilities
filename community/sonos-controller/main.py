@@ -65,7 +65,7 @@ class SonosControllerCapability(MatchingCapability):
     available_rooms: list = None
 
     # Do not change following tag of register capability
-    #{{register capability}}
+    # {{register capability}}
 
     # ── Lifecycle ─────────────────────────────────────────────────────────────
 
