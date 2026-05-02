@@ -37,6 +37,8 @@ PERSON_TRIGGERS = [
     "is dealing with", "is going through",
     "just got promoted", "was promoted", "got the job",
     "impressed by",
+    "told me about", "told me that", "mentioned to me",
+    "mentioned that", "heard that", "found out that",
 ]
 
 SKIP_PHRASES = [
@@ -467,6 +469,19 @@ class SocialMemoryBackground(MatchingCapability):
                     if not isinstance(text, str):
                         continue
                     text = text.strip()
+
+                    # Fallback for "forget about [name]" — platform sometimes routes
+                    # short conversational phrases to the main agent before does_match()
+                    # is called. Detect from history and redirect user to the foreground skill.
+                    tl = text.lower()
+                    if any(p in tl for p in (
+                        "forget about", "remove from social memory", "delete from social memory",
+                    )):
+                        await self.capability_worker.send_interrupt_signal()
+                        await self.capability_worker.speak(
+                            "To remove someone from your social memory, say 'social memory' and I'll take care of it."
+                        )
+                        continue
 
                     if len(text.split()) < 6:
                         continue

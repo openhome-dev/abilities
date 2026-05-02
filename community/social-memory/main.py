@@ -258,10 +258,13 @@ class SocialMemoryCapability(MatchingCapability):
 
         if len(pending) == 1:
             fup = pending[0]
-            confirmed = await self.capability_worker.run_confirmation_loop(
-                f"Mark '{fup['commitment']}' as done?"
+            await self.capability_worker.speak(
+                f"Mark '{fup['commitment']}' as done? Say yes or no."
             )
-            if confirmed:
+            reply = await self.capability_worker.user_response()
+            if self._is_exit(reply):
+                return
+            if any(kw in reply.lower() for kw in ("yes", "yeah", "yep", "sure", "yup", "correct")):
                 fup["status"] = "completed"
                 fup["completed_at"] = now_str
                 data["stats"]["total_follow_ups_completed"] = (
@@ -331,7 +334,7 @@ class SocialMemoryCapability(MatchingCapability):
         last_mentioned_str = self._relative_date(person["last_mentioned"])
         relationship = person.get("relationship_hint", "")
         rel_clause = (
-            f", who seems to be a {relationship},"
+            f", who seems to be a {relationship}"
             if relationship and relationship not in ("unknown", "")
             else ""
         )
@@ -447,11 +450,15 @@ class SocialMemoryCapability(MatchingCapability):
         parts = []
         for i, (person, fup) in enumerate(top):
             days = overdue_days((person, fup))
-            age_str = (
-                f"{days} {'day' if days == 1 else 'days'} overdue"
-                if days > 0
-                else "recently added"
-            )
+            if days > 0:
+                age_str = f"{days} {'day' if days == 1 else 'days'} overdue"
+            else:
+                deadline_hint = fup.get("deadline_hint", "")
+                age_str = (
+                    f"due {deadline_hint}"
+                    if deadline_hint and deadline_hint != "no deadline"
+                    else "no deadline set"
+                )
             parts.append(f"{i + 1}. {fup['commitment']} with {person['name']} — {age_str}")
 
         await self.capability_worker.speak(
