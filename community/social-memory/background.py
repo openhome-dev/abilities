@@ -363,7 +363,6 @@ class SocialMemoryBackground(MatchingCapability):
         nudge_after = data["settings"].get("follow_up_nudge_after_days", NUDGE_AFTER_DAYS)
 
         most_overdue_fup = None
-        most_overdue_person = None
         most_overdue_days = 0
 
         for person in data.get("people", []):
@@ -378,7 +377,6 @@ class SocialMemoryBackground(MatchingCapability):
                     if days_overdue >= nudge_after and days_overdue > most_overdue_days:
                         most_overdue_days = days_overdue
                         most_overdue_fup = fup
-                        most_overdue_person = person
                 except Exception:
                     continue
 
