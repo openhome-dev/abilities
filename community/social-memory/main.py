@@ -21,6 +21,7 @@ HOTWORDS = {
     "add a note about", "note about someone", "add someone",
     "forget about", "remove person", "delete person", "stop tracking",
     "clear my social memory", "clear all people", "wipe my social memory",
+    "memory stats",
 }
 
 _EXIT_PATTERN = re.compile(
@@ -118,6 +119,8 @@ class SocialMemoryCapability(MatchingCapability):
 
     def _classify_intent(self, text: str) -> str:
         t = text.lower()
+        if any(kw in t for kw in ("stats", "statistics", "how many people", "memory stats")):
+            return "STATS"
         if any(kw in t for kw in ("clear", "wipe")) and any(
             kw in t for kw in ("all", "social memory", "people")
         ):
@@ -322,13 +325,21 @@ class SocialMemoryCapability(MatchingCapability):
             if self._is_exit(reply):
                 return
             name = reply.strip()
+            if not name or len(name) < 2:
+                return
 
         person = self._find_person(name, data)
         if person is None:
             await self.capability_worker.speak(
                 f"I don't have anything on {name} yet. "
-                "Mention them in conversation and I'll start building context."
+                "Want me to add a note about them now?"
             )
+            reply = await self.capability_worker.user_response()
+            if self._is_exit(reply):
+                return
+            if any(kw in reply.lower() for kw in ("yes", "yeah", "yep", "sure", "yup")):
+                data = await self._load_memory()
+                await self._handle_add(data, f"add a note about {name}")
             return
 
         last_mentioned_str = self._relative_date(person["last_mentioned"])
@@ -368,9 +379,14 @@ class SocialMemoryCapability(MatchingCapability):
 
         await self.capability_worker.speak(msg)
 
-        await self.capability_worker.speak(
-            "Want all context I have on them, mark a follow-up done, or stop?"
-        )
+        if pending_fups:
+            await self.capability_worker.speak(
+                "Want all context I have on them, mark a follow-up done, or stop?"
+            )
+        else:
+            await self.capability_worker.speak(
+                "Want all context I have on them, or stop?"
+            )
         reply = await self.capability_worker.user_response()
         if self._is_exit(reply):
             return
@@ -397,18 +413,29 @@ class SocialMemoryCapability(MatchingCapability):
         names_list = ", ".join(p["name"] for p in top)
         suffix = f" and {len(people) - 8} more" if len(people) > 8 else ""
 
-        pending_fup_count = sum(
-            1 for p in people for f in p.get("follow_ups", []) if f.get("status") == "pending"
-        )
+        today_date = datetime.now().date()
+        pending_fup_count = 0
+        overdue_fup_count = 0
+        for p in people:
+            for f in p.get("follow_ups", []):
+                if f.get("status") != "pending":
+                    continue
+                pending_fup_count += 1
+                try:
+                    if datetime.strptime(f.get("deadline_date", ""), "%Y-%m-%d").date() < today_date:
+                        overdue_fup_count += 1
+                except Exception:
+                    pass
 
         msg = (
             f"You've mentioned {len(people)} "
             f"{'person' if len(people) == 1 else 'people'}: {names_list}{suffix}."
         )
         if pending_fup_count:
+            overdue_clause = f", {overdue_fup_count} overdue" if overdue_fup_count else ""
             msg += (
                 f" You have {pending_fup_count} pending "
-                f"{'follow-up' if pending_fup_count == 1 else 'follow-ups'}."
+                f"{'follow-up' if pending_fup_count == 1 else 'follow-ups'}{overdue_clause}."
             )
         await self.capability_worker.speak(msg)
 
@@ -425,6 +452,7 @@ class SocialMemoryCapability(MatchingCapability):
             await self._handle_who(data, reply)
 
     async def _handle_followups(self, data: dict):
+        data = await self._load_memory()
         pending = [
             (p, f)
             for p in data.get("people", [])
@@ -440,7 +468,10 @@ class SocialMemoryCapability(MatchingCapability):
 
         def overdue_days(item):
             try:
-                return (today - datetime.strptime(item[1]["deadline_date"], "%Y-%m-%d").date()).days
+                dl = item[1].get("deadline_date", "")
+                if not dl:
+                    return 0
+                return (today - datetime.strptime(dl, "%Y-%m-%d").date()).days
             except Exception:
                 return 0
 
@@ -573,6 +604,8 @@ class SocialMemoryCapability(MatchingCapability):
             if self._is_exit(reply):
                 return
             name = reply.strip()
+            if not name or len(name) < 2:
+                return
 
         person = self._find_person(name, data)
         if person is None:
@@ -610,6 +643,21 @@ class SocialMemoryCapability(MatchingCapability):
         else:
             await self.capability_worker.speak("Keeping everything.")
 
+    async def _handle_stats(self, data: dict):
+        stats = data.get("stats", {})
+        people_count = len(data.get("people", []))
+        fups_captured = stats.get("total_follow_ups_captured", 0)
+        fups_completed = stats.get("total_follow_ups_completed", 0)
+        pending = max(fups_captured - fups_completed, 0)
+
+        await self.capability_worker.speak(
+            f"You have {people_count} "
+            f"{'person' if people_count == 1 else 'people'} in social memory. "
+            f"{fups_captured} "
+            f"{'follow-up' if fups_captured == 1 else 'follow-ups'} tracked total, "
+            f"{fups_completed} completed, {pending} still pending."
+        )
+
     # ------------------------------------------------------------------
     # Main run loop
     # ------------------------------------------------------------------
@@ -639,6 +687,8 @@ class SocialMemoryCapability(MatchingCapability):
                 await self._handle_forget(data, trigger_text)
             elif intent == "CLEAR":
                 await self._handle_clear(data)
+            elif intent == "STATS":
+                await self._handle_stats(data)
             else:
                 await self.capability_worker.speak(
                     "I can tell you about someone, list who you've mentioned, "

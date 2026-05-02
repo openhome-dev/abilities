@@ -305,7 +305,17 @@ class SocialMemoryBackground(MatchingCapability):
                     pass
         else:
             existing_rel = existing.get("relationship_hint", "unknown")
-            if (
+            if existing_rel in ("unknown", "") and relationship_hint not in ("unknown", ""):
+                existing["relationship_hint"] = relationship_hint
+                if s["personality_injected_count"] < MAX_PERSONALITY_INJECTIONS and context_snippet:
+                    try:
+                        self.capability_worker.update_personality_agent_prompt(
+                            f"[Social context]: {name} — {relationship_hint}. {context_snippet}"
+                        )
+                        s["personality_injected_count"] += 1
+                    except Exception:
+                        pass
+            elif (
                 existing_rel not in ("unknown", "")
                 and relationship_hint not in ("unknown", "")
                 and existing_rel != relationship_hint
@@ -374,7 +384,10 @@ class SocialMemoryBackground(MatchingCapability):
                 if fup.get("last_nudged") == today_str:
                     continue
                 try:
-                    deadline = datetime.strptime(fup["deadline_date"], "%Y-%m-%d").date()
+                    deadline_str = fup.get("deadline_date", "")
+                    if not deadline_str:
+                        continue
+                    deadline = datetime.strptime(deadline_str, "%Y-%m-%d").date()
                     days_overdue = (today - deadline).days
                     if days_overdue >= nudge_after and days_overdue > most_overdue_days:
                         most_overdue_days = days_overdue
