@@ -98,4 +98,4 @@ You'll get a confirmation reply (*"Door unlocked."* etc.). Polls every 10s while
 ## Limits / things to know
 
 - **Twilio sandbox** expires after 72h of inactivity. Re-send the `join <code>` to renew. Production WhatsApp Business needed for permanent use.
-- **Wyze IoT3 API** uses an undocumented signing scheme. If Wyze changes it, both files break the same way. Check https://github.com/SecKatie/ha-wyzeapi for the latest on Wyze API hacking. Code for WyzeLockClient was based on an unmerged PR giving support for the Wyze Lock Bolt v2. 
+- **Wyze IoT3 API** uses an undocumented signing scheme. If Wyze changes it, both files break the same way. Check https://github.com/SecKatie/ha-wyzeapi for the latest on Wyze API hacking. Code for WyzeLockClient was based on an unmerged PR giving support for the Wyze Lock Bolt v2. https://github.com/SecKatie/ha-wyzeapi/pull/809
