@@ -150,7 +150,7 @@ class WyzeLockCapability(MatchingCapability):
     worker: AgentWorker = None
     capability_worker: CapabilityWorker = None
 
-    #{{register_capability}}
+    # {{register_capability}}
 
     def _log(self, msg):
         try:
