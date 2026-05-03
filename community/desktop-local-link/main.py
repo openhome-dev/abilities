@@ -73,7 +73,7 @@ class DesktopCapability(MatchingCapability):
     worker: AgentWorker = None
     capability_worker: CapabilityWorker = None
 
-    #{{register capability}}
+    # {{register capability}}
 
     def _llm(self, prompt: str) -> str:
         return (self.capability_worker.text_to_text_response(prompt) or "").strip()
@@ -428,7 +428,6 @@ class DesktopCapability(MatchingCapability):
             f"Done. Removed {removed_count} saved task"
             f"{'s' if removed_count != 1 else ''} for {mode} mode."
         )
-
 
     def _is_clear_preferences_request(self, utterance: str) -> bool:
         lower = utterance.lower()

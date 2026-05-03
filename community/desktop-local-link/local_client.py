@@ -9,6 +9,7 @@ import websockets
 
 OPENHOME_API_KEY = "1812c8e64c9c494f9969e84863bbbd0fbb26a42054acf2b5fd86d3a491d777c9"  # replace with your OpenHome API key
 
+
 def _json_dumps(obj: dict) -> str:
     return json.dumps(obj, separators=(",", ":"), ensure_ascii=True)
 
