@@ -7,12 +7,13 @@ from src.agent.capability_worker import CapabilityWorker
 GARMIN_FETCH_SCRIPT = "REPLACE WITH ABSOLUTE PATH TO garmin_fetch.py"
 PYTHON_PATH = "REPLACE WITH PATH TO PYTHON (e.g. /usr/bin/python3 or your venv python)"
 
+
 class Locallinktest1Capability(MatchingCapability):
     worker: AgentWorker = None
     capability_worker: CapabilityWorker = None
-    
+
     # Do not change following tag of register capability
-    #{{register capability}}
+    # {{register capability}}
 
     def get_system_prompt(self):
         return """
@@ -44,7 +45,7 @@ class Locallinktest1Capability(MatchingCapability):
         )
         self.worker.editor_logging_handler.info(f"[Garmin] Raw response: {response}")
 
-        # Unpack response 
+        # Unpack response
         inner = response.get("data") or response if isinstance(response, dict) else {}
         stdout = (inner.get("stdout") or "").strip()
         self.worker.editor_logging_handler.info(f"[Garmin] stdout: {stdout}")
@@ -56,7 +57,7 @@ class Locallinktest1Capability(MatchingCapability):
             await self.capability_worker.speak("Sorry, I couldn't parse the Garmin data.")
             self.capability_worker.resume_normal_flow()
             return
-        
+
         system_prompt = self.get_system_prompt()
 
         history = []
@@ -67,7 +68,7 @@ class Locallinktest1Capability(MatchingCapability):
             "Summarize this Garmin health data for the user: %s" % json.dumps(garmin_data),
             history,
             system_prompt,
-        )    
+        )
 
         if result:
             await self.capability_worker.speak(result)
