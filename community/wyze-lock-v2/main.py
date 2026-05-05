@@ -1,3 +1,4 @@
+import asyncio
 import hashlib
 import hmac
 import json
@@ -11,14 +12,7 @@ from src.agent.capability import MatchingCapability
 from src.main import AgentWorker
 from src.agent.capability_worker import CapabilityWorker
 
-
-# ── Wyze credentials / device ──
-EMAIL = ""
-PASSWORD = ""
-KEY_ID = ""
-API_KEY = ""
-
-DEVICE_MAC = "DX_LB2_xxxxxxxxxxxx"
+# ── Wyze constants (not credentials) ──
 BASE_URL = "https://app.wyzecam.com"
 AUTH_URL = "https://auth-prod.api.wyze.com/api/user/login"
 SIGNING_SECRET = "wyze_app_secret_key_132"
@@ -28,20 +22,46 @@ APP_VERSION = "3.11.0.758"
 TOKEN_TTL_SECONDS = 1800
 
 
-class WyzeLockClient:
-    def __init__(self):
-        self.phone_id = str(uuid.uuid4())
-        self._token_val = None
-        self._token_ts = 0.0
+class WyzlockCapability(MatchingCapability):
+    worker: AgentWorker = None
+    capability_worker: CapabilityWorker = None
 
-    def _login(self):
-        pw = PASSWORD
+    # Runtime credential holders (populated in call())
+    _email: str = ""
+    _password: str = ""
+    _key_id: str = ""
+    _api_key: str = ""
+    _device_mac: str = ""
+
+    # Token cache
+    _phone_id: str = ""
+    _token_val: str = None
+    _token_ts: float = 0.0
+
+    #{{register capability}}
+
+    # ── Logging ───────────────────────────────────────────────────────────────
+
+    def _log(self, msg):
+        try:
+            self.worker.editor_logging_handler.info("WyzeLock(main): %s" % msg)
+        except Exception:
+            pass
+
+    # ── Wyze API ──────────────────────────────────────────────────────────────
+
+    def _md5(self, value: str) -> str:
+        """MD5 is required by the Wyze IoT3 signing scheme."""
+        return hashlib.new("md5", value.encode()).hexdigest()
+
+    def _login_sync(self):
+        pw = self._password
         for _ in range(3):
-            pw = hashlib.new('md5', pw.encode()).hexdigest()
+            pw = self._md5(pw)
         resp = requests.post(
             AUTH_URL,
-            headers={"keyid": KEY_ID, "apikey": API_KEY},
-            json={"email": EMAIL, "password": pw},
+            headers={"keyid": self._key_id, "apikey": self._api_key},
+            json={"email": self._email, "password": pw},
             timeout=15,
         )
         try:
@@ -53,36 +73,36 @@ class WyzeLockClient:
             raise RuntimeError("login: status=%d body=%s" % (resp.status_code, str(data)[:200]))
         return token
 
-    def _token(self):
+    def _get_token_sync(self):
         if not self._token_val or (time.time() - self._token_ts) > TOKEN_TTL_SECONDS:
-            self._token_val = self._login()
+            self._token_val = self._login_sync()
             self._token_ts = time.time()
         return self._token_val
 
-    def _sign(self, token, body):
-        secret = hashlib.md5((token + SIGNING_SECRET).encode()).hexdigest()
-        return hmac.new(secret.encode(), body.encode(), hashlib.md5).hexdigest()
+    def _sign(self, token: str, body: str) -> str:
+        secret = self._md5(token + SIGNING_SECRET)
+        return hmac.new(secret.encode(), body.encode(), lambda: hashlib.new("md5")).hexdigest()
 
-    def _headers(self, token, body):
+    def _headers(self, token: str, body: str) -> dict:
         return {
             "access_token": token,
             "appid": APP_ID,
             "appinfo": APP_INFO,
             "appversion": APP_VERSION,
             "env": "Prod",
-            "phoneid": self.phone_id,
+            "phoneid": self._phone_id,
             "requestid": uuid.uuid4().hex,
             "Signature2": self._sign(token, body),
             "Content-Type": "application/json; charset=utf-8",
         }
 
-    def _target(self):
-        parts = DEVICE_MAC.split("_")
-        return {"id": DEVICE_MAC, "model": "_".join(parts[:2])}
+    def _target(self) -> dict:
+        parts = self._device_mac.split("_")
+        return {"id": self._device_mac, "model": "_".join(parts[:2])}
 
-    def _call(self, path, payload):
+    def _call_sync(self, path: str, payload: dict) -> dict:
         body = json.dumps(payload)
-        token = self._token()
+        token = self._get_token_sync()
         resp = requests.post(
             f"{BASE_URL}{path}",
             headers=self._headers(token, body),
@@ -91,9 +111,9 @@ class WyzeLockClient:
         )
         return resp.json()
 
-    def get_status(self):
+    def _get_status_sync(self) -> dict:
         ts = int(time.time() * 1000)
-        return self._call("/app/v4/iot3/get-property", {
+        return self._call_sync("/app/v4/iot3/get-property", {
             "nonce": str(ts),
             "payload": {
                 "cmd": "get_property",
@@ -109,9 +129,9 @@ class WyzeLockClient:
             "targetInfo": self._target(),
         })
 
-    def _run_action(self, action):
+    def _run_action_sync(self, action: str) -> dict:
         ts = int(time.time() * 1000)
-        return self._call("/app/v4/iot3/run-action", {
+        return self._call_sync("/app/v4/iot3/run-action", {
             "nonce": str(ts),
             "payload": {
                 "action": f"lock::{action}",
@@ -119,7 +139,7 @@ class WyzeLockClient:
                 "params": {
                     "action_id": random.randint(10000, 99999),
                     "type": 1,
-                    "username": EMAIL,
+                    "username": self._email,
                 },
                 "tid": random.randint(1000, 99999),
                 "ts": ts,
@@ -128,16 +148,10 @@ class WyzeLockClient:
             "targetInfo": self._target(),
         })
 
-    def lock(self):
-        return self._run_action("lock")
-
-    def unlock(self):
-        return self._run_action("unlock")
-
-    def is_locked(self):
-        """True if locked, False if unlocked, None if unknown."""
+    def _is_locked_sync(self):
+        """Returns True if locked, False if unlocked, None if unknown."""
         try:
-            resp = self.get_status()
+            resp = self._get_status_sync()
             val = resp.get("data", {}).get("props", {}).get("lock::lock-status")
         except Exception:
             return None
@@ -145,47 +159,58 @@ class WyzeLockClient:
             return val
         return None
 
-
-class WyzeLockCapability(MatchingCapability):
-    worker: AgentWorker = None
-    capability_worker: CapabilityWorker = None
-
-    # {{register_capability}}
-
-    def _log(self, msg):
-        try:
-            self.worker.editor_logging_handler.info("%s: WyzeLock(main): %s" % (time.time(), msg))
-        except Exception:
-            pass
+    # ── Lock / Unlock ─────────────────────────────────────────────────────────
 
     async def _unlock(self):
-        client = WyzeLockClient()
-        if client.is_locked() is False:
+        locked = await asyncio.to_thread(self._is_locked_sync)
+        if locked is False:
             self._log("already unlocked")
             await self.capability_worker.speak("Door is already unlocked.")
             return
-        client.unlock()
+        await asyncio.to_thread(self._run_action_sync, "unlock")
         self._log("unlock sent")
         await self.capability_worker.speak("Door unlocked.")
 
     async def _lock(self):
-        client = WyzeLockClient()
-        if client.is_locked() is True:
+        locked = await asyncio.to_thread(self._is_locked_sync)
+        if locked is True:
             self._log("already locked")
             await self.capability_worker.speak("Door is already locked.")
             return
-        client.lock()
+        await asyncio.to_thread(self._run_action_sync, "lock")
         self._log("lock sent")
         await self.capability_worker.speak("Door locked.")
 
+    # ── Main flow ─────────────────────────────────────────────────────────────
+
     async def run(self):
         try:
+            # Load credentials at runtime
+            self._email = self.capability_worker.get_api_keys("wyze_email") or ""
+            self._password = self.capability_worker.get_api_keys("wyze_password") or ""
+            self._key_id = self.capability_worker.get_api_keys("wyze_key_id") or ""
+            self._api_key = self.capability_worker.get_api_keys("wyze_api_key") or ""
+            self._device_mac = self.capability_worker.get_api_keys("wyze_device_mac") or ""
+
+            # Validate — speak helpful error if anything is missing
+            missing = [k for k, v in {
+                "wyze_email": self._email,
+                "wyze_password": self._password,
+                "wyze_key_id": self._key_id,
+                "wyze_api_key": self._api_key,
+                "wyze_device_mac": self._device_mac,
+            }.items() if not v]
+            if missing:
+                await self.capability_worker.speak(
+                    "Wyze is not fully configured. Please add the following in API Keys settings: %s."
+                    % ", ".join(missing)
+                )
+                return
+
             msg = await self.capability_worker.wait_for_complete_transcription()
             text = (msg or "").strip().lower()
             self._log("triggered with: %r" % text[:120])
 
-            # Intent dispatch: "lock up" locks; any other trigger unlocks.
-            # Lets the unlock trigger be anything the user configures (e.g. "banana").
             if not text:
                 self._log("empty transcription, skipping")
             elif "lock up" in text:
@@ -204,4 +229,7 @@ class WyzeLockCapability(MatchingCapability):
     def call(self, worker: AgentWorker):
         self.worker = worker
         self.capability_worker = CapabilityWorker(self.worker)
+        self._phone_id = str(uuid.uuid4())
+        self._token_val = None
+        self._token_ts = 0.0
         self.worker.session_tasks.create(self.run())
