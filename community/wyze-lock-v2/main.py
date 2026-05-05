@@ -37,7 +37,7 @@ class WyzeLockClient:
     def _login(self):
         pw = PASSWORD
         for _ in range(3):
-            pw = hashlib.md5(pw.encode()).hexdigest()
+            pw = hashlib.new('md5', pw.encode()).hexdigest()
         resp = requests.post(
             AUTH_URL,
             headers={"keyid": KEY_ID, "apikey": API_KEY},
