@@ -92,6 +92,7 @@ Malformed storage is treated as unsafe. The ability refuses to change notes if `
 {"name": "read_notes", "arguments": {"note_ids": ["uuid"]}}
 ```
 
+- `note_ids` is always an array, even for one note.
 - Readback capped to 3 notes.
 - Returns raw note data (title, content, updated_at). LLM formats for speech via `finish`.
 - If no ids match, Python returns an error result instead of an empty successful read.
@@ -113,8 +114,9 @@ Malformed storage is treated as unsafe. The ability refuses to change notes if `
 {"name": "delete_notes", "arguments": {"note_ids": ["uuid"]}}
 ```
 
+- `note_ids` is always an array, even for one note.
 - Python asks a count-based confirmation prompt like `Delete 2 matching private notes`. Always confirmed before deleting.
-- Confirmation prompts omit the final question mark because the SDK confirmation loop appends its own yes/no instruction.
+- Confirmation prompts can stay short because the SDK confirmation loop appends its own yes/no instruction.
 - If no ids match, Python returns an error result and does not ask for confirmation.
 
 ### `ask_followup`
@@ -124,6 +126,7 @@ Malformed storage is treated as unsafe. The ability refuses to change notes if `
 ```
 
 - Used when the request is ambiguous.
+- Not used after a tool result. The next step after a tool result is `finish`.
 - Not used for delete or overwrite confirmation. For destructive actions, the LLM calls the mutation tool and Python asks the confirmation question.
 
 ### `finish`

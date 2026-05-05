@@ -32,6 +32,7 @@ note_id=<uuid> overwrites. Python will ask the confirmation question.
 
 2) read_notes — read notes by id
 {"name": "read_notes", "arguments": {"note_ids": ["uuid"]}}
+note_ids must always be a JSON array, even when reading one note.
 
 3) search_notes — search private notes by title or content
 {"name": "search_notes", "arguments": {"query": "string"}}
@@ -39,6 +40,7 @@ Use this when the user asks for notes about a topic and the title/index is not e
 
 4) delete_notes — delete notes by id
 {"name": "delete_notes", "arguments": {"note_ids": ["uuid"]}}
+note_ids must always be a JSON array, even when deleting one note.
 Python will ask the confirmation question before deleting.
 
 5) ask_followup — ask the user for clarification
@@ -53,6 +55,7 @@ Rules:
 - If ambiguous, use ask_followup.
 - If there are no notes and the user asks to read, update, or delete notes, finish by saying there are no private notes yet.
 - ask_followup is only for missing or ambiguous user intent. Do not use ask_followup to confirm overwrite or delete.
+- After a tool result, call finish. Do not use ask_followup after a tool result.
 - For delete requests, call delete_notes with the matching ids. Python will ask the yes/no confirmation.
 - For overwrite requests, call write_note with the matching id. Python will ask the yes/no confirmation.
 - If the user asks to update or overwrite a note but does not provide the new content, use ask_followup to ask what should change.
@@ -259,7 +262,7 @@ class PrivateNotesCapability(MatchingCapability):
 
     async def _handle_read_notes(self, notebook: dict, args: dict, _now: datetime) -> dict:
         """Return matched notes (capped at MAX_READBACK). LLM formats them for speech."""
-        note_ids = set(args.get("note_ids") or [])
+        note_ids = self._requested_note_ids(args)
         if not note_ids:
             return {
                 "ok": False,
@@ -337,7 +340,7 @@ class PrivateNotesCapability(MatchingCapability):
 
     async def _handle_delete_notes(self, notebook: dict, args: dict, _now: datetime) -> dict:
         """Delete notes by id after user confirms."""
-        ids_to_delete = set(args.get("note_ids") or [])
+        ids_to_delete = self._requested_note_ids(args)
         matched_notes = [
             n for n in notebook["notes"] if n.get("id") in ids_to_delete
         ]
@@ -401,6 +404,14 @@ class PrivateNotesCapability(MatchingCapability):
         """Normalize title formatting without rewriting the user's meaning."""
         return str(title or "").strip().strip('"').strip("'").strip()
 
+    def _requested_note_ids(self, args: dict) -> list:
+        """Return note_ids only when the tool call used the documented list shape."""
+        match args.get("note_ids") or []:
+            case [*note_ids]:
+                return note_ids
+            case _:
+                return []
+
     def _normalize_notebook(self, notebook: object) -> dict:
         """Validate notebook shape without silently discarding saved data."""
         if not isinstance(notebook, dict):
@@ -418,10 +429,10 @@ class PrivateNotesCapability(MatchingCapability):
             if any(not isinstance(note.get(field), str) for field in required_fields):
                 raise ValueError("notebook contains a malformed note")
 
-        return {
-            "schema_version": notebook.get("schema_version", 2),
-            "notes": notes,
-        }
+        normalized = dict(notebook)
+        normalized["schema_version"] = notebook.get("schema_version", 2)
+        normalized["notes"] = notes
+        return normalized
 
     def _parse_tool_call(self, llm_response: str) -> dict:
         """Parse model tool JSON, tolerating common markdown fences."""
