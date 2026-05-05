@@ -16,31 +16,6 @@ STARTUP_NOTIFY_MIN = 1
 MAX_PERSONALITY_INJECTIONS = 4
 NUDGE_AFTER_DAYS = 3
 
-PERSON_TRIGGERS = [
-    "had lunch with", "had coffee with", "had dinner with", "had drinks with",
-    "met with", "met up with", "caught up with", "ran into",
-    "talked to", "talked with", "spoke with", "spoke to",
-    "called ", "texted ", "messaged ",
-    "working with", "collaborating with",
-    "heard from", "heard back from",
-    "hanging out with", "spent time with",
-    "meeting with", "catching up with",
-    "going to see", "going to meet",
-    "supposed to meet",
-    "i'll call", "i'll text", "i need to call",
-    "i need to reach out", "i should call", "i should text",
-    "i should reach out", "i promised", "i told them",
-    "i said i would", "i owe ", "following up with",
-    "'s in town", "is visiting", "coming over",
-    "introduced me to", "introduced to",
-    "pushed back on", "agreed with", "disagreed with",
-    "is dealing with", "is going through",
-    "just got promoted", "was promoted", "got the job",
-    "impressed by",
-    "told me about", "told me that", "mentioned to me",
-    "mentioned that", "heard that", "found out that",
-]
-
 SKIP_PHRASES = [
     "can you", "could you", "would you", "will you",
     "tell me about", "what do you know about",
@@ -172,8 +147,7 @@ class SocialMemoryBackground(MatchingCapability):
         return any(phrase in t for phrase in SKIP_PHRASES)
 
     def _phase1_fast_filter(self, text: str) -> bool:
-        t = text.lower()
-        return any(trigger in t for trigger in PERSON_TRIGGERS)
+        return len(text.split()) >= 4
 
     def _strip_json_fences(self, raw: str) -> str:
         raw = raw.strip()
@@ -496,8 +470,6 @@ class SocialMemoryBackground(MatchingCapability):
                         )
                         continue
 
-                    if len(text.split()) < 6:
-                        continue
                     if self._skip_phrase_filter(text):
                         continue
                     if not self._phase1_fast_filter(text):
