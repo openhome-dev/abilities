@@ -38,7 +38,7 @@ class WyzlockCapability(MatchingCapability):
     _token_val: str = None
     _token_ts: float = 0.0
 
-    #{{register capability}}
+    # {{register capability}}
 
     # ── Logging ───────────────────────────────────────────────────────────────
 
