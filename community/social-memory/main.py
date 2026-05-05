@@ -119,7 +119,7 @@ class SocialMemoryCapability(MatchingCapability):
 
     def _classify_intent(self, text: str) -> str:
         t = text.lower()
-        if any(kw in t for kw in ("stats", "statistics", "how many people", "memory stats")):
+        if "memory stats" in t or "social stats" in t or "how many people" in t:
             return "STATS"
         if any(kw in t for kw in ("clear", "wipe")) and any(
             kw in t for kw in ("all", "social memory", "people")
@@ -338,8 +338,7 @@ class SocialMemoryCapability(MatchingCapability):
             if self._is_exit(reply):
                 return
             if any(kw in reply.lower() for kw in ("yes", "yeah", "yep", "sure", "yup")):
-                data = await self._load_memory()
-                await self._handle_add(data, f"add a note about {name}")
+                await self._handle_add(f"add a note about {name}")
             return
 
         last_mentioned_str = self._relative_date(person["last_mentioned"])
@@ -447,11 +446,11 @@ class SocialMemoryCapability(MatchingCapability):
             return
 
         if any(kw in reply.lower() for kw in ("follow", "pending", "owe")):
-            await self._handle_followups(data)
+            await self._handle_followups()
         else:
             await self._handle_who(data, reply)
 
-    async def _handle_followups(self, data: dict):
+    async def _handle_followups(self):
         data = await self._load_memory()
         pending = [
             (p, f)
@@ -537,7 +536,7 @@ class SocialMemoryCapability(MatchingCapability):
                         f"Done — '{fup['commitment']}' marked complete."
                     )
 
-    async def _handle_add(self, data: dict, trigger_text: str):
+    async def _handle_add(self, trigger_text: str):
         name = self._extract_name_from_query(trigger_text)
         if not name:
             await self.capability_worker.speak("Who would you like to add a note about?")
@@ -648,7 +647,11 @@ class SocialMemoryCapability(MatchingCapability):
         people_count = len(data.get("people", []))
         fups_captured = stats.get("total_follow_ups_captured", 0)
         fups_completed = stats.get("total_follow_ups_completed", 0)
-        pending = max(fups_captured - fups_completed, 0)
+        pending = sum(
+            1 for p in data.get("people", [])
+            for f in p.get("follow_ups", [])
+            if f.get("status") == "pending"
+        )
 
         await self.capability_worker.speak(
             f"You have {people_count} "
@@ -680,9 +683,9 @@ class SocialMemoryCapability(MatchingCapability):
             elif intent == "LIST":
                 await self._handle_list(data)
             elif intent == "FOLLOWUPS":
-                await self._handle_followups(data)
+                await self._handle_followups()
             elif intent == "ADD":
-                await self._handle_add(data, trigger_text)
+                await self._handle_add(trigger_text)
             elif intent == "FORGET":
                 await self._handle_forget(data, trigger_text)
             elif intent == "CLEAR":
