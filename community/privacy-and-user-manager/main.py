@@ -12,23 +12,23 @@ from src.agent.capability_worker import CapabilityWorker
 RECENT_CHAT_FILE = "recent_chat.md"               # we write this
 ACTIVE_USER_FILE = "active_user_context.md"       # we write this
 AUDIO_CONTEXT_FILE = "personal_audio_context.md"  # we write this — privacy
-                                                  # framed; auto-injected
+# framed; auto-injected
 AUDIO_DIAG_FILE = "bluetooth_diagnostic.md"       # we write this — pure
-                                                  # developer telemetry, no
-                                                  # privacy framing so the
-                                                  # persona will recite it
+# developer telemetry, no
+# privacy framing so the
+# persona will recite it
 LAST_SEEN_FILE = "pum_cursor.md"                  # our own dedupe cursor;
-                                                  # distinct from
-                                                  # conversation_monitor_cursor.md
-                                                  # so the legacy daemon's
-                                                  # cursor doesn't collide
-                                                  # during a transition.
+# distinct from
+# conversation_monitor_cursor.md
+# so the legacy daemon's
+# cursor doesn't collide
+# during a transition.
 SETTINGS_FILE = "pum_settings.json"               # persists user-toggleable
-                                                  # preferences (currently:
-                                                  # whether to announce
-                                                  # audio-mode on greet)
+# preferences (currently:
+# whether to announce
+# audio-mode on greet)
 SKILL_BUSY_FLAG = "skill_active.lock"             # Skills set this while
-                                                  # they own the turn.
+# they own the turn.
 
 # ---------------------------------------------------------------------
 # Tunables
@@ -37,7 +37,7 @@ POLL_INTERVAL = 3.0   # seconds between scans (Bluetooth + chat + recompose)
 HISTORY_SIZE = 10     # last N messages mirrored into recent_chat.md
 MAX_MSG_LEN = 400     # per-message truncation in recent_chat.md
 RECENT_SWITCH_WINDOW_S = 120.0   # how long to keep "user just switched"
-                                  # warning at the top of active_user_context.md
+# warning at the top of active_user_context.md
 
 # Bluetooth audio classification — primary signal is system_profiler's
 # device_minorType field. Keywords are a fallback for devices missing it.
@@ -57,6 +57,8 @@ AUDIO_KEYWORDS = [
 # ---------------------------------------------------------------------
 # Two-tier user storage helpers
 # ---------------------------------------------------------------------
+
+
 def _user_notes_json(name_key: str) -> str:
     """Single per-user notes file. JSON is NOT auto-injected into the
     Personality prompt — only the active user's bullets reach the prompt
@@ -195,7 +197,7 @@ class PrivacyAndUserManagerBackground(MatchingCapability):
     last_active_user: str = ""
 
     # Do not change following tag of register capability
-    #{{register capability}}
+    # {{register capability}}
 
     def call(self, worker: AgentWorker, background_daemon_mode: bool):
         try:
@@ -425,7 +427,7 @@ class PrivacyAndUserManagerBackground(MatchingCapability):
     _last_raw_stdout_head: str = ""
 
     async def _write_personal_audio_md(self, connected_private_devices: list,
-                                        is_transition: bool, is_first_greet: bool):
+                                       is_transition: bool, is_first_greet: bool):
         """Write the privacy-framed audio-mode file. The conversation-opening
         directive lives at the top so the Personality reads it on its next
         reply — that's our reliable substitute for BG-daemon speak().
@@ -1076,7 +1078,7 @@ class PrivacyAndUserManagerBackground(MatchingCapability):
         )
 
     def _compose_active_user_md(self, display_name: str, public_section: str,
-                                 private_section: str, audio_mode: str) -> str:
+                                private_section: str, audio_mode: str) -> str:
         timestamp = strftime("%Y-%m-%d %H:%M")
 
         # User-switch banner — only emitted if a switch happened recently.
