@@ -13,31 +13,31 @@ class Locallinktest1Capability(MatchingCapability):
     capability_worker: CapabilityWorker = None
 
     # Do not change following tag of register capability
-    #{{register capability}}  
+    # {{register capability}}
 
     def get_system_prompt(self):
         return (
             "You are a fitness data interpreter for a voice assistant. "
-            "Summarize the user's last Garmin activity in 2 sentences, 30 words max. "  
-            "Plain spoken English only — no markdown, no bullet points, no symbols. "  
+            "Summarize the user's last Garmin activity in 2 sentences, 30 words max. "
+            "Plain spoken English only — no markdown, no bullet points, no symbols. "
             "Convert meters to miles and seconds to minutes. "
             "Skip null values naturally. "
             "Keep the tone encouraging. "
-            "Output goes directly to text-to-speech. "  
-            "Example: 'Your last run was about 3 miles in 28 minutes. " 
+            "Output goes directly to text-to-speech. "
+            "Example: 'Your last run was about 3 miles in 28 minutes. "
             "Average heart rate was 155, that is a solid effort.'"
         )
 
     async def first_function(self):
         user_inquiry = await self.capability_worker.wait_for_complete_transcription()
-        await self.capability_worker.speak("Give me a second, pulling up your Garmin stats.")  
+        await self.capability_worker.speak("Give me a second, pulling up your Garmin stats.")
 
         # Validate — speak helpful error if paths have not been configured yet
         if "REPLACE" in GARMIN_FETCH_SCRIPT or "REPLACE" in PYTHON_PATH:
             await self.capability_worker.speak(
                 "Garmin is not set up yet. Please update the script path and Python path in main.py."
             )
-            self.capability_worker.resume_normal_flow()  
+            self.capability_worker.resume_normal_flow()
             return
 
         # Execute garmin_fetch.py on local machine via Local Link
@@ -56,7 +56,7 @@ class Locallinktest1Capability(MatchingCapability):
             garmin_data = json.loads(stdout)
         except Exception as e:
             self.worker.editor_logging_handler.info(f"[Garmin] JSON parse error: {e}")
-            await self.capability_worker.speak("I had trouble reading your Garmin data.") 
+            await self.capability_worker.speak("I had trouble reading your Garmin data.")
             self.capability_worker.resume_normal_flow()
             return
 
