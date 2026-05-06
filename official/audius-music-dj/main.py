@@ -131,16 +131,7 @@ class AudiusMusicDjCapability(MatchingCapability):
         "titles": []
     }
 
-    @classmethod
-    def register_capability(cls) -> "MatchingCapability":
-        with open(
-            os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.json")
-        ) as file:
-            data = json.load(file)
-        return cls(
-            unique_name=data["unique_name"],
-            matching_hotwords=data["matching_hotwords"],
-        )
+    #{{register_capability}}
 
     def _get_host(self):
         """Get the best available host from Audius"""
