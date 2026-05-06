@@ -266,19 +266,31 @@ class ConflictDetectorBackground(MatchingCapability):
             and c.get("date_resolved", "") <= cutoff
         ]
 
-        # Also include adjacent-day travel that could affect this commitment
+        # Adjacent-date check relative to the commitment's own date (not today)
         adjacent_dates = [
-            (today + timedelta(days=d)).strftime("%Y-%m-%d")
+            (new_dt + timedelta(days=d)).strftime("%Y-%m-%d")
             for d in (-1, 1)
         ]
-        travel_candidates = [
-            c for c in data.get("commitments", [])
-            if c.get("status") == "active"
-            and c.get("id") != new_c.get("id")
-            and c.get("type") == "travel"
-            and c.get("date_resolved", "") in adjacent_dates
-        ]
-        candidates = candidates + [c for c in travel_candidates if c not in candidates]
+        if new_c.get("type") == "travel":
+            # Travel commitment: check ALL adjacent-day items — any could be blocked
+            adjacent_candidates = [
+                c for c in data.get("commitments", [])
+                if c.get("status") == "active"
+                and c.get("id") != new_c.get("id")
+                and c.get("date_resolved", "") in adjacent_dates
+                and c not in candidates
+            ]
+        else:
+            # Non-travel commitment: check only travel on adjacent days
+            adjacent_candidates = [
+                c for c in data.get("commitments", [])
+                if c.get("status") == "active"
+                and c.get("id") != new_c.get("id")
+                and c.get("type") == "travel"
+                and c.get("date_resolved", "") in adjacent_dates
+                and c not in candidates
+            ]
+        candidates = candidates + adjacent_candidates
 
         if not candidates:
             return []
@@ -408,6 +420,9 @@ class ConflictDetectorBackground(MatchingCapability):
                     extracted = self._phase2_llm_extract(text)
                     llm_calls_this_poll += 1
                     if not extracted:
+                        self.worker.editor_logging_handler.info(
+                            f"[ConflictDetector] No commitments extracted: {text[:60]}"
+                        )
                         continue
 
                     data = await self._load_data()
@@ -422,6 +437,9 @@ class ConflictDetectorBackground(MatchingCapability):
                         duration_hint = c_data.get("duration_hint", "").strip()
 
                         if not raw_text or not date_hint:
+                            self.worker.editor_logging_handler.info(
+                                f"[ConflictDetector] Skipped (no date): {raw_text[:60]}"
+                            )
                             continue
 
                         date_resolved = _resolve_date(date_hint)

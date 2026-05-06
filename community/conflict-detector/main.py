@@ -154,7 +154,8 @@ class ConflictDetectorCapability(MatchingCapability):
         if any(kw in t for kw in ("add a commitment", "log a commitment", "add commitment")):
             return "ADD"
         if any(kw in t for kw in (
-            "conflict", "clash", "overlap", "conflicting", "scheduling",
+            "any conflicts", "my conflicts", "show conflicts", "what conflicts",
+            "clashing", "conflicting plans", "schedule conflict",
         )):
             return "CONFLICTS"
         return "LIST"
