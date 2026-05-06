@@ -232,6 +232,9 @@ class ConflictDetectorBackground(MatchingCapability):
                 continue
             words_ex = set(re.findall(r'\b[a-z]+\b', c.get("text", "").lower()))
             if words_ex:
+                # Subset check: shorter phrase fully contained in longer is a duplicate
+                if words_new.issubset(words_ex) or words_ex.issubset(words_new):
+                    return True
                 overlap = len(words_new & words_ex) / max(len(words_new), len(words_ex), 1)
                 if overlap >= 0.70:
                     return True
@@ -311,18 +314,27 @@ class ConflictDetectorBackground(MatchingCapability):
         dur_a = f" (takes {c_a['duration_hint']})" if c_a.get("duration_hint") else ""
         dur_b = f" (takes {c_b['duration_hint']})" if c_b.get("duration_hint") else ""
 
+        same_day = c_a["date_resolved"] == c_b["date_resolved"]
+        adjacent_note = (
+            "" if same_day else
+            "Note: these are on adjacent days. Treat overnight travel the night before "
+            "any other commitment as a SOFT conflict — flag it even if technically possible.\n\n"
+        )
         prompt = (
             f"Do these two commitments conflict with each other?\n\n"
             f"Commitment A: \"{c_a['text']}\""
             f" on {c_a['date_resolved']}{time_a}{dur_a}\n"
             f"Commitment B: \"{c_b['text']}\""
             f" on {c_b['date_resolved']}{time_b}{dur_b}\n\n"
+            f"{adjacent_note}"
             "A conflict exists if:\n"
-            "- They require being in different places at the same time\n"
-            "- One makes the other physically impossible (e.g. overnight travel before early morning commitment)\n"
-            "- A deadline is incompatible with a scheduled absence\n\n"
+            "- They overlap in time and require being in two places\n"
+            "- One is travel that runs into or through the other's time window\n"
+            "- Overnight or evening travel the day before creates risk for next-day commitments\n"
+            "- A deadline is incompatible with being away or in transit\n\n"
             "Return ONLY valid JSON:\n"
-            "{\"conflicts\": true, \"reason\": \"brief explanation\", \"severity\": \"hard\"}\n"
+            "{\"conflicts\": true, \"reason\": \"one sentence explanation\", "
+            "\"severity\": \"hard or soft\"}\n"
             "OR {\"conflicts\": false}"
         )
         try:

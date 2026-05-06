@@ -15,6 +15,7 @@ HOTWORDS = {
     "check my schedule", "what's on my plate", "what do i have coming up",
     "add a commitment", "log a commitment",
     "clear my commitments", "wipe my conflicts", "clear conflicts",
+    "clear all conflicts", "clear all commitments", "clear all my",
     "dismiss this conflict", "ignore this conflict",
 }
 
