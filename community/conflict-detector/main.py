@@ -60,6 +60,9 @@ def _resolve_date(date_hint: str) -> str:
         return today.strftime("%Y-%m-%d")
     if "tomorrow" in h:
         return (today + timedelta(days=1)).strftime("%Y-%m-%d")
+    if "after the weekend" in h or "after weekend" in h:
+        days = (0 - today.weekday()) % 7 or 7
+        return (today + timedelta(days=days)).strftime("%Y-%m-%d")
     if "weekend" in h:
         days = (5 - today.weekday()) % 7 or 7
         return (today + timedelta(days=days)).strftime("%Y-%m-%d")
@@ -156,7 +159,7 @@ class ConflictDetectorCapability(MatchingCapability):
             return "ADD"
         if any(kw in t for kw in (
             "any conflicts", "my conflicts", "show conflicts", "what conflicts",
-            "clashing", "conflicting plans", "schedule conflict",
+            "clashing", "conflicting plans", "schedule conflict", "scheduling conflict",
         )):
             return "CONFLICTS"
         return "LIST"
@@ -221,7 +224,8 @@ class ConflictDetectorCapability(MatchingCapability):
     # Intent handlers
     # ------------------------------------------------------------------
 
-    async def _handle_list(self, data: dict):
+    async def _handle_list(self):
+        data = await self._load_data()
         active = [c for c in data.get("commitments", []) if c.get("status") == "active"]
         if not active:
             await self.capability_worker.speak(
@@ -265,7 +269,7 @@ class ConflictDetectorCapability(MatchingCapability):
 
         r = reply.lower()
         if any(kw in r for kw in ("conflict", "clash", "overlap")):
-            await self._handle_conflicts(data)
+            await self._handle_conflicts()
             return
 
         num_match = re.search(r'\b(\d+)\b', reply)
@@ -282,8 +286,31 @@ class ConflictDetectorCapability(MatchingCapability):
                 await self.capability_worker.speak(
                     f"{c['text']}{people_clause} — {when}{time_clause}{dur_clause}."
                 )
+                await self.capability_worker.speak(
+                    "Say another number for details, say conflicts, or stop."
+                    if open_conflicts else
+                    "Say another number for details, or stop."
+                )
+                follow = await self.capability_worker.user_response()
+                if not self._is_exit(follow):
+                    if any(kw in follow.lower() for kw in ("conflict", "clash", "overlap")):
+                        await self._handle_conflicts()
+                    else:
+                        num_m = re.search(r'\b(\d+)\b', follow)
+                        if num_m:
+                            idx2 = int(num_m.group(1)) - 1
+                            c2 = self._find_commitment_by_index(idx2, data.get("commitments", []))
+                            if c2:
+                                p2 = f" with {', '.join(c2['people'])}" if c2.get("people") else ""
+                                t2 = f" at {c2['time_hint']}" if c2.get("time_hint") else ""
+                                d2 = f", takes {c2['duration_hint']}" if c2.get("duration_hint") else ""
+                                w2 = _relative_date(c2["date_resolved"]) if c2.get("date_resolved") else c2.get("date_hint", "")
+                                await self.capability_worker.speak(
+                                    f"{c2['text']}{p2} — {w2}{t2}{d2}."
+                                )
 
-    async def _handle_conflicts(self, data: dict):
+    async def _handle_conflicts(self):
+        data = await self._load_data()
         open_conflicts = [cf for cf in data.get("conflicts", []) if cf.get("status") == "open"]
         if not open_conflicts:
             await self.capability_worker.speak("No conflicts detected — your schedule looks clean.")
@@ -293,20 +320,21 @@ class ConflictDetectorCapability(MatchingCapability):
         for i, cf in enumerate(open_conflicts[:5]):
             c_a = self._get_commitment_by_id(cf.get("commitment_a_id", ""), data)
             c_b = self._get_commitment_by_id(cf.get("commitment_b_id", ""), data)
-            if not c_a or not c_b:
-                continue
+            label_a = c_a["text"] if c_a else "a previous commitment"
+            label_b = c_b["text"] if c_b else "a previous commitment"
             severity_tag = " (hard conflict)" if cf.get("severity") == "hard" else ""
             parts.append(
-                f"{i + 1}. {c_a['text']} vs {c_b['text']}{severity_tag} — {cf['reason']}"
+                f"{i + 1}. {label_a} vs {label_b}{severity_tag} — {cf['reason']}"
             )
 
         if not parts:
             await self.capability_worker.speak("No conflicts detected — your schedule looks clean.")
             return
 
+        more_clause = f" Showing the first 5." if len(open_conflicts) > 5 else ""
         await self.capability_worker.speak(
             f"You have {len(open_conflicts)} "
-            f"{'conflict' if len(open_conflicts) == 1 else 'conflicts'}. "
+            f"{'conflict' if len(open_conflicts) == 1 else 'conflicts'}.{more_clause} "
             + ". ".join(parts) + "."
         )
 
@@ -340,7 +368,50 @@ class ConflictDetectorCapability(MatchingCapability):
                 cf["status"] = "dismissed"
                 cf["dismissed_at"] = now_str
                 await self._save_data(data)
-                await self.capability_worker.speak("Got it — conflict dismissed.")
+                remaining = len([c for c in data.get("conflicts", []) if c.get("status") == "open"])
+                if remaining:
+                    await self.capability_worker.speak(
+                        f"Dismissed. {remaining} "
+                        f"{'conflict' if remaining == 1 else 'conflicts'} still open — "
+                        "say 'conflict detector' to review the rest."
+                    )
+                else:
+                    await self.capability_worker.speak("Dismissed — no more conflicts.")
+
+    def _quick_conflict_hint(self, new_c: dict, data: dict) -> str | None:
+        new_date = new_c.get("date_resolved", "")
+        if not new_date:
+            return None
+        try:
+            new_dt = datetime.strptime(new_date, "%Y-%m-%d").date()
+        except ValueError:
+            return None
+        adjacent_dates = [
+            (new_dt + timedelta(days=d)).strftime("%Y-%m-%d") for d in (-1, 1)
+        ]
+        same_day = [
+            c for c in data.get("commitments", [])
+            if c.get("status") == "active"
+            and c.get("id") != new_c.get("id")
+            and c.get("date_resolved") == new_date
+        ]
+        if new_c.get("type") == "travel":
+            adjacent = [
+                c for c in data.get("commitments", [])
+                if c.get("status") == "active"
+                and c.get("date_resolved") in adjacent_dates
+            ]
+        else:
+            adjacent = [
+                c for c in data.get("commitments", [])
+                if c.get("status") == "active"
+                and c.get("type") == "travel"
+                and c.get("date_resolved") in adjacent_dates
+            ]
+        candidates = same_day + adjacent
+        if not candidates:
+            return None
+        return ", ".join(c["text"] for c in candidates[:2])
 
     async def _handle_add(self, trigger_text: str):
         await self.capability_worker.speak("What's the commitment?")
@@ -377,11 +448,20 @@ class ConflictDetectorCapability(MatchingCapability):
         data.setdefault("meta", {})
         await self._save_data(data)
         when = _relative_date(date_resolved)
-        await self.capability_worker.speak(
-            f"Saved — {commitment_text} on {when}."
-        )
+        hint = self._quick_conflict_hint(new_c, data)
+        if hint:
+            await self.capability_worker.speak(
+                f"Saved — {commitment_text} on {when}. "
+                f"Heads up: you also have {hint} around that time — "
+                "say 'conflict detector' to review."
+            )
+        else:
+            await self.capability_worker.speak(
+                f"Saved — {commitment_text} on {when}."
+            )
 
-    async def _handle_dismiss(self, data: dict, trigger_text: str):
+    async def _handle_dismiss(self):
+        data = await self._load_data()
         open_conflicts = [cf for cf in data.get("conflicts", []) if cf.get("status") == "open"]
         if not open_conflicts:
             await self.capability_worker.speak("No open conflicts to dismiss.")
@@ -391,9 +471,10 @@ class ConflictDetectorCapability(MatchingCapability):
             cf = open_conflicts[0]
             c_a = self._get_commitment_by_id(cf.get("commitment_a_id", ""), data)
             c_b = self._get_commitment_by_id(cf.get("commitment_b_id", ""), data)
-            label = f"{c_a['text']} vs {c_b['text']}" if c_a and c_b else "this conflict"
+            label_a = c_a["text"] if c_a else "a previous commitment"
+            label_b = c_b["text"] if c_b else "a previous commitment"
             confirmed = await self.capability_worker.run_confirmation_loop(
-                f"Dismiss: {label}?"
+                f"Dismiss: {label_a} vs {label_b}?"
             )
             if confirmed:
                 cf["status"] = "dismissed"
@@ -402,18 +483,27 @@ class ConflictDetectorCapability(MatchingCapability):
                 await self.capability_worker.speak("Dismissed.")
             return
 
-        await self._handle_conflicts(data)
+        await self._handle_conflicts()
 
-    async def _handle_clear(self, data: dict):
+    async def _handle_clear(self):
+        data = await self._load_data()
         active_count = len([c for c in data.get("commitments", []) if c.get("status") == "active"])
-        if active_count == 0:
+        open_conflict_count = len([cf for cf in data.get("conflicts", []) if cf.get("status") == "open"])
+        if active_count == 0 and open_conflict_count == 0:
             await self.capability_worker.speak("Nothing to clear — no active commitments on file.")
             return
 
-        confirmed = await self.capability_worker.run_confirmation_loop(
-            f"Clear all {active_count} "
-            f"{'commitment' if active_count == 1 else 'commitments'} and conflicts?"
-        )
+        if active_count == 0:
+            prompt = (
+                f"Clear {open_conflict_count} open "
+                f"{'conflict' if open_conflict_count == 1 else 'conflicts'}?"
+            )
+        else:
+            prompt = (
+                f"Clear all {active_count} "
+                f"{'commitment' if active_count == 1 else 'commitments'} and conflicts?"
+            )
+        confirmed = await self.capability_worker.run_confirmation_loop(prompt)
         if confirmed:
             data["commitments"] = []
             data["conflicts"] = []
@@ -437,18 +527,16 @@ class ConflictDetectorCapability(MatchingCapability):
                 f"[ConflictDetector] Intent: {intent} | Trigger: {trigger_text[:80]}"
             )
 
-            data = await self._load_data()
-
             if intent == "LIST":
-                await self._handle_list(data)
+                await self._handle_list()
             elif intent == "CONFLICTS":
-                await self._handle_conflicts(data)
+                await self._handle_conflicts()
             elif intent == "ADD":
                 await self._handle_add(trigger_text)
             elif intent == "DISMISS":
-                await self._handle_dismiss(data, trigger_text)
+                await self._handle_dismiss()
             elif intent == "CLEAR":
-                await self._handle_clear(data)
+                await self._handle_clear()
             else:
                 await self.capability_worker.speak(
                     "I can show your upcoming commitments, flag any conflicts, "

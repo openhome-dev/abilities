@@ -80,6 +80,9 @@ def _resolve_date(date_hint: str) -> str:
         return (today + timedelta(days=1)).strftime("%Y-%m-%d")
     if "tonight" in h or "this evening" in h:
         return today.strftime("%Y-%m-%d")
+    if "after the weekend" in h or "after weekend" in h:
+        days = (0 - today.weekday()) % 7 or 7
+        return (today + timedelta(days=days)).strftime("%Y-%m-%d")
     if "weekend" in h:
         days = (5 - today.weekday()) % 7 or 7
         return (today + timedelta(days=days)).strftime("%Y-%m-%d")
@@ -242,6 +245,8 @@ class ConflictDetectorBackground(MatchingCapability):
 
     def _conflict_pair_exists(self, id_a: str, id_b: str, data: dict) -> bool:
         for cf in data.get("conflicts", []):
+            if cf.get("status") == "dismissed":
+                continue
             pair = {cf.get("commitment_a_id"), cf.get("commitment_b_id")}
             if pair == {id_a, id_b}:
                 return True
@@ -439,6 +444,7 @@ class ConflictDetectorBackground(MatchingCapability):
 
                     data = await self._load_data()
                     changed = False
+                    pending_alerts = []
 
                     for c_data in extracted:
                         raw_text = c_data.get("text", "").strip()[:120]
@@ -463,8 +469,9 @@ class ConflictDetectorBackground(MatchingCapability):
 
                         if len(data.get("commitments", [])) >= MAX_COMMITMENTS:
                             expired = [c for c in data["commitments"] if c.get("status") == "expired"]
-                            if expired:
-                                oldest = min(expired, key=lambda c: c.get("captured_at", ""))
+                            pool = expired or [c for c in data["commitments"] if c.get("status") == "active"]
+                            if pool:
+                                oldest = min(pool, key=lambda c: c.get("captured_at", ""))
                                 data["commitments"].remove(oldest)
 
                         new_c = _new_commitment(
@@ -478,7 +485,6 @@ class ConflictDetectorBackground(MatchingCapability):
                             f"[ConflictDetector] Captured: {raw_text[:60]} on {date_resolved}"
                         )
 
-                        # Conflict check against existing commitments
                         new_conflicts = self._run_conflict_check(new_c, data)
                         for other_c, reason, severity in new_conflicts:
                             cf = _new_conflict(new_c["id"], other_c["id"], reason, severity)
@@ -488,23 +494,25 @@ class ConflictDetectorBackground(MatchingCapability):
                                 f"vs {other_c['text'][:40]}"
                             )
                             cf["alerted"] = True
-                            await self._save_data(data)
-                            try:
-                                await self.capability_worker.send_interrupt_signal()
-                                await self.capability_worker.speak(
-                                    f"Heads up — you said you'd {new_c['text']} "
-                                    f"but you also mentioned {other_c['text']}. "
-                                    f"{reason}. Worth double-checking."
-                                )
-                            except Exception as e:
-                                self.worker.editor_logging_handler.error(
-                                    f"[ConflictDetector] Alert error: {e}"
-                                )
+                            pending_alerts.append((new_c["text"], other_c["text"], reason))
 
                     if changed:
                         data.setdefault("meta", {})["last_processed_length"] = s["last_processed_index"]
                         await self._save_data(data)
                         s["polls_since_save"] = 0
+
+                    for alert_a, alert_b, alert_reason in pending_alerts:
+                        try:
+                            await self.capability_worker.send_interrupt_signal()
+                            await self.capability_worker.speak(
+                                f"Heads up — you said you'd {alert_a} "
+                                f"but you also mentioned {alert_b}. "
+                                f"{alert_reason}. Say 'conflict detector' to review."
+                            )
+                        except Exception as e:
+                            self.worker.editor_logging_handler.error(
+                                f"[ConflictDetector] Alert error: {e}"
+                            )
 
                 # Daily maintenance
                 today_str = datetime.now().strftime("%Y-%m-%d")
