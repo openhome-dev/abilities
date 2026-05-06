@@ -331,7 +331,7 @@ class ConflictDetectorCapability(MatchingCapability):
             await self.capability_worker.speak("No conflicts detected — your schedule looks clean.")
             return
 
-        more_clause = f" Showing the first 5." if len(open_conflicts) > 5 else ""
+        more_clause = " Showing the first 5." if len(open_conflicts) > 5 else ""
         await self.capability_worker.speak(
             f"You have {len(open_conflicts)} "
             f"{'conflict' if len(open_conflicts) == 1 else 'conflicts'}.{more_clause} "
