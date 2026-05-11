@@ -7,7 +7,6 @@ from src.agent.capability import MatchingCapability
 from src.agent.capability_worker import CapabilityWorker
 from src.main import AgentWorker
 
-
 class HubspotAbility1Capability(MatchingCapability):
     # {{register capability}}
     worker: AgentWorker = None
