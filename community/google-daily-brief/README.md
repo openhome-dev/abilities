@@ -1,4 +1,4 @@
-# OpenHome Daily Brief
+# My Daily Brief
 
 ![Community](https://img.shields.io/badge/OpenHome-Community-orange?style=flat-square)
 ![Author](https://img.shields.io/badge/Author-@ammyyou112-lightgrey?style=flat-square)
