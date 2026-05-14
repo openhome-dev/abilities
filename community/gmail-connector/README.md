@@ -1,232 +1,118 @@
-# Gmail Connector
+# Gmail Voice Assistant
 
-A voice-powered Gmail client. Manage your inbox entirely by voice — summarize unread emails, read specific messages aloud, reply, compose, search, mark as read, archive, and triage one-by-one.
+Gmail Voice Assistant is an OpenHome community ability for managing Gmail by voice. It uses the user's linked Google account to list emails, read messages aloud, compose new emails, reply to threads, mark messages as read, archive emails, and remember contact hints for future requests.
 
----
+## What It Does
 
-## What You Need Before Starting
+- Lists recent, unread, today, yesterday, date-specific, or sender-specific Gmail messages
+- Reads a selected email aloud with a concise spoken summary
+- Marks an email as read after opening it
+- Lets the user reply immediately after hearing an email
+- Archives an email after reading when the user asks
+- Composes new emails by collecting recipient, subject, and message body
+- Fixes basic grammar, spelling, and capitalization before sending
+- Replies to a specific email by sender, subject, keyword, or recent list position
+- Marks one email or all shown emails as read from a list follow-up
+- Remembers contacts from sent and replied messages
+- Resolves follow-up references like `the first one`, `the invoice email`, or `from Ahmed`
 
-1. A [Composio](https://composio.dev) account
-2. Your Gmail account connected to Composio
-3. Your Composio **API Key** and **Entity ID**
+## Supported Requests
 
----
+| Request type | Example | What happens |
+|---|---|---|
+| List emails | `Check my unread emails` | Finds matching inbox emails and reads a short numbered list |
+| List by date | `What came in today?` | Searches inbox mail from the requested date range |
+| List by sender | `Show emails from Ahmed` | Searches Gmail for inbox messages from that sender |
+| Read email | `Read the email from Sarah` | Finds the matching email, summarizes it, and marks it read |
+| Compose email | `Send an email to Ahmed` | Collects missing recipient, subject, or body, then sends |
+| Reply | `Reply to the invoice email saying payment sent` | Finds the email and sends a thread reply |
+| Mark read | `Mark all as read` | Marks all currently shown emails as read |
+| Archive | `Archive that one` | Removes the current email from the inbox |
+| More results | `Show more` | Continues through the current email list |
 
-## Step 1 — Create a Composio Account
+## Example Prompts
 
-1. Go to [composio.dev](https://composio.dev) and sign up
-2. Complete the onboarding steps
+- "Check my unread emails."
+- "What came in today?"
+- "Show emails from Ahmed."
+- "Show emails from last Friday."
+- "Read the first one."
+- "Read the email about the invoice."
+- "Reply to Sarah saying sounds good."
+- "Reply to the invoice email saying payment sent."
+- "Send an email to Jordan."
+- "Mark all as read."
+- "Archive this email."
 
----
+## Trigger Phrases
 
-## Step 2 — Get Your API Key
+- `gmail`
+- `open gmail`
+- `check gmail`
+- `check my email`
+- `read my email`
+- `send an email`
+- `reply to email`
 
-1. In the Composio dashboard, click **Settings** in the left sidebar
-2. Click the **API Keys** tab
-3. Copy your API key — it starts with `ak_`
-4. Save it somewhere safe — this is your `COMPOSIO_API_KEY`
+## Account Linking Guide
 
----
-
-## Step 3 — Connect Your Gmail Account
-
-1. In the Composio dashboard, click **All Toolkits** (top right)
-2. Search for **Gmail** and click on it
-3. Click **Add to Project**
-4. Click **Connect Account**
-5. A Google sign-in window will appear — sign in and allow all permissions
-6. You will be redirected back to Composio with Gmail shown as **Active**
-
----
-
-## Step 4 — Get Your Entity ID
-
-1. In the Composio dashboard, click on your **Gmail app** (e.g. `gmail-xxxxxx`) in the sidebar
-2. Click **Connected Accounts**
-3. You will see a table with columns: Account ID, User ID, Status
-4. Copy the value in the **User ID column** — this is your **Entity ID**
-5. It looks like: `pg-test-xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx`
-
----
-
-## Step 5 — Add Your Credentials to main.py
-
-Open `main.py` and find these lines near the top:
-
-```python
-COMPOSIO_API_KEY = "YOUR_COMPOSIO_API_KEY"
-COMPOSIO_USER_ID = "YOUR_COMPOSIO_USER_ID"
-COMPOSIO_ENTITY_ID = "YOUR_COMPOSIO_ENTITY_ID"
-```
-
-Replace them with your actual values:
+This ability does not use a manual API key. It reads a Google OAuth token from OpenHome with:
 
 ```python
-COMPOSIO_API_KEY = "ak_xxxxxxxxxxxxxxxxxxxx"
-COMPOSIO_USER_ID = "pg-test-xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
-COMPOSIO_ENTITY_ID = "pg-test-xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+self.capability_worker.get_token("google")
 ```
 
-> **Note:** `COMPOSIO_USER_ID` and `COMPOSIO_ENTITY_ID` are the same value — both should be set to the User ID you copied in Step 4.
+Before using the ability, connect the Google account that owns the Gmail inbox you want OpenHome to manage.
 
----
+1. Open OpenHome.
+2. Go to **Settings -> Linked Accounts**.
+3. Choose **Google**.
+4. Sign in to the Google account you want to use.
+5. Approve the requested Google permissions.
+6. Return to OpenHome and enable or install the Gmail ability.
+7. Add trigger phrases such as `gmail`, `check my email`, and `send an email`.
+8. Start a conversation and say one of the trigger phrases.
 
-## Step 6 — Upload and Deploy
+If the Google account is not linked, the ability will say that the account is not connected and stop.
 
-1. Zip the folder containing `main.py`, `README.md`, and `__init__.py`
-2. Upload the zip to your deployment dashboard
-3. Add the trigger words below to your configuration
+## Data Access
 
----
+| Service | Authentication | Used for |
+|---|---|---|
+| Gmail API | Linked Google account | Listing, reading, sending, replying, marking read, and archiving Gmail messages |
 
-## Trigger Words
+The ability can read email metadata and message bodies when the user asks it to list or read mail. It can send new emails and replies only during the compose or reply flows.
 
-```
-email, emails, inbox, gmail, unread emails, new emails,
-check my email, check email, read my email, read email,
-any new email, do I have email, send an email, send email,
-write an email, reply to email, email from, triage my email,
-go through my email, catch me up on email
-```
+## Stored Data
 
----
-
-## How to Use It
-
-| What You Say | What It Does |
-|---|---|
-| "Check my email" | Summarizes your unread inbox |
-| "Did Sarah email me?" | Finds and reads Sarah's email |
-| "Triage my inbox" | Goes through emails one by one |
-| "Send an email to Mike" | Starts compose flow |
-| "Reply — tell her I'll fix it today" | Drafts and sends a reply |
-| "Archive that" | Moves current email to trash |
-| "Mark it as read" | Marks current email as read |
-
----
-
-## Example Conversation
-
-```
-You:  "Did Sarah email me?"
-Bot:  "One sec, checking your inbox."
-Bot:  "Yes — Sarah sent the Q3 deck and flagged two issues in slide 8. Want me to read the full email?"
-You:  "Yes"
-Bot:  [reads email summary]
-Bot:  "Want to reply, archive, or move on?"
-You:  "Reply — tell her I'll fix slide 8 today"
-Bot:  "Here's what I'll send: I'll fix slide 8 today, thanks for flagging it. Should I send it?"
-You:  "Yes"
-Bot:  "Reply sent! Anything else with your email?"
-You:  "No thanks"
-Bot:  [exits]
-```
-
----
-
-## How It Was Built — For Developers
-
-This section explains the architecture so you can build something similar or extend it.
-
-### Core Architecture
-
-The connector is a **single Python class** (`main.py`) with no external dependencies beyond `requests`. All Gmail operations go through **Composio** as a middleware layer — meaning you never deal with Google OAuth directly. Composio handles authentication and exposes Gmail as simple REST API calls.
-
-### How Composio Is Used
-
-Every Gmail action (fetch, send, reply, search) goes through one central function:
-
-```python
-def execute_composio_action(self, action_slug: str, params: dict):
-    url = f"https://backend.composio.dev/api/v2/actions/{action_slug}/execute"
-    payload = {
-        "entityId": COMPOSIO_ENTITY_ID,
-        "appName": "gmail",
-        "input": params,
-    }
-    response = requests.post(url, json=payload, headers={"X-API-KEY": COMPOSIO_API_KEY})
-```
-
-Key things to note:
-- `entityId` must match the **User ID** shown in Composio Connected Accounts — not `"default"`, not the Account ID
-- `appName` must be set to `"gmail"` when not passing a `connectedAccountId`
-- Action slugs like `GMAIL_FETCH_EMAILS` and `GMAIL_SEND_EMAIL` map directly to Composio's toolkit actions
-
-### Intent Classification
-
-Rather than hardcoding keyword matching, the developer used **LLM-based intent classification**. When the user speaks, their message is sent to a language model with a structured prompt that returns JSON like:
+The ability stores non-secret contact hints in:
 
 ```json
-{
-  "intent": "read_specific",
-  "mode": "quick",
-  "details": { "sender": "Sarah" }
-}
+gmail_contacts.json
 ```
 
-This makes the connector flexible — users can phrase things naturally and the system figures out what they mean without rigid command matching.
+This file maps names or local email parts to email addresses so future voice requests like "email Ahmed" can resolve more easily. OAuth tokens are handled by OpenHome and are not stored in this file.
 
-### Two Modes: Quick vs Full
+## Voice Flow
 
-- **Quick mode** — answers one question, offers a brief follow-up, then exits
-- **Full mode** — opens an interactive loop, stays active until the user says done
+1. User triggers the ability.
+2. The ability waits for the complete trigger transcription.
+3. It checks for a linked Google account.
+4. It builds a Gmail API service from the OpenHome Google token.
+5. It classifies the request as `COMPOSE`, `REPLY`, `READ`, `LIST`, or `UNKNOWN`.
+6. If the request is unclear, it asks what the user wants to do.
+7. The selected flow asks for any missing details.
+8. The ability performs the Gmail action.
+9. The ability calls `resume_normal_flow()` so the OpenHome agent can continue normally.
 
-The mode is decided automatically based on the trigger phrase using the same LLM classification step.
+## Flow Details
 
-### Voice UX Pattern
+- **List**: searches by unread, recent, today, yesterday, sender, or a specific date, then reads emails in batches of five.
+- **Read**: opens a specific email or asks the user to choose from unread messages, then summarizes the body.
+- **Reply**: resolves the target email from context or Gmail search, collects reply content, lightly fixes wording, and sends the reply.
+- **Compose**: extracts any fields already spoken, asks for missing fields, lightly fixes the body, and sends the email.
+- **Follow-up list actions**: after listing emails, the user can read one, reply, show more, mark read, compose, or finish.
 
-All spoken responses are kept to 1-2 sentences. Filler speech like *"One sec, checking your inbox"* plays before API calls to avoid awkward silence while waiting for a response.
+## Developer Credit
 
-Send and reply actions always require voice confirmation before executing — the bot reads the draft aloud and waits for "yes" before sending anything.
-
----
-
-### If You Want to Build Something Similar
-
-**To connect a different app (Slack, Calendar, Notion, etc.):**
-- Create a Composio account and connect your app the same way as Gmail
-- Replace the action slugs (e.g. `GMAIL_FETCH_EMAILS` → `SLACK_LIST_MESSAGES`)
-- Keep the same `execute_composio_action` function — only the slug and `input` params change
-
-**To add a new Gmail action (e.g. label emails):**
-- Find the slug in Composio's Gmail toolkit (e.g. `GMAIL_MODIFY_MESSAGE`)
-- Add a new method calling `execute_composio_action` with the right params
-- Add the intent to the classification prompt and route it in `route_session_intent`
-
-**To swap out Composio for direct Gmail API:**
-- Replace `execute_composio_action` with Google's Gmail REST API
-- Handle OAuth2 yourself using `google-auth` and `google-api-python-client`
-- Everything else (intent classification, conversation flow, response parsing) stays the same
-
-**Composio action slugs used in this project:**
-
-| Slug | What It Does |
-|---|---|
-| `GMAIL_FETCH_EMAILS` | List unread or searched emails |
-| `GMAIL_FETCH_MESSAGE_BY_MESSAGE_ID` | Get a single email by ID |
-| `GMAIL_SEND_EMAIL` | Send a new email |
-| `GMAIL_REPLY_TO_THREAD` | Reply to an existing thread |
-| `GMAIL_MOVE_TO_TRASH` | Archive / trash an email |
-
----
-
-## Files
-
-| File | Purpose |
-|---|---|
-| `main.py` | All connector logic |
-| `README.md` | This setup guide |
-| `__init__.py` | Empty package marker |
-
----
-
-## Troubleshooting
-
-| Error | Fix |
-|---|---|
-| `Invalid uuid` | Use the **User ID** from Connected Accounts, not the Account ID |
-| `No connected account found` | Your Entity ID is wrong — copy it again from Composio Connected Accounts |
-| `App name and entity id must be present` | Make sure `appName: "gmail"` is included in the payload |
-| `401 Unauthorized` | API key is wrong or expired — regenerate it in Composio Settings |
-| `429 Rate Limited` | Wait a minute and try again |
-| Gmail shown as inactive | Reconnect your Gmail account in Composio |
+Developed by [@samsonadmasu](https://github.com/samsonadmasu).
