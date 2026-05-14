@@ -124,4 +124,4 @@ If TMDB rejects the key, confirm that the saved value is the short v3 API key an
 
 ## Developer Credit
 
-Developed by [@rizwan-095](https://github.com/rizwan-095).
+Developed by [@Kaushal-205](https://github.com/Kaushal-205).
