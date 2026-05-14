@@ -170,3 +170,7 @@ has no playable audio, the ability tells the user and asks for another pick.
 - Trending pool size is 10 (`TRENDING_POOL_SIZE`); three are spoken to the user (`TRENDING_SPOKEN_OPTIONS`).
 - Every spoken line goes through a short LLM "naturalness pass" so the wording sounds conversational, while podcast/episode/guest names are preserved exactly.
 - Errors are summarized into a short friendly spoken sentence rather than read verbatim.
+
+## Developer Credit
+
+Developed by [@SpkArtZen](https://github.com/SpkArtZen).
