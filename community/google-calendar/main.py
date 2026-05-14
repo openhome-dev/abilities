@@ -1,2718 +1,1577 @@
 import json
 import re
 import requests
-from datetime import datetime, timedelta
-from time import time as epoch_now
+from datetime import datetime, timedelta, timezone
+from typing import Optional
 from zoneinfo import ZoneInfo
+
+from google.oauth2.credentials import Credentials
+from googleapiclient.discovery import build
+from googleapiclient.errors import HttpError
+from google.auth.transport.requests import Request
+
 from src.agent.capability import MatchingCapability
 from src.main import AgentWorker
 from src.agent.capability_worker import CapabilityWorker
 
-# =============================================================================
-# CONFIGURATION
-# =============================================================================
+def _build_calendar_service_using_access_token(token):
+    creds = Credentials(token=token)
+    return build("calendar", "v3", credentials=creds)
 
-CALENDAR_API_URL = "https://www.googleapis.com/calendar/v3/calendars/primary/events"
-DEFAULT_TIMEZONE = "America/Los_Angeles"
-LOCAL_TZ = None  # set in call() via SDK get_timezone()
+def _format_event_for_speech(event: dict) -> str:
+    title = event.get("summary", "No title")
+    start = event.get("start", {})
+    raw_dt = start.get("dateTime", start.get("date", ""))
+    location = event.get("location", "")
+    location_part = f" at {location}" if location else ""
 
-LATE_NIGHT_CUTOFF = 4
+    # Format datetime nicely for speech
+    time_str = "unknown time"
+    if raw_dt:
+        try:
+            # Handle both offset-aware and naive datetimes
+            dt = datetime.fromisoformat(raw_dt)
+            time_str = dt.strftime("%A %B %d at %I:%M %p").replace(" 0", " ").strip()
+        except Exception:
+            time_str = raw_dt  # fallback to raw if parsing fails
 
-EVENTS_CACHE_FILE = "gcal_events_cache.json"
-EVENTS_CACHE_MAX_AGE = 90  # seconds — fall back to API if cache is older than this
+    return f"{title}{location_part}, starting {time_str}"
 
-# =============================================================================
-# TIMEZONE / DATE HELPERS
-# =============================================================================
-
-
-def get_local_now() -> datetime:
-    return datetime.now(LOCAL_TZ)
-
-
-def get_utc_offset_str() -> str:
-    offset = get_local_now().utcoffset()
-    total_seconds = int(offset.total_seconds())
-    sign = "+" if total_seconds >= 0 else "-"
-    total_seconds = abs(total_seconds)
-    hours = total_seconds // 3600
-    minutes = (total_seconds % 3600) // 60
-    return f"{sign}{hours:02d}:{minutes:02d}"
-
-
-def get_effective_today() -> datetime:
-    now = get_local_now()
-    if now.hour < LATE_NIGHT_CUTOFF:
-        return now - timedelta(days=1)
-    return now
-
-
-def friendly_date_label(date_str: str) -> str:
-    try:
-        target = datetime.strptime(date_str, "%Y-%m-%d").date()
-    except Exception:
-        return date_str
-
-    effective = get_effective_today().date()
-    delta_days = (target - effective).days
-
-    if delta_days == 0:
-        return "today"
-    elif delta_days == 1:
-        return "tomorrow"
-    elif 2 <= delta_days <= 6:
-        return f"this {target.strftime('%A')}"
-    elif 7 <= delta_days <= 13:
-        return f"next {target.strftime('%A')}"
-    else:
-        day = target.day
-        if 11 <= day <= 13:
-            suffix = "th"
-        elif day % 10 == 1:
-            suffix = "st"
-        elif day % 10 == 2:
-            suffix = "nd"
-        elif day % 10 == 3:
-            suffix = "rd"
-        else:
-            suffix = "th"
-        return f"{target.strftime('%B')} {day}{suffix}"
-
-
-def get_time_bucket(hour: int) -> str:
-    """Return time bucket based on hour."""
-    if 5 <= hour < 12:
-        return "morning"
-    elif 12 <= hour < 17:
-        return "afternoon"
-    elif 17 <= hour < 21:
-        return "evening"
-    else:
-        return "night"
-
-
-def get_today_context() -> dict:
-    effective = get_effective_today()
-    real_now = get_local_now()
-    hour = real_now.hour
-    return {
-        "today": effective.strftime("%Y-%m-%d"),
-        "day_name": effective.strftime("%A"),
-        "current_time": real_now.strftime("%-I:%M %p"),
-        "late_night": real_now.hour < LATE_NIGHT_CUTOFF,
-        "time_bucket": get_time_bucket(hour),
-        "hour": hour,
+# Google Calendar operations
+def create_event(
+    service,
+    title: str,
+    description: str,
+    start_dt: str,
+    end_dt: str,
+    timezone_str: str,
+    attendees: list,
+    location: str,
+    reminder_minutes: int,
+    add_google_meet: bool,
+) -> dict:
+    body = {
+        "summary": title,
+        "description": description,
+        "start": {"dateTime": start_dt, "timeZone": timezone_str},
+        "end":   {"dateTime": end_dt,   "timeZone": timezone_str},
+        "reminders": {
+            "useDefault": False,
+            "overrides": [
+                {"method": "email",  "minutes": reminder_minutes},
+                {"method": "popup",  "minutes": reminder_minutes},
+            ],
+        },
     }
 
-# =============================================================================
-# LLM PROMPTS
-# =============================================================================
+    if location:
+        body["location"] = location
+
+    if attendees:
+        body["attendees"] = [{"email": e.strip()} for e in attendees if e.strip()]
+
+    conference_data_version = 0
+    if add_google_meet:
+        body["conferenceData"] = {
+            "createRequest": {
+                "requestId": f"gcal-ability-{int(datetime.now().timestamp())}",
+                "conferenceSolutionKey": {"type": "hangoutsMeet"},
+            }
+        }
+        conference_data_version = 1
+
+    return (
+        service.events()
+        .insert(
+            calendarId="primary",
+            body=body,
+            conferenceDataVersion=conference_data_version,
+            sendUpdates="all" if attendees else "none",
+        )
+        .execute()
+    )
+
+def list_events(service, time_min: str, time_max: str, max_results: int = 10) -> list:
+    result = (
+        service.events()
+        .list(
+            calendarId="primary",
+            timeMin=time_min,
+            timeMax=time_max,
+            maxResults=max_results,
+            singleEvents=True,
+            orderBy="startTime",
+        )
+        .execute()
+    )
+    return result.get("items", [])
+
+def update_event(service, event_id: str, updates: dict) -> dict:
+    event = service.events().get(calendarId="primary", eventId=event_id).execute()
+    event.update(updates)
+    return (
+        service.events()
+        .update(
+            calendarId="primary",
+            eventId=event_id,
+            body=event,
+            sendUpdates="all",
+        )
+        .execute()
+    )
+
+def delete_event(service, event_id: str) -> None:
+    service.events().delete(
+        calendarId="primary",
+        eventId=event_id,
+        sendUpdates="all",
+    ).execute()
+
+def search_events_by_title(service, query: str, max_results: int = 5) -> list:
+    now = datetime.now(timezone.utc).isoformat()
+    result = (
+        service.events()
+        .list(
+            calendarId="primary",
+            q=query,
+            timeMin=now,
+            maxResults=max_results,
+            singleEvents=True,
+            orderBy="startTime",
+        )
+        .execute()
+    )
+    return result.get("items", [])
 
 
-# Behavioral context injected into extraction prompts so the LLM understands
-# relative time phrases ("this afternoon", "tonight", "this evening") correctly.
-TIME_CONTEXT_BLOCK = """RIGHT NOW it is {current_time} on {day_name}, {today}. It is currently {time_bucket}.
-{late_night_note}
-"Today" = {today}. "Tomorrow" = the day after {today}.
-If they say a day of the week, use the NEXT occurrence of that day after {today}.
-
-RELATIVE TIME INTERPRETATION:
-- "this morning" = today before 12 PM
-- "this afternoon" = today 12 PM to 5 PM
-- "this evening" / "tonight" = today 5 PM to 10 PM
-- "later today" = a few hours from now (use {current_time} as reference)
-- "end of day" = around 5 PM or 6 PM
-- "lunch" / "lunchtime" = around 12 PM
-- "after work" = around 5 PM or 6 PM
-- If the user says a bare time like "at 3" without AM/PM, infer based on context:
-  - If it's currently morning and they say "at 3", they likely mean 3 PM
-  - If it's currently evening and they say "at 7", they likely mean 7 PM today or tomorrow morning
-
-OFFICE SLANG:
-- "EOD" or "end of day" = 5 PM or 6 PM
-- "COB" = end of business day = 5 PM
-- "bump this/it" = reschedule
-- "circle back" = revisit or reschedule
-- "loop in [name]" = invite that person
-- "block time" / "block off" = schedule a hold
-- "spin up a meeting" = schedule a meeting
-- "table it" / "drop it" = cancel or remove"""
-
-# Voice personality prompt — shapes how the LLM generates spoken output.
-VOICE_SYSTEM_PROMPT = """You are a sharp, friendly assistant who manages someone's calendar like a trusted EA.
-
-Rules:
-- Keep responses to 2-3 sentences max. This is voice, not text.
-- Never feel like a phone menu. Talk like a real person who knows what's going on.
-- Use natural acknowledgments: "On it", "Sure thing", "Let me grab that", "Got it"
-- Vary your phrasing — don't repeat the same confirmation every time.
-- When summarizing calendar events, mention time, title, and relevant context naturally.
-- No bullet points, numbered lists, or markdown formatting.
-- No emojis, no quotation marks around titles, no special characters.
-- When reading email addresses, say "at" instead of "@".
-- Speak directly to the person (use 'you').
-- Do NOT be sycophantic. Be helpful and direct, not stiff.
-- You understand office vernacular: "bump" means reschedule, "circle back" means revisit or reschedule,
-  "loop in" means invite someone, "table it" means drop/cancel for now, "block time" means schedule a hold,
-  "spin up a meeting" means schedule one, "EOD" means end of day around 5 PM."""
-
-EXTRACT_MEETING_PROMPT = """You are a meeting detail extractor. Extract meeting information from the user's input.
-Return ONLY a JSON object with these fields:
-- "summary": string (meeting title/name)
-- "date": string (date in YYYY-MM-DD format, or null if not specified)
-- "time": string (time in HH:MM 24-hour format, or null if not specified)
-- "duration_minutes": integer (duration in minutes, default 30 if not specified)
-- "duration_explicit": boolean (true ONLY if the user explicitly stated a duration like '1 hour', '45 minutes', or an end time. false if you used the 30-minute default)
-- "description": string (any additional notes, or empty string)
-- "attendee_names": list of strings (names of people mentioned as attendees/participants, or empty list. e.g. if user says 'meeting with Jake', include 'Jake')
-- "recurring_weekly": boolean (true if user says "every week", "weekly", "recurring", "every Monday", "weekly standup", etc. false otherwise)
-- "reminder_minutes": integer or null (ONLY if the user explicitly requests a specific reminder window, e.g. "remind me 15 minutes before", "give me a 10 minute heads up", "ping me 5 min early". null if not specified)
-
-IMPORTANT for recurring events: If "recurring_weekly" is true and the user names a specific day of the week (e.g. "every Friday", "every Monday"), resolve "date" to the next upcoming occurrence of that weekday using the today date from the time context below. Do NOT leave "date" as null in this case.
-
-""" + TIME_CONTEXT_BLOCK + """
-
-User input: "{user_input}"
-
-Return ONLY valid JSON, no other text."""
-
-EXTRACT_DATES_PROMPT = """""" + TIME_CONTEXT_BLOCK + """
-
-The user said: "{user_input}"
-
-Extract the date(s) the user is asking about.
-Return ONLY a JSON array of objects like:
-[{{"date": "YYYY-MM-DD", "label": "human readable label like tomorrow or Friday"}}]
-
-If no specific date is mentioned, assume today ({today}).
-Reply with ONLY valid JSON, no extra text."""
-
-EXTRACT_RESCHEDULE_PROMPT = """You are a reschedule detail extractor. The user wants to move or reschedule a calendar event.
-Extract the following from their input and return ONLY a JSON object:
-- "event_hint": string (what they call the event — a name, keyword, or description fragment)
-- "original_time": string or null (if they mention the event's current time, e.g. 'the 6 o'clock meeting', give HH:MM 24-hour format)
-- "original_date": string or null (if they mention the event's current date, give YYYY-MM-DD)
-- "new_date": string or null (the new date in YYYY-MM-DD, or null if not changing date)
-- "new_time": string or null (the new time in HH:MM 24-hour format, or null if not changing time)
-- "new_duration_minutes": integer or null (new duration if explicitly mentioned, otherwise null)
-
-""" + TIME_CONTEXT_BLOCK + """
-
-User input: "{user_input}"
-
-Return ONLY valid JSON, no other text."""
-
-FUZZY_MATCH_PROMPT = """The user wants to modify a calendar event. They described it as: "{event_hint}"
-{original_time_hint}
-
-Here are the upcoming events on their calendar (numbered):
-{event_list}
-
-Which event is the BEST match for what the user is referring to?
-Reply with ONLY the number (1, 2, 3...) of the best match.
-If absolutely none match, reply with NONE.
-Reply with ONLY the number or NONE."""
-
-EXTRACT_INVITE_PROMPT = """The user wants to add someone to an EXISTING calendar event.
-Extract the following from their input and return ONLY a JSON object:
-- "event_hint": string (how they describe the event — a name, keyword, or 'that meeting', 'the one we just made', etc.)
-- "event_date": string or null (if they mention a date for the event, YYYY-MM-DD format)
-- "event_time": string or null (if they mention the event's time, HH:MM 24-hour format)
-- "attendee_names": list of strings (the names of people they want to invite)
-
-""" + TIME_CONTEXT_BLOCK + """
-
-User input: "{user_input}"
-
-Return ONLY valid JSON, no other text."""
-
-EXTRACT_REMOVE_ATTENDEE_PROMPT = """The user wants to REMOVE someone from an existing calendar event (uninvite them).
-Extract the following from their input and return ONLY a JSON object:
-- "event_hint": string (how they describe the event — a name, keyword, or 'that meeting', etc.)
-- "event_date": string or null (if they mention a date for the event, YYYY-MM-DD format)
-- "event_time": string or null (if they mention the event's time, HH:MM 24-hour format)
-- "attendee_names": list of strings (the names of people they want to REMOVE/UNINVITE)
-
-IMPORTANT: The user is asking to remove or uninvite these people. Extract their names even if the phrasing is 'uninvite X', 'remove X from', 'take X off', etc.
-
-""" + TIME_CONTEXT_BLOCK + """
-
-User input: "{user_input}"
-
-Return ONLY valid JSON, no other text."""
-
-EXIT_WORDS = ["stop", "exit", "quit", "done", "bye", "goodbye", "never mind", "go back"]
-
-YES_WORDS = ["yes", "yeah", "yep", "yup", "sure", "ok", "okay", "sounds good",
-             "go ahead", "do it", "correct", "right", "absolutely", "definitely", "please"]
-NO_WORDS = ["no", "nah", "nope", "cancel", "don't", "stop", "never mind", "not"]
-
-
-class GcalIntegrationCapability(MatchingCapability):
+class GoogleCalendarOfficialCapability(MatchingCapability):
     worker: AgentWorker = None
     capability_worker: CapabilityWorker = None
-    access_token: str = None
-    last_api_error: str = None
-    contacts: dict = None
-    last_event: dict = None
 
-    # {{register_capability}}
+    # Do not change following tag of register capability
+    #{{register capability}}
 
-    def call(self, worker: AgentWorker):
-        global LOCAL_TZ
-        self.worker = worker
-        self.capability_worker = CapabilityWorker(self)
-        tz = self.capability_worker.get_timezone() or DEFAULT_TIMEZONE
-        LOCAL_TZ = ZoneInfo(tz)
-        self.access_token = None
-        self.last_api_error = ""
-        self.contacts = {}
-        self.last_event = None  # tracks the most recently touched event for "that meeting" references
-        self.worker.session_tasks.create(self.run_calendar())
-
-    # =========================================================================
-    # CONTACTS
-    # =========================================================================
-
-    async def load_contacts(self) -> dict:
-        """
-        Load contacts.json from the ability directory using SDK file helpers.
-        Supports two formats:
-          Simple:  {"Name": "email@example.com"}
-          Aliases: {"Name": {"email": "email@example.com", "aliases": ["Von", "Vonne"]}}
-        Normalizes to: {"Name": {"email": "...", "aliases": [...]}}
-        """
-        try:
-            raw = await self.capability_worker.read_file("contacts.json", in_ability_directory=True)
-            if not raw:
-                self.worker.editor_logging_handler.info("[GCal] contacts.json is empty — attendee features disabled.")
-                return {}
-            data = json.loads(raw)
-            # Normalize
-            contacts = {}
-            for name, value in data.items():
-                if isinstance(value, str):
-                    contacts[name] = {"email": value, "aliases": []}
-                elif isinstance(value, dict):
-                    contacts[name] = {
-                        "email": value.get("email", ""),
-                        "aliases": value.get("aliases", []),
-                    }
-            self.worker.editor_logging_handler.info(f"[GCal] Loaded {len(contacts)} contacts.")
-            return contacts
-        except Exception as e:
-            self.worker.editor_logging_handler.info(f"[GCal] No contacts.json found or read error: {e} — attendee features disabled.")
-            return {}
-
-    def detect_attendees(self, user_input: str, llm_names: list = None) -> list:
-        """
-        Use LLM to match names from user input against the contacts list.
-        Includes aliases so STT mishearings (Von→Vaughn, creche→Chris) get matched.
-        """
-        if not self.contacts:
-            return []
-
-        # Build a contact list with aliases for the LLM
-        contact_lines = []
-        for name, info in self.contacts.items():
-            aliases = info.get("aliases", [])
-            if aliases:
-                contact_lines.append(f"- {name} (also sounds like: {', '.join(aliases)})")
-            else:
-                contact_lines.append(f"- {name}")
-        contacts_list = "\n".join(contact_lines)
-
-        name_hint = ""
-        if llm_names:
-            name_hint = (
-                f"\nThe speech-to-text system detected these names: {', '.join(llm_names)}. "
-                "These may be misspelled or phonetically approximated. "
-                "Match them to the closest contact name using the aliases if needed."
-            )
-
-        prompt = (
-            f'The user said: "{user_input}"\n'
-            f"{name_hint}\n"
-            f"Here is the list of known contacts with their phonetic aliases:\n{contacts_list}\n\n"
-            "Which of these contacts (if any) did the user mention as attendees or participants?\n"
-            "IMPORTANT: Match against BOTH the contact name AND their aliases. "
-            "For example, if the user says 'Von' and a contact has 'Von' as an alias, that's a match.\n"
-            "Return ONLY a JSON array of the matching contact names (use the primary name, not the alias).\n"
-            "If no contacts are mentioned, return [].\n"
-            "Reply with ONLY valid JSON, no other text."
-        )
-
-        raw = self.capability_worker.text_to_text_response(prompt)
-        clean = raw.replace("```json", "").replace("```", "").strip()
-        self.worker.editor_logging_handler.info(f"[GCal] Attendee detection raw: {clean}")
-
-        try:
-            names = json.loads(clean)
-            attendees = []
-            for name in names:
-                for contact_name, contact_info in self.contacts.items():
-                    if contact_name.lower() == name.lower():
-                        attendees.append({"name": contact_name, "email": contact_info["email"]})
-                        break
-            return attendees
-        except Exception as e:
-            self.worker.editor_logging_handler.error(f"[GCal] Attendee detection parse error: {e}")
-            return []
-
-    # =========================================================================
-    # AUTH
-    # =========================================================================
-
-    def get_access_token(self) -> bool:
-        try:
-            token = self.capability_worker.get_token("google")
-            if token:
-                self.access_token = token
-                self.worker.editor_logging_handler.info("[GCal] Got token from platform")
-                return True
-            else:
-                self.worker.editor_logging_handler.error("[GCal] No Google token available. Link your Google account in OpenHome settings.")
-                return False
-        except Exception as e:
-            self.worker.editor_logging_handler.error(f"[GCal] Auth exception: {e}")
-            return False
-
-    # =========================================================================
-    # CALENDAR API
-    # =========================================================================
-
-    def create_event(self, summary: str, start_iso: str, end_iso: str,
-                     description: str = "", attendees: list = None,
-                     recurring_weekly: bool = False) -> dict:
-        event_body = {
-            "summary": summary,
-            "description": description,
-            "start": {"dateTime": start_iso, "timeZone": DEFAULT_TIMEZONE},
-            "end": {"dateTime": end_iso, "timeZone": DEFAULT_TIMEZONE},
-        }
-        if recurring_weekly:
-            event_body["recurrence"] = ["RRULE:FREQ=WEEKLY"]
-        if attendees:
-            event_body["attendees"] = [{"email": a["email"]} for a in attendees]
-
-        params = {}
-        if attendees:
-            params["sendUpdates"] = "all"
-
-        self.worker.editor_logging_handler.info(f"[GCal] Creating event: {json.dumps(event_body)}")
-
-        try:
-            resp = requests.post(
-                CALENDAR_API_URL,
-                headers={
-                    "Authorization": f"Bearer {self.access_token}",
-                    "Content-Type": "application/json",
-                },
-                json=event_body,
-                params=params,
-            )
-            if resp.ok:
-                self.worker.editor_logging_handler.info(f"[GCal] Event created successfully ({resp.status_code}).")
-                return resp.json()
-            else:
-                self.worker.editor_logging_handler.error(
-                    f"[GCal] Create event failed ({resp.status_code}): {resp.text[:300]}"
-                )
-                self.last_api_error = f"status {resp.status_code}"
-                try:
-                    err_msg = resp.json().get("error", {}).get("message", "")
-                    if err_msg:
-                        self.last_api_error = err_msg
-                except Exception:
-                    pass
-                return None
-        except Exception as e:
-            self.worker.editor_logging_handler.error(f"[GCal] Create event exception: {e}")
-            self.last_api_error = str(e)
-            return None
-
-    def update_event(self, event_id: str, updates: dict) -> dict:
-        """PATCH an existing calendar event. Returns updated event dict or None."""
-        url = f"{CALENDAR_API_URL}/{event_id}"
-        self.worker.editor_logging_handler.info(f"[GCal] Updating event {event_id}: {json.dumps(updates)}")
-
-        try:
-            resp = requests.patch(
-                url,
-                headers={
-                    "Authorization": f"Bearer {self.access_token}",
-                    "Content-Type": "application/json",
-                },
-                json=updates,
-                params={"sendUpdates": "all"},
-            )
-            if resp.ok:
-                self.worker.editor_logging_handler.info(f"[GCal] Event updated successfully ({resp.status_code}).")
-                return resp.json()
-            else:
-                self.worker.editor_logging_handler.error(
-                    f"[GCal] Update event failed ({resp.status_code}): {resp.text[:300]}"
-                )
-                self.last_api_error = f"status {resp.status_code}"
-                try:
-                    err_msg = resp.json().get("error", {}).get("message", "")
-                    if err_msg:
-                        self.last_api_error = err_msg
-                except Exception:
-                    pass
-                return None
-        except Exception as e:
-            self.worker.editor_logging_handler.error(f"[GCal] Update event exception: {e}")
-            self.last_api_error = str(e)
-            return None
-
-    def delete_event(self, event_id: str) -> bool:
-        """DELETE a calendar event. Returns True on success."""
-        url = f"{CALENDAR_API_URL}/{event_id}"
-        self.worker.editor_logging_handler.info(f"[GCal] Deleting event {event_id}")
-
-        try:
-            resp = requests.delete(
-                url,
-                headers={"Authorization": f"Bearer {self.access_token}"},
-                params={"sendUpdates": "all"},
-            )
-            if resp.status_code in (200, 204):
-                self.worker.editor_logging_handler.info(f"[GCal] Event deleted successfully ({resp.status_code}).")
-                self.last_event = None  # event no longer exists
-                return True
-            else:
-                self.worker.editor_logging_handler.error(
-                    f"[GCal] Delete event failed ({resp.status_code}): {resp.text[:300]}"
-                )
-                self.last_api_error = f"status {resp.status_code}"
-                try:
-                    err_msg = resp.json().get("error", {}).get("message", "")
-                    if err_msg:
-                        self.last_api_error = err_msg
-                except Exception:
-                    pass
-                return False
-        except Exception as e:
-            self.worker.editor_logging_handler.error(f"[GCal] Delete event exception: {e}")
-            self.last_api_error = str(e)
-            return False
-
-    def get_event_by_id(self, event_id: str) -> dict:
-        """Fetch a single event by ID to get its current state."""
-        url = f"{CALENDAR_API_URL}/{event_id}"
-        try:
-            resp = requests.get(
-                url,
-                headers={"Authorization": f"Bearer {self.access_token}"},
-            )
-            if resp.ok:
-                return resp.json()
-        except Exception as e:
-            self.worker.editor_logging_handler.error(f"[GCal] get_event_by_id error: {e}")
-        return None
-
-    def detect_conflicts(self, start_iso: str, end_iso: str, exclude_event_id: str = None) -> list:
-        """
-        Check if a proposed time slot conflicts with existing events.
-        Returns a list of conflicting event dicts (with summary, start, end).
-        """
-        try:
-            new_start = datetime.fromisoformat(start_iso)
-            new_end = datetime.fromisoformat(end_iso)
-        except Exception:
-            return []
-
-        # Get events for the day of the proposed slot
-        date_str = new_start.strftime("%Y-%m-%d")
-        events = self.list_events_for_date(date_str)
-        conflicts = []
-
-        for ev in events:
-            # Skip the event itself (for reschedule)
-            if exclude_event_id and ev.get("id") == exclude_event_id:
-                continue
-
-            ev_start_str = ev.get("start", {}).get("dateTime", "")
-            ev_end_str = ev.get("end", {}).get("dateTime", "")
-            if not ev_start_str or not ev_end_str:
-                continue
-
-            try:
-                ev_start = datetime.fromisoformat(ev_start_str.replace("Z", "+00:00"))
-                ev_end = datetime.fromisoformat(ev_end_str.replace("Z", "+00:00"))
-
-                # Make naive for comparison if needed
-                if new_start.tzinfo is None:
-                    ev_start = ev_start.replace(tzinfo=None)
-                    ev_end = ev_end.replace(tzinfo=None)
-
-                # Overlap check: new event starts before existing ends AND new event ends after existing starts
-                if new_start < ev_end and new_end > ev_start:
-                    conflicts.append(ev)
-            except Exception:
-                continue
-
-        return conflicts
-
-    def format_conflict_warning(self, conflicts: list) -> str:
-        """Format a spoken warning about conflicting events."""
-        if len(conflicts) == 1:
-            c = conflicts[0]
-            title = c.get("summary", "another event")
-            c_time = self.format_event_time(c)
-            return f"Heads up, that overlaps with {title} at {c_time}."
-        else:
-            titles = [c.get("summary", "an event") for c in conflicts]
-            return f"Heads up, that overlaps with {' and '.join(titles)}."
-
-    def list_events_for_date(self, date_str: str) -> list:
-        time_min = f"{date_str}T00:00:00"
-        time_max = f"{date_str}T23:59:59"
-        offset_str = get_utc_offset_str()
-        try:
-            resp = requests.get(
-                CALENDAR_API_URL,
-                headers={"Authorization": f"Bearer {self.access_token}"},
-                params={
-                    "timeMin": f"{time_min}{offset_str}",
-                    "timeMax": f"{time_max}{offset_str}",
-                    "singleEvents": "true",
-                    "orderBy": "startTime",
-                    "timeZone": DEFAULT_TIMEZONE,
-                },
-            )
-            self.worker.editor_logging_handler.info(f"[GCal] List events for {date_str}: {resp.status_code}")
-            if resp.ok:
-                return resp.json().get("items", [])
-            else:
-                self.worker.editor_logging_handler.error(
-                    f"[GCal] List events failed ({resp.status_code}): {resp.text[:200]}"
-                )
-                return []
-        except Exception as e:
-            self.worker.editor_logging_handler.error(f"[GCal] List events exception: {e}")
-            return []
-
-    def list_events_in_range(self, start_date: str, end_date: str) -> list:
-        """List all events between two YYYY-MM-DD dates (inclusive)."""
-        offset_str = get_utc_offset_str()
-        time_min = f"{start_date}T00:00:00{offset_str}"
-        time_max = f"{end_date}T23:59:59{offset_str}"
-        try:
-            resp = requests.get(
-                CALENDAR_API_URL,
-                headers={"Authorization": f"Bearer {self.access_token}"},
-                params={
-                    "timeMin": time_min,
-                    "timeMax": time_max,
-                    "singleEvents": "true",
-                    "orderBy": "startTime",
-                    "timeZone": DEFAULT_TIMEZONE,
-                    "maxResults": 50,
-                },
-            )
-            self.worker.editor_logging_handler.info(
-                f"[GCal] List events {start_date} to {end_date}: {resp.status_code}"
-            )
-            if resp.ok:
-                return resp.json().get("items", [])
-            return []
-        except Exception as e:
-            self.worker.editor_logging_handler.error(f"[GCal] Range list exception: {e}")
-            return []
-
-    # =========================================================================
-    # HELPERS
-    # =========================================================================
-
-    def get_late_night_note(self, ctx: dict) -> str:
-        if ctx["late_night"]:
-            return (
-                "IMPORTANT: It is currently very late at night / early morning. "
-                "The user likely still considers it the same day as yesterday. "
-                f"Treat 'today' as {ctx['today']} and 'tomorrow' as the day after that."
-            )
-        return ""
-
-    def safe_email(self, obj) -> str:
-        """Safely extract a lowercase email string from a dict or return empty string."""
-        if isinstance(obj, dict):
-            email = obj.get("email", "")
-            return email.lower() if isinstance(email, str) else ""
-        return ""
-
-    def interpret_yes_no(self, user_input: str) -> bool:
-        lower = user_input.lower().strip()
-        for word in YES_WORDS:
-            if word in lower:
-                return True
-        for word in NO_WORDS:
-            if word in lower:
-                return False
-
-        prompt = (
-            f'The user was asked a yes/no question and replied: "{user_input}"\n'
-            "Did they mean yes or no? Reply with ONLY the word YES or NO."
-        )
+    # -------------------- Voice helpers --------------------
+    async def _ask(self, question: str) -> str:
+        await self.capability_worker.speak(question)
+        return (await self.capability_worker.user_response()).strip()
+    
+    async def _ask_yes_no(self, question: str) -> bool:
+        answer = await self._ask(question)
         result = self.capability_worker.text_to_text_response(
-            prompt,
-            system_prompt="You interpret yes/no intent. Reply with one word only.",
-        )
-        return "YES" in result.strip().upper()
+            f"The user said: \"{answer}\"\n"
+            "Are they saying yes or no?\n"
+            "YES examples: 'yes', 'yeah', 'yep', 'sure', 'go ahead', 'do it', 'sounds good', 'go for it', 'absolutely', 'please', 'yup'\n"
+            "Lean YES for: 'I guess', 'sure why not', 'if you want', 'might as well'\n"
+            "NO examples: 'no', 'nah', 'nope', 'not really', 'never mind', 'skip it', 'don't bother', 'no thanks', 'pass'\n"
+            "Reply with exactly one word: YES or NO"
+        ).strip().upper()
+        self.worker.editor_logging_handler.error(f"Yes/No check: '{answer}' → {result}")
+        return result.strip() == "YES"
+    
+    def _is_valid_iso_dt(self, dt_str: Optional[str]) -> bool:
+        """Check that a string is a parseable ISO 8601 datetime."""
+        if not dt_str:
+            return False
+        try:
+            datetime.fromisoformat(dt_str)
+            return True
+        except ValueError:
+            return False
+        
+    # -------------------- LLM helpers --------------------
+    def _parse_datetime_with_llm(
+        self, raw_text: str, timezone_str: str, reference_dt: Optional[str] = None
+    ) -> Optional[str]:
+        now_str = datetime.now().strftime("%Y-%m-%d %H:%M")
+        reference_hint = (
+            f"\nThe event starts at {reference_dt}. The end time MUST be after the start time. "
+            "When AM/PM is not specified, choose whichever interpretation (AM or PM) results in the end time "
+            "being as close as possible to — but still after — the start time. "
+            "Prefer the shortest duration. For example: start=05:00, end='5:30' → pick 05:30 (not 17:30)."
+        ) if reference_dt else ""
 
-    def parse_confirmation_response(self, response: str) -> dict:
-        """
-        Parse a user's response to a confirmation prompt.
-        Returns a dict with:
-          - "confirmed": True/False — did they agree to the proposed action?
-          - "followup": str or None — any additional request tacked on
-          - "correction": True — if the 'no' part contains a time/date correction
+        hour_hint = (
+            " If no AM/PM indicator is given, treat the time as 24-hour format"
+            " (e.g. '3' → 03:00, '15' → 15:00)."
+        ) if not reference_dt else ""
 
-        Examples:
-          "Sounds good." -> {"confirmed": True, "followup": None}
-          "Sounds good. But can you invite Vaughn?" -> {"confirmed": True, "followup": "can you invite Vaughn?"}
-          "No, make it 3 PM" -> {"confirmed": False, "followup": None, "correction": True}
-          "No. No. You need to reschedule." -> {"confirmed": False, "followup": "You need to reschedule."}
-        """
-        lower = response.lower().strip()
-
-        # Check for yes first
-        has_yes = any(w in lower for w in YES_WORDS)
-        has_no = any(w in lower for w in NO_WORDS)
-
-        # Compound: "sounds good. but can you also X"
-        # Split on common connectors
-        followup = None
-        confirmed = False
-
-        if has_yes:
-            confirmed = True
-            # Extract everything after the yes-word as a potential follow-up.
-            # Strategy: strip the yes-phrase from the front, check if the remainder
-            # contains an actionable calendar intent.
-            yes_phrases = [
-                "sounds good", "go ahead", "do it",
-                "yes", "yeah", "yep", "yup", "sure", "ok", "okay",
-                "correct", "right", "absolutely", "definitely", "please",
-                "good",
-            ]
-            remainder = response
-            # Remove the first matching yes-phrase from the response
-            for phrase in yes_phrases:
-                pattern = re.compile(r"\b" + re.escape(phrase) + r"\b[.,!]?\s*", re.IGNORECASE)
-                match = pattern.search(remainder)
-                if match and match.start() < 10:  # must be near the start
-                    remainder = remainder[:match.start()] + remainder[match.end():]
-                    remainder = remainder.strip()
-                    break
-
-            # Strip leading connectors (may be chained: "can you make sure to")
-            prev = None
-            while remainder != prev:
-                prev = remainder
-                remainder = re.sub(
-                    r"^(?:but|also|and|can you|could you|please|make sure to|make sure|then)\s+",
-                    "", remainder, flags=re.IGNORECASE,
-                ).strip()
-
-            if remainder:
-                # Check if what's left looks like a calendar action
-                remainder_intent = self.classify_intent(remainder)
-                if remainder_intent not in ("EXIT", "SCHEDULE"):
-                    # Clear intent detected (invite, rename, reschedule, etc.)
-                    followup = remainder
-                elif remainder_intent == "SCHEDULE" and any(
-                    k in remainder.lower() for k in [
-                        "invite", "add", "rename", "move", "cancel", "delete",
-                        "reschedule", "remove", "uninvite", "who's",
-                    ]
-                ):
-                    # Intent keywords present but classifier defaulted to SCHEDULE
-                    followup = remainder
-
-        elif has_no:
-            confirmed = False
-            # Check if it's a correction ("no, make it 3pm") vs redirect ("no, reschedule it instead")
-            # Strip out the no-words and see what's left
-            remainder = response
-            for w in ["no", "nah", "nope"]:
-                remainder = re.sub(rf"\b{w}\b[.,!]?\s*", "", remainder, flags=re.IGNORECASE)
-            remainder = remainder.strip()
-
-            if remainder:
-                # Is this a redirect/new action?
-                redirect_intent = self.classify_intent(remainder)
-                if redirect_intent != "SCHEDULE":
-                    # They want a specific different action
-                    followup = remainder
-                # Otherwise it might be a correction (time/date) — handled by caller
-
-        else:
-            # Ambiguous — fall back to LLM interpretation
-            confirmed = self.interpret_yes_no(response)
-
-        self.worker.editor_logging_handler.info(
-            f"[GCal] Parsed confirmation: confirmed={confirmed} followup={'yes' if followup else 'no'} | '{response}'"
-        )
-
-        return {
-            "confirmed": confirmed,
-            "followup": followup,
-        }
-
-    async def dispatch_followup(self, followup_text: str):
-        """
-        Route follow-up requests from confirmations through the multi-intent
-        parser so compound follow-ups work too.
-        """
-        actions = self.parse_multi_intent(followup_text)
-        self.worker.editor_logging_handler.info(
-            f"[GCal] Dispatching followup ({len(actions)}): {actions}"
-        )
-        for action_text in actions:
-            intent = self.classify_intent(action_text)
-            if intent == "EXIT":
-                break
-            await self.execute_action(action_text)
-
-    def parse_multi_intent(self, user_input: str) -> list:
-        """
-        Split a compound user message into individual action strings.
-        e.g. "Reschedule the standup to 3, invite Melody, and cancel the sync"
-        -> ["Reschedule the standup to 3", "invite Melody", "cancel the sync"]
-
-        For simple single-intent messages, returns a single-item list.
-        """
-        # Quick check: if the message clearly has only one intent, skip LLM
-        conjunctions = [" and ", " and,", " also ", " also,", " plus ", " then ",
-                        ", and ", ". and ", ". also ", ". then ", ". plus "]
-        has_conjunction = any(c in user_input.lower() for c in conjunctions)
-
-        # Check if multiple intent keywords appear
-        intent_keywords = [
-            "schedule", "book", "create", "reschedule", "move",
-            "cancel", "delete", "invite", "uninvite",
-            "remove", "rename", "call it", "what's on", "what do i have",
-            "who's on", "who's attending",
-        ]
-        keyword_hits = sum(1 for k in intent_keywords if k in user_input.lower())
-
-        if not has_conjunction or keyword_hits <= 1:
-            return [user_input]
-
-        # Use LLM to split compound requests
         prompt = (
-            f'The user made a compound calendar request: "{user_input}"\n\n'
-            "Split this into separate, standalone action requests. Each should be a complete "
-            "phrase that could be understood on its own.\n\n"
-            "Rules:\n"
-            '- If the user says "that meeting" or "it" in later parts, keep those references as-is '
-            "(context will be resolved separately).\n"
-            "- Each action should be one of: schedule, reschedule, delete/cancel, invite, "
-            "remove/uninvite, rename, list events, or query attendees.\n"
-            "- Return a JSON array of strings.\n"
-            '- If there\'s really only one action, return a single-item array.\n\n'
-            "Return ONLY valid JSON, no other text."
+            f"Current date/time: {now_str}, timezone: {timezone_str}.{reference_hint}{hour_hint}\n"
+            f"Parse the following into an ISO 8601 datetime string (YYYY-MM-DDTHH:MM:SS), "
+            f"no extra text: '{raw_text}'"
         )
-        raw = self.capability_worker.text_to_text_response(
-            prompt,
-            system_prompt="You split compound calendar requests into individual actions. Return only a JSON array.",
-        )
-        clean = raw.replace("```json", "").replace("```", "").strip()
-        self.worker.editor_logging_handler.info(f"[GCal] Multi-intent parse: {clean}")
-
-        try:
-            actions = json.loads(clean)
-            if isinstance(actions, list) and len(actions) > 0:
-                return [a.strip() for a in actions if isinstance(a, str) and a.strip()]
-        except Exception:
-            pass
-
-        return [user_input]
-
-    async def execute_action(self, action_text: str):
-        """Route a single action string to the appropriate handler."""
-        intent = self.classify_intent(action_text)
-        self.worker.editor_logging_handler.info(f"[GCal] Action: '{action_text}' -> {intent}")
-
-        if intent == "LIST":
-            await self.handle_list_events(action_text)
-        elif intent == "QUERY_ATTENDEES":
-            await self.handle_query_attendees(action_text)
-        elif intent == "RENAME":
-            await self.handle_rename_event(action_text)
-        elif intent == "MAKE_RECURRING":
-            await self.handle_make_recurring(action_text)
-        elif intent == "RESCHEDULE":
-            await self.handle_reschedule_event(action_text)
-        elif intent == "INVITE":
-            await self.handle_add_attendee(action_text)
-        elif intent == "DELETE":
-            await self.handle_delete_event(action_text)
-        elif intent == "REMOVE_ATTENDEE":
-            await self.handle_remove_attendee(action_text)
-        elif intent == "ACCEPT_INVITE":
-            await self.handle_respond_to_invite(action_text, "accepted")
-        elif intent == "DECLINE_INVITE":
-            await self.handle_respond_to_invite(action_text, "declined")
-        elif intent == "SET_REMINDER":
-            await self.handle_set_reminder(action_text)
-        elif intent == "SCHEDULE":
-            await self.handle_schedule_event(action_text)
-
-    def classify_intent(self, user_input: str) -> str:
-        lower = user_input.lower()
-
-        if any(w in lower for w in EXIT_WORDS):
-            return "EXIT"
-
-        # "cancel" handling: bare "cancel" / "cancel that" = EXIT,
-        # but "cancel [event name/description]" = DELETE
-        if "cancel" in lower:
-            # Strip "cancel" and see what's left
-            after_cancel = re.sub(r"^.*?\bcancel\b\s*", "", lower, count=1).strip()
-            # Remove trailing/leading punctuation before comparing
-            after_cancel = after_cancel.strip(".,!?")
-            # Bare cancel, or only vague words left → EXIT
-            exit_remainders = ["", "that", "it", "this", "never mind", "nope"]
-            if after_cancel in exit_remainders:
-                return "EXIT"
-            # Otherwise fall through — DELETE check below will catch it
-
-        # ── QUERY_ATTENDEES: who's on / attending a specific event ──
-        if any(s in lower for s in [
-            "who's on", "whos on", "who is on",
-            "who's attending", "whos attending", "who is attending",
-            "who's invited", "whos invited", "who is invited",
-            "who's going", "whos going", "who is going",
-            "who's in", "whos in", "who is in",
-            "attendees for", "attendees of", "guest list",
-        ]):
-            return "QUERY_ATTENDEES"
-
-        # ── RENAME: change the title/name of an existing event ──
-        if any(s in lower for s in [
-            "rename", "change the name", "change the title",
-            "call it", "name it", "retitle",
-            "change it to", "update the name", "update the title",
-        ]):
-            return "RENAME"
-
-        # ── LIST: user wants to see what's on their calendar ──
-        list_signals = [
-            "what's on", "whats on", "what is on",
-            "what do i have", "what meetings do i have",
-            "upcoming", "what's next", "whats next", "any meetings",
-            "do i have any", "show me", "check my",
-            "what are my", "tell me my", "events on",
-            "what's happening", "whats happening", "what is happening",
-            "what's going on", "whats going on",
-            "am i free", "am i busy",
-        ]
-        if any(s in lower for s in list_signals):
-            return "LIST"
-
-        # ── REMOVE_ATTENDEE: uninvite / remove a *person* from an event ──
-        # Must check before DELETE and INVITE — "off the invite" contains "invite"
-        if "uninvite" in lower or "off the invite" in lower:
-            return "REMOVE_ATTENDEE"
-        if re.search(r"\bremove\b.+\bfrom\b", lower):
-            if any(t in lower for t in ["from my calendar", "from calendar", "from the calendar"]):
-                return "DELETE"
-            return "REMOVE_ATTENDEE"
-
-        # ── DELETE: remove an entire event ──
-        # "cancel [something]" that wasn't caught as EXIT above → DELETE
-        if re.search(r"\bcancel\b.+", lower):
-            return "DELETE"
-        delete_signals = [
-            "delete the", "delete my", "delete this", "delete",
-            "remove the event", "remove the meeting", "remove my meeting",
-            "get rid of",
-        ]
-        if any(s in lower for s in delete_signals):
-            return "DELETE"
-
-        # ── ACCEPT_INVITE / DECLINE_INVITE — must come before INVITE ──
-        if re.search(r"\b(accept|confirm|rsvp yes)\b", lower):
-            if not any(s in lower for s in ["schedule", "book", "create", "set up", "new"]):
-                return "ACCEPT_INVITE"
-        if re.search(r"\b(decline|reject|rsvp no|turn down)\b", lower):
-            if not any(s in lower for s in ["schedule", "book", "create", "set up", "new"]):
-                return "DECLINE_INVITE"
-
-        # ── INVITE: add a *person* to an existing event ──
-        if "invite" in lower:
-            if not any(s in lower for s in ["schedule", "book", "create", "set up", "new", "accept", "decline"]):
-                return "INVITE"
-        # "add X to the meeting/standup/call/etc."
-        if re.search(r"\badd\b.+\bto\b.+\b(meeting|event|standup|call|sync|huddle|session|appointment)\b", lower):
-            return "INVITE"
-        # "include X in the meeting/standup/call/etc."
-        if re.search(r"\binclude\b.+\bin\b.+\b(meeting|event|standup|call|sync|huddle|session|appointment)\b", lower):
-            return "INVITE"
-        if any(s in lower for s in [
-            "add them to", "add him to", "add her to",
-        ]):
-            return "INVITE"
-
-        # ── SET_REMINDER: update reminder preference for a meeting ──
-        if re.search(r"\b(remind me|set a reminder|reminder for|ping me|alert me)\b", lower):
-            if any(s in lower for s in ["before", "minutes", "minute", "mins", "min", "ahead"]):
-                return "SET_REMINDER"
-        if re.search(r"\bno reminder\b|\bskip.*reminder\b|\breminder.*off\b", lower):
-            return "SET_REMINDER"
-
-        # ── MAKE_RECURRING: convert an existing event to repeat weekly ──
-        if re.search(r"\b(make|set|turn)\b.{0,20}\b(recurring|repeat|weekly|repeating)\b", lower):
-            return "MAKE_RECURRING"
-        if re.search(r"\b(recurring|repeat|weekly|repeating)\b.{0,20}\b(it|that|this)\b", lower):
-            return "MAKE_RECURRING"
-
-        # ── RESCHEDULE: move an existing event ──
-        reschedule_signals = [
-            "reschedule", "move my", "move the", "push my", "push the",
-            "shift my", "shift the", "change the time", "change my",
-            "instead of", "move it to", "push it to", "push to",
-            "swap the time",
-            # Corporate slang
-            "bump this", "bump it", "bump the", "bump my",
-            "circle back on", "circle back about",
-        ]
-        if any(s in lower for s in reschedule_signals):
-            return "RESCHEDULE"
-        # Catch "move [event name] to [time]" — e.g., "move test meeting to 8AM"
-        if re.search(r"\bmove\b.+\bto\b", lower):
-            return "RESCHEDULE"
-
-        # ── INVITE: loop in [name] ──
-        if re.search(r"\bloop\s+in\b", lower):
-            return "INVITE"
-
-        # ── DELETE: table it / drop it (corporate slang for cancel) ──
-        if any(s in lower for s in ["table this", "table it", "table the", "drop this", "drop it", "drop the meeting"]):
-            return "DELETE"
-
-        # ── SCHEDULE: block time / spin up (corporate slang for create) ──
-        if any(s in lower for s in ["block some time", "block off", "block out", "spin up a meeting", "spin up a call"]):
-            return "SCHEDULE"
-
-        # ── SCHEDULE: create a new event (default) ──
-        return "SCHEDULE"
-
-    def extract_meeting_details(self, user_input: str) -> dict:
-        ctx = get_today_context()
-        prompt = EXTRACT_MEETING_PROMPT.format(
-            today=ctx["today"],
-            day_name=ctx["day_name"],
-            current_time=ctx["current_time"],
-            late_night_note=self.get_late_night_note(ctx),
-            time_bucket=ctx.get("time_bucket", ""),
-            user_input=user_input,
-        )
-        raw = self.capability_worker.text_to_text_response(prompt)
-
-        clean = raw.replace("```json", "").replace("```", "").strip()
-        self.worker.editor_logging_handler.info(f"[GCal] LLM extraction: {clean}")
-
-        try:
-            return json.loads(clean)
-        except Exception:
-            self.worker.editor_logging_handler.error(f"[GCal] Failed to parse LLM JSON: {clean}")
-            return None
-
-    def extract_reschedule_details(self, user_input: str) -> dict:
-        """Extract event hint and new time/date from a reschedule request."""
-        ctx = get_today_context()
-        prompt = EXTRACT_RESCHEDULE_PROMPT.format(
-            today=ctx["today"],
-            day_name=ctx["day_name"],
-            current_time=ctx["current_time"],
-            late_night_note=self.get_late_night_note(ctx),
-            time_bucket=ctx.get("time_bucket", ""),
-            user_input=user_input,
-        )
-        raw = self.capability_worker.text_to_text_response(prompt)
-        clean = raw.replace("```json", "").replace("```", "").strip()
-        self.worker.editor_logging_handler.info(f"[GCal] Reschedule extraction: {clean}")
-
-        try:
-            return json.loads(clean)
-        except Exception:
-            self.worker.editor_logging_handler.error(f"[GCal] Failed to parse reschedule JSON: {clean}")
-            return None
-
-    def extract_dates_from_text(self, user_input: str) -> list:
-        ctx = get_today_context()
-        prompt = EXTRACT_DATES_PROMPT.format(
-            today=ctx["today"],
-            day_name=ctx["day_name"],
-            current_time=ctx["current_time"],
-            late_night_note=self.get_late_night_note(ctx),
-            time_bucket=ctx.get("time_bucket", ""),
-            user_input=user_input,
-        )
-        raw = self.capability_worker.text_to_text_response(prompt)
-        self.worker.editor_logging_handler.info(f"[GCal] Date extraction: {raw}")
-
-        try:
-            match = re.search(r"\[.*\]", raw, re.DOTALL)
-            if match:
-                return json.loads(match.group())
-        except Exception:
-            pass
-        return [{"date": ctx["today"], "label": "today"}]
-
-    def find_matching_event(self, event_hint: str, original_time: str = None,
-                            original_date: str = None,
-                            preloaded_events: list = None) -> dict:
+        result = self.capability_worker.text_to_text_response(prompt)
+        match = re.search(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2})?", result)
+        return match.group(0) if match else None
+    
+    def _get_location_from_timezone(self, timezone_str: str) -> str:
         """
-        Search upcoming events and fuzzy-match the user's description.
-        Returns the matched event dict (with 'id', 'summary', 'start', etc.) or None.
-
-        Pass preloaded_events (from load_events_cache) to skip the API call.
+        Derive a human-readable city/country from the IANA timezone string
+        e.g. 'Asia/Karachi' → 'Karachi, Pakistan'
+        Uses LLM for a clean natural-language result.
         """
-        # Shortcut: if the user says "that meeting", "this meeting", "the same one", etc.
-        # and we have a recently-touched event, use it directly
-        vague_refs = [
-            "that meeting", "this meeting", "that event", "this event",
-            "the same", "that one", "the one we just", "thatmeeting",
-            "the meeting", "the event",
-            "that", "this", "it",
-        ]
-        hint_lower = event_hint.lower().strip()
-        if self.last_event and (hint_lower in ["that", "this", "it"] or any(v in hint_lower for v in vague_refs)):
-            self.worker.editor_logging_handler.info(
-                f"[GCal] Matched vague ref '{event_hint}' to last_event: {self.last_event.get('summary')}"
-            )
-            # Re-fetch to get current state (attendees may have changed)
-            event_id = self.last_event.get("id")
-            if event_id:
-                refreshed = self.get_event_by_id(event_id)
-                if refreshed:
-                    return refreshed
-            return self.last_event
-
-        if preloaded_events is not None:
-            # Use the provided cache — filter by original_date if given
-            events = preloaded_events
-            if original_date:
-                try:
-                    orig = datetime.strptime(original_date, "%Y-%m-%d").date()
-                    events = [
-                        ev for ev in events
-                        if abs((datetime.fromisoformat(
-                            ev.get("start", {}).get("dateTime", "").replace("Z", "+00:00")
-                        ).date() - orig).days) <= 1
-                    ]
-                except Exception:
-                    pass
-            self.worker.editor_logging_handler.info(
-                f"[GCal] find_matching_event using preloaded cache ({len(events)} events after filter)."
-            )
-        else:
-            today = get_effective_today().strftime("%Y-%m-%d")
-            # If user mentioned the original date, search just that day ± 1
-            # Otherwise search a 30-day window
-            if original_date:
-                orig = datetime.strptime(original_date, "%Y-%m-%d")
-                start_date = (orig - timedelta(days=1)).strftime("%Y-%m-%d")
-                end_date = (orig + timedelta(days=1)).strftime("%Y-%m-%d")
-            else:
-                start_date = today
-                end_date = (get_effective_today() + timedelta(days=30)).strftime("%Y-%m-%d")
-            events = self.list_events_in_range(start_date, end_date)
-
-        if not events:
-            return None
-
-        # Build numbered list for the LLM
-        event_lines = []
-        for i, ev in enumerate(events, 1):
-            title = ev.get("summary", "Untitled")
-            start = ev.get("start", {})
-            dt_str = start.get("dateTime", start.get("date", ""))
-            try:
-                dt = datetime.fromisoformat(dt_str.replace("Z", "+00:00"))
-                time_str = dt.strftime("%-I:%M %p")
-                date_str = dt.strftime("%A %B %-d")
-                event_lines.append(f"{i}. \"{title}\" on {date_str} at {time_str}")
-            except Exception:
-                event_lines.append(f"{i}. \"{title}\"")
-
-        event_list_str = "\n".join(event_lines)
-
-        original_time_hint = ""
-        if original_time:
-            spoken = self.format_time_for_speech(original_time)
-            original_time_hint = f"They mentioned it's currently at {spoken}."
-
-        prompt = FUZZY_MATCH_PROMPT.format(
-            event_hint=event_hint,
-            original_time_hint=original_time_hint,
-            event_list=event_list_str,
+        prompt = (
+            f"Given the IANA timezone '{timezone_str}', what is the most likely city and country? "
+            "Reply with only: City, Country — nothing else."
         )
+        result = self.capability_worker.text_to_text_response(prompt).strip()
+        self.worker.editor_logging_handler.error(f"Location from timezone '{timezone_str}' → '{result}'")
+        return result
+    
+    def _extract_email_with_llm(self, raw_text: str) -> Optional[str]:
+        """
+        Use LLM to reconstruct a valid email address from voice transcription.
+        """
+        cleaned_input = raw_text.strip().rstrip(".,!?;:")
+        direct_match = re.search(r"[^@\s]+@[^@\s]+\.[^@\s]+", cleaned_input)
+        if direct_match:
+            candidate = direct_match.group(0).rstrip(".,!?;:")  # strip any trailing punct
+            if re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", candidate):
+                self.worker.editor_logging_handler.error(f"Email direct extract: '{raw_text}' → '{candidate}'")
+                return candidate
 
-        raw = self.capability_worker.text_to_text_response(
-            prompt,
-            system_prompt="You match event descriptions to calendar entries. Reply with only a number or NONE.",
+        prompt = (
+            "The following text is a voice transcription of someone saying an email address. "
+            "Voice-to-text often spells letters individually or replaces '@' with 'at' and '.' with 'dot'. "
+            "Reconstruct the single correct email address from the transcription. "
+            "Reply with ONLY the email address, nothing else. "
+            "If you cannot determine a valid email, reply with the single word: NONE\n\n"
+            f"Transcription: \"{cleaned_input}\""
+        )
+        result = self.capability_worker.text_to_text_response(prompt).strip().lower().rstrip(".,!?;:")
+        self.worker.editor_logging_handler.error(f"LLM email extraction: input='{raw_text}' → output='{result}'")
+        if result == "none" or "@" not in result:
+            return None
+        if re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", result):
+            return result
+        self.worker.editor_logging_handler.error(f"LLM email failed sanity check: '{result}'")
+        return None
+    
+    def _normalize_location(self, raw_location: str) -> str:
+        """Normalize a voice-provided location into a Google Calendar-friendly format."""
+        result = self.capability_worker.text_to_text_response(
+            f"The user said this location: \"{raw_location}\"\n"
+            "Rewrite it as a clean, Google Maps-compatible address or place name.\n"
+            "Examples:\n"
+            "  'starbucks on main street downtown' → 'Starbucks, Main Street, Downtown'\n"
+            "  'the office in new york' → 'New York, NY, USA'\n"
+            "  'dubai' → 'Dubai, UAE'\n"
+            "  'karachi pakistan' → 'Karachi, Pakistan'\n"
+            "  'conference room b' → 'Conference Room B'\n"
+            "Reply with ONLY the normalized location string, nothing else."
         ).strip()
+        return result
 
-        self.worker.editor_logging_handler.info(f"[GCal] Fuzzy match result: {raw}")
+    # -------------------- Create Event --------------------
+    async def _flow_create_event(self, service, tz: str, raw_utterance: str = "") -> None:
+        now_str = datetime.now().strftime("%Y-%m-%d %H:%M")
 
-        if "NONE" in raw.upper():
-            return None
+        # ── Step 1: Try to extract title + start time from trigger phrase ──
+        pre_extracted = {}
+        if raw_utterance:
+            extract_prompt = (
+                f"Current date/time: {now_str}, timezone: {tz}.\n"
+                f"The user said: \"{raw_utterance}\"\n"
+                "Extract any event details they already mentioned.\n"
+                "Reply with ONLY a JSON object, no markdown:\n"
+                "{\n"                                # ← single braces
+                "  \"title\": \"event title or null\",\n"
+                "  \"start_time\": \"natural language start time or null\",\n"
+                "  \"end_time\": \"natural language end time or null\"\n"
+                "  \"attendees\": [\"email1\", \"email2\"] or [],\n"
+                "  \"add_meet\": true or false,\n"
+                "  \"location\": \"location or null\",\n"
+                "  \"reminder_minutes\": number or null\n"
+                "}"
+            )
 
-        # Extract the number
-        match = re.search(r"\d+", raw)
-        if match:
-            idx = int(match.group()) - 1
-            if 0 <= idx < len(events):
-                return events[idx]
-
-        return None
-
-    def get_attendee_display_names(self, attendees: list) -> list:
-        """
-        Turn a list of attendee dicts (with 'email') into friendly display names.
-        Uses the contacts list for known people, falls back to email prefix.
-        """
-        names = []
-        for a in attendees:
-            email = a.get("email", "")
-            if not email:
-                continue
-            friendly = None
-            if self.contacts:
-                for name, info in self.contacts.items():
-                    contact_email = info.get("email", "") if isinstance(info, dict) else info
-                    if isinstance(contact_email, str) and contact_email.lower() == email.lower():
-                        friendly = name
-                        break
-            names.append(friendly or email.split("@")[0])
-        return names
-
-    def format_events_for_speech(self, events: list, date_label: str) -> str:
-        if not events:
-            return f"You've got nothing on the books {date_label}."
-
-        now = get_local_now()
-        event_lines = []
-        for ev in events:
-            title = ev.get("summary", "Untitled event")
-            start = ev.get("start", {})
-            end = ev.get("end", {})
-            dt_str = start.get("dateTime", start.get("date", ""))
-            end_str = end.get("dateTime", "")
+            raw = self.capability_worker.text_to_text_response(extract_prompt).strip()
+            raw = re.sub(r"```(?:json)?", "", raw).strip()
+            self.worker.editor_logging_handler.error(f"Pre-extracted from trigger: {raw}")
             try:
-                dt = datetime.fromisoformat(dt_str.replace("Z", "+00:00"))
-                time_str = dt.strftime("%-I:%M %p")
-                line = f"- {title} at {time_str}"
-
-                # Add attendee info
-                attendees = ev.get("attendees", [])
-                if attendees:
-                    names = self.get_attendee_display_names(attendees)
-                    if names:
-                        line += f" (with {', '.join(names[:3])}{'...' if len(names) > 3 else ''})"
-
-                # Add context: in progress or starting soon
-                if end_str:
-                    end_dt = datetime.fromisoformat(end_str.replace("Z", "+00:00"))
-                    if dt.tzinfo is None:
-                        dt = dt.replace(tzinfo=LOCAL_TZ)
-                    if end_dt.tzinfo is None:
-                        end_dt = end_dt.replace(tzinfo=LOCAL_TZ)
-                    now_aware = now if now.tzinfo else now.replace(tzinfo=LOCAL_TZ)
-
-                    if dt <= now_aware < end_dt:
-                        mins_left = int((end_dt - now_aware).total_seconds() / 60)
-                        line += f" [IN PROGRESS - {mins_left}m left]"
-                    elif timedelta(0) < (dt - now_aware) <= timedelta(minutes=30):
-                        mins_until = int((dt - now_aware).total_seconds() / 60)
-                        line += f" [STARTING IN {mins_until}m]"
-
-                event_lines.append(line)
+                pre_extracted = json.loads(raw)
             except Exception:
-                event_lines.append(f"- {title}")
+                pre_extracted = {}
 
-        event_list_str = "\n".join(event_lines)
+        def clean(val):
+            return None if not val or str(val).lower().strip() in ("null", "none", "") else val
 
-        prompt = (
-            f"Read back this person's calendar for {date_label}.\n"
-            f"Current time: {now.strftime('%-I:%M %p')}\n"
-            f"Events:\n{event_list_str}\n\n"
-            "Turn this into a short, natural spoken summary.\n"
-            "For [IN PROGRESS] events, mention they're happening now and how much time is left.\n"
-            "For [STARTING IN Xm] events, give a heads up that they're coming up soon.\n"
-            "If attendees are listed, mention them naturally only if there are 1-3 people. "
-            "For larger groups just note it's a group meeting.\n"
-            "Connect events naturally. No bullet points, no numbering."
+        pre_title = clean(pre_extracted.get("title"))
+        pre_start = clean(pre_extracted.get("start_time"))
+        pre_end   = clean(pre_extracted.get("end_time"))
+        pre_attendees = [e for e in pre_extracted.get("attendees", []) if e and "@" in e]
+        pre_meet      = bool(pre_extracted.get("add_meet", False))
+        pre_location  = clean(pre_extracted.get("location"))
+        pre_reminder  = pre_extracted.get("reminder_minutes")
+
+        self.worker.editor_logging_handler.error(
+            f"Pre-extracted → title: '{pre_title}', start: '{pre_start}', end: '{pre_end}'"
         )
 
-        result = self.capability_worker.text_to_text_response(
-            prompt,
-            system_prompt=VOICE_SYSTEM_PROMPT,
-        )
-        return result.strip()
-
-    def format_events_at_time(self, events: list, query_time: str, date_label: str) -> str:
-        """
-        Answer 'what's happening at X time' by finding events that span that time.
-        """
-        try:
-            datetime.strptime(query_time, "%H:%M")
-        except Exception:
-            return self.format_events_for_speech(events, date_label)
-
-        # Find the date from the first event or use today
-        ref_date = get_today_context()["today"]
-        if events:
-            first_start = events[0].get("start", {}).get("dateTime", "")
-            try:
-                ref_date = datetime.fromisoformat(first_start.replace("Z", "+00:00")).strftime("%Y-%m-%d")
-            except Exception:
-                pass
-
-        query_full = datetime.strptime(f"{ref_date} {query_time}", "%Y-%m-%d %H:%M")
-        time_label = self.format_time_for_speech(query_time)
-
-        active_events = []
-        for ev in events:
-            start_str = ev.get("start", {}).get("dateTime", "")
-            end_str = ev.get("end", {}).get("dateTime", "")
-            if not start_str or not end_str:
-                continue
-            try:
-                ev_start = datetime.fromisoformat(start_str.replace("Z", "+00:00")).replace(tzinfo=None)
-                ev_end = datetime.fromisoformat(end_str.replace("Z", "+00:00")).replace(tzinfo=None)
-                if ev_start <= query_full < ev_end:
-                    active_events.append(ev)
-            except Exception:
-                continue
-
-        if not active_events:
-            return f"You're free at {time_label} {date_label}."
-
-        # Build a natural response
-        parts = []
-        for ev in active_events:
-            title = ev.get("summary", "an event")
-            ev_start_str = ev.get("start", {}).get("dateTime", "")
-            ev_end_str = ev.get("end", {}).get("dateTime", "")
-            try:
-                ev_start = datetime.fromisoformat(ev_start_str.replace("Z", "+00:00"))
-                ev_end = datetime.fromisoformat(ev_end_str.replace("Z", "+00:00"))
-                start_label = ev_start.strftime("%-I:%M %p") if ev_start.minute else ev_start.strftime("%-I %p")
-                end_label = ev_end.strftime("%-I:%M %p") if ev_end.minute else ev_end.strftime("%-I %p")
-
-                mins_in = int((query_full - ev_start.replace(tzinfo=None)).total_seconds() / 60)
-                mins_left = int((ev_end.replace(tzinfo=None) - query_full).total_seconds() / 60)
-
-                desc = f"{title} from {start_label} to {end_label}"
-                if mins_in > 0:
-                    desc += f", about {mins_left} minutes left at that point"
-
-                attendees = ev.get("attendees", [])
-                if attendees:
-                    names = self.get_attendee_display_names(attendees)
-                    if 1 <= len(names) <= 3:
-                        desc += f" with {', '.join(names)}"
-
-                parts.append(desc)
-            except Exception:
-                parts.append(title)
-
-        if len(active_events) == 1:
-            return f"At {time_label} {date_label}, you'll be in {parts[0]}."
+        # ── Step 2: Route smartly based on what was extracted ──
+        if pre_title or pre_start:
+            # Any partial info → quick mode, it handles missing fields itself
+            await self._flow_create_quick(service, tz, now_str, pre_title, pre_start, pre_end, pre_attendees, pre_meet, pre_location, pre_reminder)
         else:
-            joined = " and also ".join(parts)
-            return f"At {time_label} {date_label}, you've got overlapping events: {joined}."
+            mode_from_trigger = None
+            if raw_utterance:
+                mode_check = self.capability_worker.text_to_text_response(
+                    f"The user said: \"{raw_utterance}\"\n"
+                    "Did they already specify HOW they want to create the event?\n"
+                    "DETAILED examples: 'step by step', 'walk me through it', 'detailed', 'all the details', 'the long way'\n"
+                    "QUICK examples: 'quick', 'fast', 'just do it', 'simple', 'quickly'\n"
+                    "NONE: they didn't specify a mode, just said something like 'create an event' or 'schedule a meeting'\n"
+                    "Reply with exactly one word: DETAILED, QUICK, or NONE"
+                ).strip().upper()
+                self.worker.editor_logging_handler.error(f"Mode from trigger: {mode_check}")
+                if mode_check.strip() in ("DETAILED", "QUICK"):
+                    mode_from_trigger = mode_check.strip()
 
-    def format_time_for_speech(self, time_24: str) -> str:
-        try:
-            dt = datetime.strptime(time_24, "%H:%M")
-            if dt.minute == 0:
-                return dt.strftime("%-I %p")
-            return dt.strftime("%-I:%M %p")
-        except Exception:
-            return time_24
-
-    def format_event_time(self, event: dict) -> str:
-        """Extract and format the start time from an event dict for speech."""
-        start = event.get("start", {})
-        dt_str = start.get("dateTime", "")
-        try:
-            dt = datetime.fromisoformat(dt_str.replace("Z", "+00:00"))
-            if dt.minute == 0:
-                return dt.strftime("%-I %p")
-            return dt.strftime("%-I:%M %p")
-        except Exception:
-            return "unknown time"
-
-    def format_event_date(self, event: dict) -> str:
-        """Extract and format the start date from an event dict as YYYY-MM-DD."""
-        start = event.get("start", {})
-        dt_str = start.get("dateTime", start.get("date", ""))
-        try:
-            dt = datetime.fromisoformat(dt_str.replace("Z", "+00:00"))
-            return dt.strftime("%Y-%m-%d")
-        except Exception:
-            return get_today_context()["today"]
-
-    # =========================================================================
-    # SCHEDULE MD (personality memory)
-    # =========================================================================
-
-    def _format_schedule_duration(self, minutes: int) -> str:
-        if minutes >= 60 and minutes % 60 == 0:
-            hrs = minutes // 60
-            return f"{hrs} hr"
-        elif minutes > 60:
-            hrs = minutes // 60
-            mins = minutes % 60
-            return f"{hrs} hr {mins} min"
-        return f"{minutes} min"
-
-    async def load_events_cache(self) -> list:
-        """
-        Return the cached event list written by background.py.
-        Falls back to a direct 7-day API fetch if the cache is missing or stale.
-        Direct API calls are only kept for: conflict checks, post-mutation refreshes,
-        and fetching a single event by ID.
-        """
-        try:
-            exists = await self.capability_worker.check_if_file_exists(EVENTS_CACHE_FILE, False)
-            if exists:
-                raw = await self.capability_worker.read_file(EVENTS_CACHE_FILE, False)
-                if raw:
-                    data = json.loads(raw)
-                    age = epoch_now() - data.get("updated_at", 0)
-                    if age <= EVENTS_CACHE_MAX_AGE:
-                        events = data.get("events", [])
-                        self.worker.editor_logging_handler.info(
-                            f"[GCal] Using events cache ({age:.1f}s old, {len(events)} events)."
-                        )
-                        return events
-                    else:
-                        self.worker.editor_logging_handler.info(
-                            f"[GCal] Cache stale ({age:.1f}s) — falling back to API."
-                        )
-        except Exception as e:
-            self.worker.editor_logging_handler.error(f"[GCal] Cache read error: {e} — falling back to API.")
-
-        # Fallback: direct API call for next 7 days
-        today = get_effective_today().strftime("%Y-%m-%d")
-        end_date = (get_effective_today() + timedelta(days=7)).strftime("%Y-%m-%d")
-        return self.list_events_in_range(today, end_date)
-
-    async def save_event_reminder(self, event_id: str, reminder_minutes: int):
-        """
-        Persist a per-event reminder override in gcal_event_reminders.json.
-        background.py checks this file by event ID before falling back to title-based prefs.
-        """
-        REMINDERS_FILE = "gcal_event_reminders.json"
-        try:
-            existing = {}
-            exists = await self.capability_worker.check_if_file_exists(REMINDERS_FILE, False)
-            if exists:
-                raw = await self.capability_worker.read_file(REMINDERS_FILE, False)
-                if raw:
-                    existing = json.loads(raw)
-            existing[event_id] = reminder_minutes
-            exists2 = await self.capability_worker.check_if_file_exists(REMINDERS_FILE, False)
-            if exists2:
-                await self.capability_worker.delete_file(REMINDERS_FILE, False)
-            await self.capability_worker.write_file(
-                REMINDERS_FILE, json.dumps(existing, indent=2), False, mode="w"
-            )
-            self.worker.editor_logging_handler.info(
-                f"[GCal] Saved reminder override for {event_id}: {reminder_minutes} min."
-            )
-        except Exception as e:
-            self.worker.editor_logging_handler.error(f"[GCal] save_event_reminder error: {e}")
-
-    async def refresh_schedule_md(self):
-        """
-        Fetch the next 7 days of events and rewrite upcoming_schedule.md so the
-        personality prompt always reflects the latest calendar state.
-        Called after every create / reschedule / delete.
-        """
-        try:
-            today = get_effective_today().strftime("%Y-%m-%d")
-            end_date = (get_effective_today() + timedelta(days=7)).strftime("%Y-%m-%d")
-            events = self.list_events_in_range(today, end_date)
-
-            now = get_local_now()
-            lines = ["## Upcoming Schedule (next 7 days)"]
-
-            for ev in events:
-                title = ev.get("summary", "Untitled")
-                start_str = ev.get("start", {}).get("dateTime", "")
-                end_str = ev.get("end", {}).get("dateTime", "")
-                if not start_str:
-                    continue
-                try:
-                    start_dt = datetime.fromisoformat(start_str.replace("Z", "+00:00")).astimezone(LOCAL_TZ)
-                    end_dt = datetime.fromisoformat(end_str.replace("Z", "+00:00")).astimezone(LOCAL_TZ) if end_str else None
-
-                    delta = (start_dt.date() - now.date()).days
-                    if delta == 0:
-                        date_label = "Today"
-                    elif delta == 1:
-                        date_label = "Tomorrow"
-                    else:
-                        date_label = start_dt.strftime("%A")
-
-                    if start_dt.minute == 0:
-                        time_label = start_dt.strftime("%-I %p")
-                    else:
-                        time_label = start_dt.strftime("%-I:%M %p")
-
-                    dur_label = ""
-                    if end_dt:
-                        dur_mins = int((end_dt - start_dt).total_seconds() / 60)
-                        dur_label = f" ({self._format_schedule_duration(dur_mins)})"
-
-                    attendees = ev.get("attendees", [])
-                    attendee_str = ""
-                    if attendees and 1 <= len(attendees) <= 3:
-                        names = [a.get("displayName") or a.get("email", "").split("@")[0] for a in attendees]
-                        attendee_str = f" with {', '.join(names)}"
-
-                    lines.append(f"- {date_label} {time_label} — {title}{dur_label}{attendee_str}")
-                except Exception:
-                    continue
-
-            if len(lines) > 21:
-                lines = lines[:21]
-                lines.append("- (...more events not shown)")
-
-            content = "\n".join(lines) + "\n"
-
-            exists = await self.capability_worker.check_if_file_exists("upcoming_schedule.md", False)
-            if exists:
-                await self.capability_worker.delete_file("upcoming_schedule.md", False)
-            await self.capability_worker.write_file("upcoming_schedule.md", content, False, mode="w")
-            self.worker.editor_logging_handler.info(
-                f"[GCal] Refreshed upcoming_schedule.md ({len(lines)-1} events)."
-            )
-        except Exception as e:
-            self.worker.editor_logging_handler.error(f"[GCal] refresh_schedule_md error: {e}")
-
-    # =========================================================================
-    # MAIN ENTRY
-    # =========================================================================
-
-    async def run_calendar(self):
-        try:
-            self.contacts = await self.load_contacts()
-            msg = await self.capability_worker.wait_for_complete_transcription()
-            self.worker.editor_logging_handler.info(f"[GCal] User said: {msg}")
-
-            if not self.get_access_token():
-                await self.capability_worker.speak(
-                    "I can't reach Google Calendar right now. Link your Google account in OpenHome settings."
+            if mode_from_trigger == "DETAILED":
+                await self._flow_create_detailed(service, tz)
+            elif mode_from_trigger == "QUICK":
+                await self._flow_create_quick(service, tz, now_str, pre_title, pre_start, pre_end, pre_attendees, pre_meet, pre_location, pre_reminder)
+            elif pre_title or pre_start:
+                # Partial info extracted — quick mode handles missing fields
+                await self._flow_create_quick(service, tz, now_str, pre_title, pre_start, pre_end, pre_attendees, pre_meet, pre_location, pre_reminder)
+            else:
+                # Nothing extracted — ask quick or step by step
+                mode_raw = await self._ask(
+                    "Want to do it quick, or go through it step by step?"
                 )
-                return
+                mode_intent = self.capability_worker.text_to_text_response(
+                    f"The user said: \"{mode_raw}\"\n"
+                    "Decide if this should be QUICK or DETAILED event creation mode.\n"
+                    "Reply QUICK if ANY of these are true:\n"
+                    "  - They used words like quick, fast, quickly, simple, short, just do it, go ahead\n"
+                    "  - They already provided event details like a title, time, attendees, or other specifics\n"
+                    "  - Their message contains enough info to create an event without step-by-step questions\n"
+                    "Reply DETAILED only if they explicitly asked for step-by-step, full details, or provided no info at all.\n"
+                    "Reply with exactly one word: QUICK or DETAILED"
+                ).strip().upper()
+                self.worker.editor_logging_handler.error(f"Mode intent: {mode_intent}")
+                if mode_intent.strip() == "QUICK":
+                    # Try to extract any details the user already provided in the same sentence
+                    extract_prompt = (
+                        f"Current date/time: {now_str}, timezone: {tz}.\n"
+                        f"The user said: \"{mode_raw}\"\n"
+                        "Extract any event details they already mentioned.\n"
+                        "Reply with ONLY a JSON object, no markdown:\n"
+                        "{\n"
+                        "  \"title\": \"event title or null\",\n"
+                        "  \"start_time\": \"natural language start time or null\",\n"
+                        "  \"end_time\": \"natural language end time or null\",\n"
+                        "  \"attendees\": [\"email1\", \"email2\"] or [],\n"
+                        "  \"add_meet\": true or false,\n"
+                        "  \"location\": \"location or null\",\n"
+                        "  \"reminder_minutes\": number or null\n"
+                        "}"
+                    )
+                    raw = self.capability_worker.text_to_text_response(extract_prompt).strip()
+                    raw = re.sub(r"```(?:json)?", "", raw).strip()
+                    self.worker.editor_logging_handler.error(f"Mode-raw pre-extract: {raw}")
+                    try:
+                        mode_extracted = json.loads(raw)
+                    except Exception:
+                        mode_extracted = {}
 
-            # Parse into potentially multiple actions
-            actions = self.parse_multi_intent(msg)
-            self.worker.editor_logging_handler.info(f"[GCal] Action queue ({len(actions)}): {actions}")
+                    def clean(val):
+                        return None if not val or str(val).lower().strip() in ("null", "none", "") else val
 
-            for i, action_text in enumerate(actions):
-                intent = self.classify_intent(action_text)
-                if intent == "EXIT":
+                    mode_title     = clean(mode_extracted.get("title"))
+                    mode_start     = clean(mode_extracted.get("start_time"))
+                    mode_end       = clean(mode_extracted.get("end_time"))
+                    mode_attendees = [e for e in mode_extracted.get("attendees", []) if e and "@" in e]
+                    mode_meet      = bool(mode_extracted.get("add_meet", False))
+                    mode_location = clean(mode_extracted.get("location"))
+                    mode_reminder  = mode_extracted.get("reminder_minutes")
+
+                    
+                    await self._flow_create_quick(service, tz, now_str, mode_title, mode_start, mode_end, mode_attendees, mode_meet, mode_location, mode_reminder)
+                else:
+                    await self._flow_create_detailed(service, tz)
+
+    async def _flow_create_quick(
+        self, service, tz: str, now_str: str,
+        pre_title: Optional[str] = None,
+        pre_start: Optional[str] = None,
+        pre_end:   Optional[str] = None,
+        pre_attendees: list = None,
+        pre_meet: bool = False,
+        pre_location: Optional[str] = None,
+        pre_reminder: Optional[int] = None,
+    ) -> None:
+        """Quick mode: ask everything in one shot, extract with LLM, then create."""
+
+        # ── Build context-aware single question ──
+        # If all critical fields already known, skip asking entirely
+        all_known = pre_title and pre_start and pre_end
+
+        if all_known:
+            # Skip one-shot — use pre values directly
+            title            = pre_title
+            start_raw        = pre_start
+            end_raw          = pre_end
+            attendees        = pre_attendees or []
+            add_meet         = pre_meet
+            reminder_minutes = int(str(pre_reminder or 60))
+            location = self._normalize_location(pre_location) if pre_location else ""
+
+            self.worker.editor_logging_handler.error("All fields pre-known, skipping one-shot question")
+        else:
+            if pre_title and pre_start:
+                context = f"I'll create '{pre_title}' starting {pre_start}"
+                if pre_end:
+                    context += f" until {pre_end}"
+                one_shot_raw = await self._ask(
+                    f"{context}. Anything else to add? "
+                )
+            elif pre_title and not pre_start:
+                one_shot_raw = await self._ask(
+                    f"Got it, creating '{pre_title}'. "
+                    "When does it start? You can also mention end time, attendees, Google Meet, location or a reminder."
+                )
+            elif pre_start and not pre_title:
+                one_shot_raw = await self._ask(
+                    f"Got it, starting at {pre_start}. "
+                    "What should we call the event? You can also mention end time, attendees, Google Meet, or a reminder."
+                )
+            else:
+                one_shot_raw = await self._ask(
+                    "Go ahead — give me the title, time, and anything else you want to add."
+                )
+
+            self.worker.editor_logging_handler.error(f"Quick one-shot input: '{one_shot_raw}'")
+
+
+            # ── Extract everything from the single response ──
+            extract_prompt = (
+                f"Current date/time: {now_str}, timezone: {tz}.\n"
+                f"Pre-known title: {pre_title or 'null'}\n"
+                f"Pre-known start: {pre_start or 'null'}\n"
+                f"Pre-known end: {pre_end or 'null'}\n"
+                f"The user said: \"{one_shot_raw}\"\n\n"
+                "Extract all event details. If a pre-known value exists and user didn't override it, use the pre-known value.\n"
+                "For attendees, extract all email addresses mentioned.\n"
+                "Reply with ONLY a JSON object, no markdown:\n"
+                "{\n"
+                "  \"title\": \"event title or null\",\n"
+                "  \"start_time\": \"natural language or null\",\n"
+                "  \"end_time\": \"natural language or null\",\n"
+                "  \"attendees\": [\"email1\", \"email2\"] or [],\n"
+                "  \"add_meet\": true or false,\n"
+                "  \"location\": \"location or null\",\n"
+                "  \"reminder_minutes\": number or null\n"
+                "}"
+            )
+            raw = self.capability_worker.text_to_text_response(extract_prompt).strip()
+            raw = re.sub(r"```(?:json)?", "", raw).strip()
+            self.worker.editor_logging_handler.error(f"Quick extracted: {raw}")
+
+            try:
+                extracted = json.loads(raw)
+            except Exception:
+                extracted = {}
+
+            def clean(val):
+                return None if not val or str(val).lower().strip() in ("null", "none", "") else val
+
+            title     = clean(extracted.get("title"))
+            start_raw = clean(extracted.get("start_time"))
+            end_raw   = clean(extracted.get("end_time"))
+            # ── Use pre_* as fallbacks so they're never lost ──
+            attendees        = [e for e in extracted.get("attendees", []) if e and "@" in e] or (pre_attendees or [])
+            add_meet         = bool(extracted.get("add_meet", False)) or pre_meet
+            reminder_minutes = int(str(extracted.get("reminder_minutes") or pre_reminder or 60))
+            raw_loc = clean(extracted.get("location")) or pre_location or ""
+            location = self._normalize_location(raw_loc) if raw_loc else ""
+
+
+        # ── Ask only for what's missing — no step-by-step fallback ──
+        if not title:
+            title_raw = await self._ask("What should we call the event?")
+            title_extract = self.capability_worker.text_to_text_response(
+                f"The user said: \"{title_raw}\"\n"
+                "Extract ONLY the event title/name they mentioned.\n"
+                "Reply with ONLY the title, nothing else."
+            ).strip().rstrip(".,!?;:")
+            title = title_extract if title_extract else title_raw
+            self.worker.editor_logging_handler.error(f"Extracted title: '{title}'")
+
+        if not start_raw:
+            while True:
+                start_raw_input = await self._ask("When does it start?")
+                is_time = self.capability_worker.text_to_text_response(
+                    f"The user said: \"{start_raw_input}\"\n"
+                    "Does this contain a date or time? Examples of YES: '3 PM', 'tomorrow', 'Friday at 2', 'next week'.\n"
+                    "Examples of NO: 'I know', 'okay', 'sure', 'never mind', 'skip'.\n"
+                    "Reply with exactly one word: YES or NO"
+                ).strip().upper()
+                if "YES" in is_time:
+                    start_extract = self.capability_worker.text_to_text_response(
+                        f"The user said: \"{start_raw_input}\"\n"
+                        "Extract ONLY the start date/time they mentioned in natural language.\n"
+                        "Reply with ONLY the time/date, nothing else. Example: '4 PM', 'tomorrow at 3 PM'."
+                    ).strip().rstrip(".,!?;:")
+                    start_raw = start_extract if start_extract else start_raw_input
                     break
-                if i > 0:
-                    await self.capability_worker.speak("Alright, next one.")
-                await self.execute_action(action_text)
-
-        except Exception as e:
-            self.worker.editor_logging_handler.error(f"[GCal] Error: {e}")
-            await self.capability_worker.speak("Something went wrong with Google Calendar.")
-        finally:
-            self.capability_worker.resume_normal_flow()
-
-    # =========================================================================
-    # HANDLERS
-    # =========================================================================
-
-    async def _find_event_with_retry(
-        self,
-        initial_hint: str,
-        original_time: str = None,
-        original_date: str = None,
-        max_retries: int = 2,
-    ):
-        """
-        Try to fuzzy-match an event; if not found, ask the user for the name
-        and retry up to max_retries times.  Returns the matched event dict or None.
-        """
-        hint = initial_hint
-        for attempt in range(max_retries + 1):
-            cached_events = await self.load_events_cache()
-            matched = self.find_matching_event(
-                event_hint=hint,
-                original_time=original_time,
-                original_date=original_date,
-                preloaded_events=cached_events,
-            )
-            if matched:
-                return matched
-            if attempt < max_retries:
-                hint = await self.capability_worker.run_io_loop(
-                    "I'm not finding that one. What's it called?"
-                )
-                if not hint or not hint.strip():
-                    return None
-        return None
-
-    async def handle_list_events(self, user_input: str):
-        await self.capability_worker.speak("Let's see.")
-
-        # Extract date AND optional time from the query
-        ctx = get_today_context()
-        extract_prompt = (
-            f"The user is asking about their calendar. Extract what they want to know.\n\n"
-            f"RIGHT NOW it is {ctx['current_time']} on {ctx['day_name']}, {ctx['today']}. It is currently {ctx['time_bucket']}.\n"
-            f"{self.get_late_night_note(ctx)}\n"
-            f"User said: \"{user_input}\"\n\n"
-            "Return ONLY a JSON object:\n"
-            '{{"date": "YYYY-MM-DD or null", "time": "HH:MM 24-hour or null", "scope": "full_day|at_time|around_time"}}\n\n'
-            "- scope 'full_day': they want the whole day's schedule (e.g. 'what's on tomorrow')\n"
-            "- scope 'at_time': they want to know what's happening at a specific time (e.g. 'what do I have at 2 PM')\n"
-            "- scope 'around_time': they want what's around a time (e.g. 'what's going on this afternoon')\n\n"
-            "Return ONLY valid JSON."
-        )
-        raw = self.capability_worker.text_to_text_response(extract_prompt)
-        self.worker.editor_logging_handler.info(f"[GCal] List query extraction: {raw}")
-
-        clean = raw.replace("```json", "").replace("```", "").strip()
-        try:
-            query = json.loads(clean)
-        except Exception:
-            query = {}
-
-        date_str = query.get("date") or ctx["today"]
-        query_time = query.get("time")
-        scope = query.get("scope", "full_day")
-
-        label = friendly_date_label(date_str)
-
-        # Use cached events from background.py; fall back to direct API only
-        # if the cache is stale or the date is outside the 7-day window.
-        cached = await self.load_events_cache()
-        events = [
-            ev for ev in cached
-            if ev.get("start", {}).get("dateTime", "")[:10] == date_str
-            or ev.get("start", {}).get("date", "") == date_str
-        ]
-        if not events and not cached:
-            # True fallback: no cache at all, hit API directly
-            events = self.list_events_for_date(date_str)
-
-        if scope == "at_time" and query_time:
-            # User wants to know what's happening at a specific time
-            speech = self.format_events_at_time(events, query_time, label)
-        else:
-            speech = self.format_events_for_speech(events, label)
-
-        self.worker.editor_logging_handler.info(f"[GCal] {speech}")
-        await self.capability_worker.speak(speech)
-
-    async def handle_query_attendees(self, user_input: str):
-        """Answer 'who's on X meeting' / 'who's attending the standup'."""
-        await self.capability_worker.speak("On it.")
-
-        # Use the invite extractor to pull out the event hint
-        ctx = get_today_context()
-        prompt = (
-            f"The user wants to know who is attending a calendar event.\n"
-            f"Extract the event they're asking about.\n\n"
-            f"RIGHT NOW it is {ctx['current_time']} on {ctx['day_name']}, {ctx['today']}.\n"
-            f"User said: \"{user_input}\"\n\n"
-            "Return ONLY a JSON object:\n"
-            '{{"event_hint": "string", "event_date": "YYYY-MM-DD or null", "event_time": "HH:MM or null"}}\n'
-            "Return ONLY valid JSON."
-        )
-        raw = self.capability_worker.text_to_text_response(prompt)
-        clean = raw.replace("```json", "").replace("```", "").strip()
-        self.worker.editor_logging_handler.info(f"[GCal] Attendee query extraction: {clean}")
-
-        try:
-            details = json.loads(clean)
-        except Exception:
-            await self.capability_worker.speak("I didn't catch which event you mean.")
-            return
-
-        event_hint = details.get("event_hint", user_input)
-        matched_event = await self._find_event_with_retry(
-            initial_hint=event_hint,
-            original_time=details.get("event_time"),
-            original_date=details.get("event_date"),
-        )
-
-        if not matched_event:
-            await self.capability_worker.speak("I still can't find that one. Check the name and try again.")
-            return
-
-        event_title = matched_event.get("summary", "that event")
-        attendees = matched_event.get("attendees", [])
-        self.last_event = matched_event
-
-        if not attendees:
-            await self.capability_worker.speak(f"There's no one else on {event_title}, it's just you.")
-            return
-
-        attendee_names = self.get_attendee_display_names(attendees)
-
-        if len(attendee_names) == 1:
-            names_str = attendee_names[0]
-        elif len(attendee_names) == 2:
-            names_str = f"{attendee_names[0]} and {attendee_names[1]}"
-        else:
-            names_str = ", ".join(attendee_names[:-1]) + f", and {attendee_names[-1]}"
-
-        count = len(attendee_names)
-        await self.capability_worker.speak(
-            f"{event_title} has {count} {'person' if count == 1 else 'people'} on it: {names_str}."
-        )
-
-    async def handle_rename_event(self, user_input: str):
-        """Rename an existing calendar event."""
-        await self.capability_worker.speak("Sure thing, finding it.")
-
-        ctx = get_today_context()
-        prompt = (
-            f"The user wants to rename or change the title of a calendar event.\n"
-            f"Extract what they want.\n\n"
-            f"RIGHT NOW it is {ctx['current_time']} on {ctx['day_name']}, {ctx['today']}.\n"
-            f"User said: \"{user_input}\"\n\n"
-            "Return ONLY a JSON object:\n"
-            '{{"event_hint": "how they describe the current event (name, \'that meeting\', etc.)", '
-            '"new_name": "the new name they want, or null if not specified", '
-            '"event_date": "YYYY-MM-DD or null", '
-            '"event_time": "HH:MM or null"}}\n'
-            "Return ONLY valid JSON."
-        )
-        raw = self.capability_worker.text_to_text_response(prompt)
-        clean = raw.replace("```json", "").replace("```", "").strip()
-        self.worker.editor_logging_handler.info(f"[GCal] Rename extraction: {clean}")
-
-        try:
-            details = json.loads(clean)
-        except Exception:
-            await self.capability_worker.speak("I didn't catch that. Which event do you want to rename?")
-            return
-
-        event_hint = details.get("event_hint", user_input)
-        matched_event = await self._find_event_with_retry(
-            initial_hint=event_hint,
-            original_time=details.get("event_time"),
-            original_date=details.get("event_date"),
-        )
-
-        if not matched_event:
-            await self.capability_worker.speak("I still can't find that one. Check the name and try again.")
-            return
-
-        event_title = matched_event.get("summary", "Untitled")
-        event_id = matched_event["id"]
-        new_name = details.get("new_name")
-
-        if not new_name:
-            new_name = await self.capability_worker.run_io_loop(
-                f"Found {event_title}. What do you want to call it instead?"
-            )
-            if not new_name or not new_name.strip():
-                await self.capability_worker.speak("I didn't catch a name. Try again whenever.")
-                return
-            new_name = new_name.strip()
-
-        response = await self.capability_worker.run_io_loop(
-            f"I'll rename {event_title} to {new_name}. Good?"
-        )
-        parsed = self.parse_confirmation_response(response)
-
-        if not parsed["confirmed"]:
-            if parsed["followup"]:
-                await self.dispatch_followup(parsed["followup"])
-            else:
-                await self.capability_worker.speak("Got it, keeping the name as is.")
-            return
-
-        await self.capability_worker.speak("One sec.")
-        self.last_api_error = ""
-        result = self.update_event(event_id, {"summary": new_name})
-
-        if result:
-            self.last_event = result
-            await self.capability_worker.speak(f"Done. It's now called {new_name}.")
-            if parsed["followup"]:
-                await self.dispatch_followup(parsed["followup"])
-        else:
-            await self.capability_worker.speak(
-                f"That didn't work. The error was: {self.last_api_error}."
-            )
-
-    async def handle_make_recurring(self, user_input: str):
-        """Convert an existing event to repeat weekly."""
-        lower = user_input.lower()
-        vague_refs = ["it", "that", "this", "the meeting", "the event", "the call"]
-        is_vague = any(v in lower for v in vague_refs) or not any(
-            c.isalpha() for c in lower.replace("make", "").replace("recurring", "")
-            .replace("repeat", "").replace("weekly", "").replace("it", "")
-            .replace("that", "").replace("this", "").replace("set", "")
-        )
-
-        event = None
-        if is_vague and self.last_event:
-            event = self.last_event
-        else:
-            event = await self._find_event_with_retry(initial_hint=user_input)
-
-        if not event:
-            await self.capability_worker.speak("I still can't find that one. Check the name and try again.")
-            return
-
-        event_id = event.get("id", "")
-        title = event.get("summary", "that event")
-        response = await self.capability_worker.run_io_loop(
-            f"I'll make {title} repeat every week. Sound good?"
-        )
-        parsed = self.parse_confirmation_response(response)
-
-        if not parsed["confirmed"]:
-            if parsed["followup"]:
-                await self.dispatch_followup(parsed["followup"])
-            else:
-                await self.capability_worker.speak("Got it, leaving it as a one-time event.")
-            return
-
-        await self.capability_worker.speak("On it.")
-        self.last_api_error = ""
-        result = self.update_event(event_id, {"recurrence": ["RRULE:FREQ=WEEKLY"]})
-
-        if result:
-            self.last_event = result
-            await self.capability_worker.speak(f"Done — {title} will now repeat every week.")
-            if parsed["followup"]:
-                await self.dispatch_followup(parsed["followup"])
-        else:
-            await self.capability_worker.speak(
-                f"That didn't go through. Error: {self.last_api_error}."
-            )
-
-    async def handle_reschedule_event(self, user_input: str):
-        await self.capability_worker.speak("On it.")
-
-        details = self.extract_reschedule_details(user_input)
-        if not details or not details.get("event_hint"):
-            await self.capability_worker.speak(
-                "Hmm, I'm not sure which event you mean. Can you give me the name?"
-            )
-            return
-
-        self.worker.editor_logging_handler.info(f"[GCal] Reschedule details: {json.dumps(details)}")
-
-        matched_event = await self._find_event_with_retry(
-            initial_hint=details["event_hint"],
-            original_time=details.get("original_time"),
-            original_date=details.get("original_date"),
-        )
-
-        if not matched_event:
-            await self.capability_worker.speak("I still can't find that one. Check the name and try again.")
-            return
-
-        event_title = matched_event.get("summary", "Untitled")
-        event_id = matched_event["id"]
-        current_time_str = self.format_event_time(matched_event)
-        current_date_str = self.format_event_date(matched_event)
-        current_date_label = friendly_date_label(current_date_str)
-
-        self.worker.editor_logging_handler.info(
-            f"[GCal] Matched event: {event_title} (id={event_id}) at {current_time_str} on {current_date_label}"
-        )
-
-        new_date = details.get("new_date") or current_date_str
-        new_time = details.get("new_time")
-
-        if not new_time:
-            response = await self.capability_worker.run_io_loop(
-                f"Found {event_title} at {current_time_str} {current_date_label}. When do you want it instead?"
-            )
-            time_details = self.extract_reschedule_details(f"move it to {response}")
-            new_time = (time_details or {}).get("new_time")
-            if not new_time:
-                meeting_d = self.extract_meeting_details(f"meeting at {response}")
-                new_time = (meeting_d or {}).get("time")
-            if not new_time:
-                await self.capability_worker.speak("I didn't quite get that. Try again whenever you're ready.")
-                return
-            if time_details and time_details.get("new_date"):
-                new_date = time_details["new_date"]
-
-        new_date_label = friendly_date_label(new_date)
-        new_time_label = self.format_time_for_speech(new_time)
-
-        if new_date != current_date_str:
-            confirm_msg = (
-                f"I'll move {event_title} from {current_time_str} {current_date_label} "
-                f"to {new_time_label} {new_date_label}. Good?"
-            )
-        else:
-            confirm_msg = (
-                f"I'll move {event_title} from {current_time_str} to {new_time_label} "
-                f"{current_date_label}. Good?"
-            )
-
-        response = await self.capability_worker.run_io_loop(confirm_msg)
-        parsed = self.parse_confirmation_response(response)
-        confirmed = parsed["confirmed"]
-        followup = parsed["followup"]
-
-        if not confirmed:
-            # Check if the user is correcting the time/date instead of just saying no
-            correction = self.extract_reschedule_details(f"move it to {response}")
-            corrected_time = (correction or {}).get("new_time")
-            corrected_date = (correction or {}).get("new_date")
-
-            if corrected_time or corrected_date:
-                if corrected_time:
-                    new_time = corrected_time
-                if corrected_date:
-                    new_date = corrected_date
-                new_date_label = friendly_date_label(new_date)
-                new_time_label = self.format_time_for_speech(new_time)
-
-                self.worker.editor_logging_handler.info(
-                    f"[GCal] User corrected to: {new_time} on {new_date}"
-                )
-
-                if new_date != current_date_str:
-                    confirm_msg2 = f"Got it, {new_time_label} {new_date_label} instead. Good?"
                 else:
-                    confirm_msg2 = f"Got it, {new_time_label} {current_date_label} instead. Good?"
-
-                response2 = await self.capability_worker.run_io_loop(confirm_msg2)
-                confirmed = self.interpret_yes_no(response2)
-                if not confirmed:
-                    await self.capability_worker.speak("Got it, leaving it where it is.")
-                    return
-            elif followup:
-                # They said no but want something else — dispatch it
-                await self.dispatch_followup(followup)
-                return
-            else:
-                await self.capability_worker.speak("Got it, leaving it where it is.")
-                return
-
-        try:
-            orig_start_str = matched_event["start"].get("dateTime", "")
-            orig_end_str = matched_event["end"].get("dateTime", "")
-            orig_start = datetime.fromisoformat(orig_start_str.replace("Z", "+00:00"))
-            orig_end = datetime.fromisoformat(orig_end_str.replace("Z", "+00:00"))
-
-            if details.get("new_duration_minutes"):
-                duration = timedelta(minutes=details["new_duration_minutes"])
-            else:
-                duration = orig_end - orig_start
-
-            new_start_dt = datetime.strptime(f"{new_date} {new_time}", "%Y-%m-%d %H:%M")
-            new_end_dt = new_start_dt + duration
-            new_start_iso = new_start_dt.strftime("%Y-%m-%dT%H:%M:%S")
-            new_end_iso = new_end_dt.strftime("%Y-%m-%dT%H:%M:%S")
-        except Exception as e:
-            self.worker.editor_logging_handler.error(f"[GCal] Reschedule datetime error: {e}")
-            await self.capability_worker.speak("Something got mixed up with the date. Let's try that again.")
-            return
-
-        # --- Conflict check ---
-        conflicts = self.detect_conflicts(new_start_iso, new_end_iso, exclude_event_id=event_id)
-        if conflicts:
-            warning = self.format_conflict_warning(conflicts)
-            self.worker.editor_logging_handler.info(
-                f"[GCal] Reschedule conflict: {[c.get('summary') for c in conflicts]}"
-            )
-            conflict_response = await self.capability_worker.run_io_loop(
-                f"{warning} Want me to move it anyway?"
-            )
-            if not self.interpret_yes_no(conflict_response):
-                await self.capability_worker.speak("Alright, leaving it where it is.")
-                return
-
-        await self.capability_worker.speak("One sec.")
-        self.last_api_error = ""
-        updates = {
-            "start": {"dateTime": new_start_iso, "timeZone": DEFAULT_TIMEZONE},
-            "end": {"dateTime": new_end_iso, "timeZone": DEFAULT_TIMEZONE},
-        }
-
-        result = self.update_event(event_id, updates)
-
-        if result:
-            self.last_event = result
-            await self.capability_worker.speak(
-                f"All set. {event_title} is now at {new_time_label} {new_date_label}."
-            )
-            await self.refresh_schedule_md()
-            # Dispatch any follow-up from the confirmation response
-            if followup:
-                await self.dispatch_followup(followup)
-        else:
-            await self.capability_worker.speak(
-                f"Hmm, that didn't go through. The error was: {self.last_api_error}."
-            )
-
-    async def handle_delete_event(self, user_input: str):
-        """Delete an event from the calendar."""
-        await self.capability_worker.speak("Let me find it.")
-
-        # Reuse reschedule extractor to identify which event
-        details = self.extract_reschedule_details(user_input)
-        event_hint = (details or {}).get("event_hint", "")
-        if not event_hint:
-            event_hint = user_input
-
-        matched_event = await self._find_event_with_retry(
-            initial_hint=event_hint,
-            original_time=(details or {}).get("original_time"),
-            original_date=(details or {}).get("original_date"),
-        )
-
-        if not matched_event:
-            await self.capability_worker.speak("I still can't find that one. Check the name and try again.")
-            return
-
-        event_title = matched_event.get("summary", "Untitled")
-        event_id = matched_event["id"]
-        event_time_str = self.format_event_time(matched_event)
-        event_date_str = self.format_event_date(matched_event)
-        event_date_label = friendly_date_label(event_date_str)
-
-        response = await self.capability_worker.run_io_loop(
-            f"Found {event_title} at {event_time_str} {event_date_label}. Want me to delete it?"
-        )
-        parsed = self.parse_confirmation_response(response)
-        confirmed = parsed["confirmed"]
-        followup = parsed["followup"]
-
-        if not confirmed:
-            if followup:
-                await self.dispatch_followup(followup)
-            else:
-                await self.capability_worker.speak("Works for me, leaving it on the books.")
-            return
-
-        await self.capability_worker.speak("One sec.")
-        self.last_api_error = ""
-        success = self.delete_event(event_id)
-
-        if success:
-            self.last_event = None
-            await self.capability_worker.speak(f"Gone. {event_title} has been removed.")
-            await self.refresh_schedule_md()
-        else:
-            await self.capability_worker.speak(
-                f"That didn't work. The error was: {self.last_api_error}."
-            )
-
-    async def handle_remove_attendee(self, user_input: str):
-        """Remove an attendee from an existing calendar event."""
-        if not self.contacts:
-            await self.capability_worker.speak("I don't have a contacts list set up, so I can't look anyone up.")
-            return
-
-        ctx = get_today_context()
-        prompt = EXTRACT_REMOVE_ATTENDEE_PROMPT.format(
-            today=ctx["today"],
-            day_name=ctx["day_name"],
-            current_time=ctx["current_time"],
-            late_night_note=self.get_late_night_note(ctx),
-            time_bucket=ctx.get("time_bucket", ""),
-            user_input=user_input,
-        )
-        raw = self.capability_worker.text_to_text_response(prompt)
-        clean = raw.replace("```json", "").replace("```", "").strip()
-        self.worker.editor_logging_handler.info(f"[GCal] Remove attendee extraction: {clean}")
-
-        try:
-            invite_details = json.loads(clean)
-        except Exception:
-            await self.capability_worker.speak("I didn't catch that. Who are you trying to remove?")
-            return
-
-        names = invite_details.get("attendee_names", [])
-        if not names:
-            await self.capability_worker.speak("Who did you want to take off the invite?")
-            return
-
-        people_to_remove = self.detect_attendees(user_input, llm_names=names)
-        if not people_to_remove:
-            names_str = " and ".join(names)
-            await self.capability_worker.speak(
-                f"I don't have {names_str} in my contacts, so I can't match them."
-            )
-            return
-
-        await self.capability_worker.speak("Let me take a look.")
-        event_hint = invite_details.get("event_hint", "") or user_input
-        matched_event = await self._find_event_with_retry(
-            initial_hint=event_hint,
-            original_time=invite_details.get("event_time"),
-            original_date=invite_details.get("event_date"),
-        )
-
-        if not matched_event:
-            await self.capability_worker.speak("I still can't find that one. Check the name and try again.")
-            return
-
-        event_title = matched_event.get("summary", "Untitled")
-        event_id = matched_event["id"]
-        event_time_str = self.format_event_time(matched_event)
-        event_date_str = self.format_event_date(matched_event)
-        event_date_label = friendly_date_label(event_date_str)
-
-        remove_names_str = " and ".join(p["name"] for p in people_to_remove)
-        remove_emails = {self.safe_email(p) for p in people_to_remove} - {""}
-
-        existing_attendees = matched_event.get("attendees", [])
-        existing_emails = {self.safe_email(a) for a in existing_attendees} - {""}
-
-        actually_on_event = remove_emails & existing_emails
-        if not actually_on_event:
-            await self.capability_worker.speak(
-                f"{remove_names_str} isn't on {event_title}, so there's nothing to remove."
-            )
-            return
-
-        response = await self.capability_worker.run_io_loop(
-            f"I'll take {remove_names_str} off {event_title} at {event_time_str} "
-            f"{event_date_label}. Good?"
-        )
-        parsed = self.parse_confirmation_response(response)
-        confirmed = parsed["confirmed"]
-        followup = parsed["followup"]
-
-        if not confirmed:
-            if followup:
-                await self.dispatch_followup(followup)
-            else:
-                await self.capability_worker.speak("Got it, leaving the invite list as is.")
-            return
-
-        new_attendee_list = [
-            a for a in existing_attendees
-            if self.safe_email(a) not in remove_emails
-        ]
-
-        await self.capability_worker.speak("One sec.")
-        self.last_api_error = ""
-        result = self.update_event(event_id, {"attendees": new_attendee_list})
-
-        if result:
-            self.last_event = result
-            await self.capability_worker.speak(f"Done. {remove_names_str} has been taken off {event_title}.")
-            if followup:
-                await self.dispatch_followup(followup)
-        else:
-            await self.capability_worker.speak(f"That didn't work. The error was: {self.last_api_error}.")
-
-    async def handle_add_attendee(self, user_input: str):
-        """Add attendees to an existing calendar event."""
-        if not self.contacts:
-            await self.capability_worker.speak("I don't have a contacts list set up, so I can't send invites.")
-            return
-
-        ctx = get_today_context()
-        prompt = EXTRACT_INVITE_PROMPT.format(
-            today=ctx["today"],
-            day_name=ctx["day_name"],
-            current_time=ctx["current_time"],
-            late_night_note=self.get_late_night_note(ctx),
-            time_bucket=ctx.get("time_bucket", ""),
-            user_input=user_input,
-        )
-        raw = self.capability_worker.text_to_text_response(prompt)
-        clean = raw.replace("```json", "").replace("```", "").strip()
-        self.worker.editor_logging_handler.info(f"[GCal] Invite extraction: {clean}")
-
-        try:
-            invite_details = json.loads(clean)
-        except Exception:
-            self.worker.editor_logging_handler.error(f"[GCal] Failed to parse invite JSON: {clean}")
-            await self.capability_worker.speak("I didn't catch that. Who are you trying to invite?")
-            return
-
-        names = invite_details.get("attendee_names", [])
-        if not names:
-            await self.capability_worker.speak("Who did you want to add?")
-            return
-
-        attendees = self.detect_attendees(user_input, llm_names=names)
-        if not attendees:
-            names_str = " and ".join(names)
-            await self.capability_worker.speak(
-                f"I don't have {names_str} in my contacts."
-            )
-            return
-
-        await self.capability_worker.speak("Let's see.")
-
-        event_hint = invite_details.get("event_hint", "") or user_input
-        matched_event = await self._find_event_with_retry(
-            initial_hint=event_hint,
-            original_time=invite_details.get("event_time"),
-            original_date=invite_details.get("event_date"),
-        )
-
-        if not matched_event:
-            await self.capability_worker.speak("I still can't find that one. Check the name and try again.")
-            return
-
-        event_title = matched_event.get("summary", "Untitled")
-        event_id = matched_event["id"]
-        event_time_str = self.format_event_time(matched_event)
-        event_date_str = self.format_event_date(matched_event)
-        event_date_label = friendly_date_label(event_date_str)
-
-        attendee_names_str = " and ".join(a["name"] for a in attendees)
-
-        response = await self.capability_worker.run_io_loop(
-            f"I'll add {attendee_names_str} to {event_title} at {event_time_str} {event_date_label}. Good?"
-        )
-        parsed = self.parse_confirmation_response(response)
-        confirmed = parsed["confirmed"]
-        followup = parsed["followup"]
-
-        if not confirmed:
-            if followup:
-                await self.dispatch_followup(followup)
-            else:
-                await self.capability_worker.speak("All good, no changes.")
-            return
-
-        # Merge with existing attendees
-        try:
-            existing_attendees = matched_event.get("attendees", [])
-            existing_emails = {self.safe_email(a) for a in existing_attendees} - {""}
-            new_attendee_list = list(existing_attendees)
-
-            for a in attendees:
-                email = self.safe_email(a)
-                if email and email not in existing_emails:
-                    new_attendee_list.append({"email": a.get("email", "")})
-        except Exception as e:
-            self.worker.editor_logging_handler.error(
-                f"[GCal] Merge error: {e} | attendees={attendees} | existing={existing_attendees}"
-            )
-            await self.capability_worker.speak("Something got mixed up. Let's try that again.")
-            return
-
-        await self.capability_worker.speak("One sec.")
-        self.last_api_error = ""
-        result = self.update_event(event_id, {"attendees": new_attendee_list})
-
-        if result:
-            self.last_event = result
-            await self.capability_worker.speak(
-                f"Done. {attendee_names_str} will get an invite to {event_title}."
-            )
-            # Dispatch any follow-up from the confirmation response
-            if followup:
-                await self.dispatch_followup(followup)
-        else:
-            await self.capability_worker.speak(
-                f"That didn't work. The error was: {self.last_api_error}."
-            )
-
-    async def handle_respond_to_invite(self, user_input: str, response_status: str):
-        """Accept or decline a meeting invite by PATCHing the self attendee's responseStatus."""
-        lower = user_input.lower()
-        vague_refs = ["it", "that", "this", "the invite", "the meeting", "the event"]
-
-        event = None
-        cached = await self.load_events_cache()
-
-        if any(v in lower for v in vague_refs) and self.last_event:
-            event = self.last_event
-        else:
-            event = self.find_matching_event(user_input, preloaded_events=cached)
-
-        # Fallback: if still nothing found, look for a single pending invite in the cache
-        if not event:
-            pending = [
-                ev for ev in cached
-                if not ev.get("organizer", {}).get("self", False)
-                and any(
-                    a.get("self") and a.get("responseStatus") in ("needsAction", "tentative")
-                    for a in ev.get("attendees", [])
-                )
-            ]
-            if len(pending) == 1:
-                event = pending[0]
-
-        if not event:
-            event = await self._find_event_with_retry(initial_hint=user_input)
-
-        if not event:
-            await self.capability_worker.speak("I still can't find that one. Check the name and try again.")
-            return
-
-        title = event.get("summary", "that event")
-        attendees = event.get("attendees", [])
-        self_att = next((a for a in attendees if a.get("self")), None)
-
-        if not self_att:
-            await self.capability_worker.speak(
-                f"I don't see you as an attendee on {title}."
-            )
-            return
-
-        action_label = "accept" if response_status == "accepted" else "decline"
-        response = await self.capability_worker.run_io_loop(
-            f"Go ahead and {action_label} {title}?"
-        )
-        parsed = self.parse_confirmation_response(response)
-        if not parsed["confirmed"]:
-            if parsed["followup"]:
-                await self.dispatch_followup(parsed["followup"])
-            else:
-                await self.capability_worker.speak("Got it, leaving it as is.")
-            return
-
-        # Build updated attendees list with self RSVP changed
-        updated_attendees = [
-            {**a, "responseStatus": response_status} if a.get("self") else a
-            for a in attendees
-        ]
-        event_id = event.get("id", "")
-        self.last_api_error = ""
-        result = self.update_event(event_id, {"attendees": updated_attendees})
-
-        if result:
-            self.last_event = result
-            verb = "accepted" if response_status == "accepted" else "declined"
-            await self.capability_worker.speak(f"Done — {title} is {verb}.")
-            if parsed["followup"]:
-                await self.dispatch_followup(parsed["followup"])
-        else:
-            await self.capability_worker.speak(
-                f"That didn't go through. {self.last_api_error}."
-            )
-
-    async def handle_set_reminder(self, user_input: str):
-        """Update user_preferences.md with a new per-meeting reminder override."""
-        extract_prompt = (
-            f'The user said: "{user_input}"\n'
-            "They want to set a reminder preference for a specific meeting.\n"
-            "Extract:\n"
-            '- "event_fragment": string — the meeting title fragment (lowercase). '
-            "If vague (e.g. 'that meeting', 'this one'), return null.\n"
-            '- "reminder_minutes": integer minutes before the meeting, '
-            'or "skip" if they want no reminder.\n'
-            "Return ONLY valid JSON, e.g.: "
-            '{"event_fragment": "standup", "reminder_minutes": 10}\n'
-            '{"event_fragment": "investor call", "reminder_minutes": "skip"}'
-        )
-        raw = self.capability_worker.text_to_text_response(
-            extract_prompt,
-            system_prompt="Extract reminder preference. Reply with only JSON.",
-        ).strip().replace("```json", "").replace("```", "").strip()
-
-        try:
-            extracted = json.loads(raw)
-        except Exception:
-            await self.capability_worker.speak(
-                "I didn't catch that. Try something like 'remind me 10 minutes before the standup'."
-            )
-            return
-
-        fragment = extracted.get("event_fragment")
-        minutes = extracted.get("reminder_minutes")
-
-        if not fragment:
-            await self.capability_worker.speak("Which meeting should I update the reminder for?")
-            return
-        if minutes is None:
-            await self.capability_worker.speak("How many minutes before should I remind you?")
-            return
-
-        # Read, update, write user_preferences.md
-        try:
-            exists = await self.capability_worker.check_if_file_exists("user_preferences.md", False)
-            current_content = ""
-            if exists:
-                current_content = await self.capability_worker.read_file("user_preferences.md", False) or ""
-
-            # Build the override line
-            if minutes == "skip" or minutes == 0:
-                override_line = f'- "{fragment}": skip'
-            else:
-                override_line = f'- "{fragment}": {int(minutes)}'
-
-            # Replace existing override for this fragment if present, else append
-            lines = current_content.splitlines()
-            fragment_lower = fragment.lower()
-            replaced = False
-            new_lines = []
-            for line in lines:
-                if re.search(rf'"{re.escape(fragment_lower)}"', line.lower()):
-                    new_lines.append(override_line)
-                    replaced = True
-                else:
-                    new_lines.append(line)
-
-            if not replaced:
-                new_lines.append(override_line)
-
-            new_content = "\n".join(new_lines)
-            if exists:
-                await self.capability_worker.delete_file("user_preferences.md", False)
-            await self.capability_worker.write_file("user_preferences.md", new_content, False, mode="w")
-
-            if minutes == "skip" or minutes == 0:
-                await self.capability_worker.speak(
-                    f"Got it — I'll skip reminders for {fragment} from now on."
-                )
-            else:
-                await self.capability_worker.speak(
-                    f"Done — I'll remind you {int(minutes)} minutes before {fragment}."
-                )
-        except Exception as e:
-            self.worker.editor_logging_handler.error(f"[GCal] set_reminder error: {e}")
-            await self.capability_worker.speak("Something went wrong updating your reminder preferences.")
-
-    async def handle_schedule_event(self, user_input: str):
-        details = self.extract_meeting_details(user_input)
-
-        if not details:
-            await self.capability_worker.speak("I didn't quite get that. Can you run it by me again?")
-            return
-
-        # --- Attendees: detect from user input with fuzzy matching ---
-        attendees = []
-        llm_names = details.get("attendee_names", [])
-        if self.contacts:
-            attendees = self.detect_attendees(user_input, llm_names=llm_names)
-
-        if attendees:
-            names_str = ", ".join(a["name"] for a in attendees)
-            self.worker.editor_logging_handler.info(f"[GCal] Detected attendees: {names_str}")
-
-        # --- Summary: fill in if missing or generic ---
-        generic_names = ["meeting", "event", "appointment", "schedule a meeting",
-                         "book a meeting", "new meeting", "a meeting", ""]
-        summary = (details.get("summary") or "").strip()
-
-        if summary.lower() in generic_names:
-            existing_context = details.get("description", "").strip()
-            combined_context = f"{user_input}. {existing_context}".strip(". ")
-
-            name_prompt = (
-                f'The user is scheduling a calendar event. Here is everything they said: "{combined_context}"\n\n'
-                "Come up with a short, clear calendar event title (2-5 words) based on context clues.\n"
-                "Examples: 'Coffee with Jake', 'Sprint Planning', 'Dentist Appointment', 'Swimming Session'\n"
-                "Ignore scheduling details like dates and times — focus on WHAT the event is about.\n"
-                "If there are no clues about the purpose, reply with exactly: UNCLEAR\n"
-                "Reply with ONLY the title or UNCLEAR, nothing else."
-            )
-            suggested_name = self.capability_worker.text_to_text_response(
-                name_prompt,
-                system_prompt="You generate short calendar event titles. Reply with only the title.",
-            ).strip().strip('"').strip("'")
-
-            self.worker.editor_logging_handler.info(f"[GCal] Auto-suggested name: {suggested_name}")
-
-            if "UNCLEAR" not in suggested_name.upper() and len(suggested_name) >= 2:
-                details["summary"] = suggested_name
-            else:
-                occasion = await self.capability_worker.run_io_loop(
-                    "What's it for?"
-                )
-                self.worker.editor_logging_handler.info(f"[GCal] User described occasion: {occasion}")
-
-                # Re-extract full meeting details from the occasion response —
-                # user often packs in time, duration, and attendees here too
-                occasion_details = self.extract_meeting_details(occasion)
-                if occasion_details:
-                    if not details.get("time") and occasion_details.get("time"):
-                        details["time"] = occasion_details["time"]
-                        self.worker.editor_logging_handler.info(
-                            f"[GCal] Captured time from occasion response: {occasion_details['time']}"
-                        )
-                    if not details.get("date") and occasion_details.get("date"):
-                        details["date"] = occasion_details["date"]
-                    if occasion_details.get("duration_explicit"):
-                        details["duration_minutes"] = occasion_details["duration_minutes"]
-                        details["duration_explicit"] = True
-                        self.worker.editor_logging_handler.info(
-                            f"[GCal] Captured duration from occasion response: {occasion_details['duration_minutes']} min"
-                        )
-                    # Pick up any new attendee names mentioned in the follow-up
-                    new_names = occasion_details.get("attendee_names", [])
-                    if new_names and self.contacts:
-                        extra_attendees = self.detect_attendees(occasion, llm_names=new_names)
-                        for ea in extra_attendees:
-                            if ea["email"] not in [a["email"] for a in attendees]:
-                                attendees.append(ea)
-                                self.worker.editor_logging_handler.info(
-                                    f"[GCal] Added attendee from occasion response: {ea['name']}"
-                                )
-
-                name_prompt2 = (
-                    f'The user is scheduling a meeting. When asked what it\'s for, they said: "{occasion}"\n\n'
-                    "Come up with a short, clear calendar event title (2-5 words).\n"
-                    "Examples: 'Coffee with Jake', 'Sprint Planning', 'Dentist Appointment'\n"
-                    "If their response is too vague, reply with exactly: UNCLEAR\n"
-                    "Reply with ONLY the title or UNCLEAR, nothing else."
-                )
-                suggested_name2 = self.capability_worker.text_to_text_response(
-                    name_prompt2,
-                    system_prompt="You generate short calendar event titles. Reply with only the title.",
-                ).strip().strip('"').strip("'")
-
-                self.worker.editor_logging_handler.info(f"[GCal] Suggested name from follow-up: {suggested_name2}")
-
-                if "UNCLEAR" in suggested_name2.upper() or len(suggested_name2) < 2:
-                    name_response = await self.capability_worker.run_io_loop(
-                        "What should I call it?"
+                    await self.capability_worker.speak(
+                        "Sorry, I didn't catch a time. Please say something like 'tomorrow at 3 PM'."
                     )
-                    details["summary"] = name_response.strip()
-                else:
-                    details["summary"] = suggested_name2
 
-        # --- Date: ask if missing ---
-        if not details.get("date"):
-            response = await self.capability_worker.run_io_loop("What day?")
-            followup = self.extract_meeting_details(f"meeting on {response}")
-            if followup and followup.get("date"):
-                details["date"] = followup["date"]
-                if not details.get("time") and followup.get("time"):
-                    details["time"] = followup["time"]
-                    self.worker.editor_logging_handler.info(
-                        f"[GCal] Also captured time from date response: {followup['time']}"
-                    )
-                if followup.get("duration_explicit"):
-                    details["duration_minutes"] = followup["duration_minutes"]
-                    details["duration_explicit"] = True
-                if self.contacts:
-                    extra_names = followup.get("attendee_names", [])
-                    extra_attendees = self.detect_attendees(response, llm_names=extra_names)
-                    for ea in extra_attendees:
-                        if ea["email"] not in [a["email"] for a in attendees]:
-                            attendees.append(ea)
-                            self.worker.editor_logging_handler.info(
-                                f"[GCal] Added attendee from date response: {ea['name']}"
-                            )
-            else:
-                await self.capability_worker.speak("I didn't get the date. Try again whenever.")
-                return
+        # ── Parse start time ──
+        def _is_future_with_time(dt_str: str, raw_input: str = "") -> tuple[bool, str]:
+            try:
+                dt_naive = datetime.fromisoformat(dt_str).replace(tzinfo=None)
+                now_local = datetime.now(ZoneInfo(tz)).replace(tzinfo=None)
+                if dt_naive.hour == 0 and dt_naive.minute == 0 and dt_naive.second == 0:
+                    # Only reject midnight if user didn't explicitly say a midnight-like time
+                    if raw_input:
+                        has_time = self.capability_worker.text_to_text_response(
+                            f"The user said: \"{raw_input}\"\n"
+                            "Does this explicitly mention a specific time of day?\n"
+                            "YES examples: '12am', 'midnight', '12:00 AM', 'noon', '12pm', '3 PM', 'half past two'\n"
+                            "NO examples: 'tomorrow', 'next Friday', 'March 15th', 'this weekend'\n"
+                            "Reply with exactly one word: YES or NO"
+                        ).strip().upper()
+                        if has_time == "YES":
+                            pass  # user said midnight explicitly — allow it
+                        else:
+                            return False, "no_time"
+                    else:
+                        return False, "no_time"
+                if dt_naive < now_local:
+                    return False, "past"
+                return True, "ok"
+            except Exception:
+                return False, "invalid"
 
-        # --- Time: ask if missing ---
-        if not details.get("time"):
-            response = await self.capability_worker.run_io_loop("What time?")
-            followup = self.extract_meeting_details(f"meeting at {response}")
-            if followup and followup.get("time"):
-                details["time"] = followup["time"]
-                if not details.get("date") and followup.get("date"):
-                    details["date"] = followup["date"]
-                if followup.get("duration_explicit"):
-                    details["duration_minutes"] = followup["duration_minutes"]
-                    details["duration_explicit"] = True
-                # Check for attendees in this response too
-                if self.contacts:
-                    extra_names = followup.get("attendee_names", [])
-                    extra_attendees = self.detect_attendees(response, llm_names=extra_names)
-                    for ea in extra_attendees:
-                        if ea["email"] not in [a["email"] for a in attendees]:
-                            attendees.append(ea)
-                            self.worker.editor_logging_handler.info(
-                                f"[GCal] Added attendee from time response: {ea['name']}"
-                            )
-            else:
-                await self.capability_worker.speak("I didn't get the time. Try again whenever.")
-                return
+        await self.capability_worker.speak("Got it, one moment.")
+        while True:
+            start_dt = self._parse_datetime_with_llm(start_raw, tz)
+            if not self._is_valid_iso_dt(start_dt):
+                start_raw = await self._ask(
+                    "I couldn't parse that. Please try again, like 'Friday at 2 PM'."
+                )
+                continue
+            valid, reason = _is_future_with_time(start_dt, raw_input=start_raw)  # ← pass start_raw here
+            if reason == "no_time":
+                start_raw = await self._ask(
+                    "Please include a specific time as well, like 'tomorrow at 3 PM'."
+                )
+                continue
+            if reason == "past":
+                start_raw = await self._ask(
+                    "That time has already passed. Please choose a future date and time."
+                )
+                continue
+            break
 
-        # --- Duration: ask if the user didn't explicitly mention one ---
-        duration = details.get("duration_minutes", 30)
-        duration_explicit = details.get("duration_explicit", False)
+        # ── Parse end time — default to +1 hour if not provided or invalid ──
+        end_dt = self._parse_datetime_with_llm(end_raw, tz, reference_dt=start_dt) if end_raw else None
+        if not self._is_valid_iso_dt(end_dt) or (
+            self._is_valid_iso_dt(end_dt) and
+            datetime.fromisoformat(end_dt) <= datetime.fromisoformat(start_dt)
+        ):
+            end_dt = (datetime.fromisoformat(start_dt) + timedelta(hours=1)).isoformat()
+            self.worker.editor_logging_handler.error(f"End time defaulted to +1hr: {end_dt}")
 
-        if not duration_explicit:
-            dur_response = await self.capability_worker.run_io_loop(
-                "How long should it be?"
-            )
-            # Try to extract a number from the response
-            dur_prompt = (
-                f'The user was asked how long a meeting should be and said: "{dur_response}"\n'
-                "Extract the duration in minutes as a single integer.\n"
-                "Examples: '1 hour' -> 60, 'half hour' -> 30, '45 minutes' -> 45, '90 min' -> 90\n"
-                "Reply with ONLY the integer, nothing else."
-            )
-            dur_raw = self.capability_worker.text_to_text_response(
-                dur_prompt,
-                system_prompt="Extract meeting duration in minutes. Reply with only an integer.",
-            ).strip()
-
-            dur_match = re.search(r"\d+", dur_raw)
-            if dur_match:
-                duration = int(dur_match.group())
-                self.worker.editor_logging_handler.info(f"[GCal] User-specified duration: {duration} min")
-            else:
-                self.worker.editor_logging_handler.info("[GCal] Couldn't parse duration, using 30 min default.")
-                duration = 30
-
-            # Check if the user also mentioned attendees in the duration response
-            if self.contacts:
-                extra_attendees = self.detect_attendees(dur_response)
-                for ea in extra_attendees:
-                    if ea["email"] not in [a["email"] for a in attendees]:
-                        attendees.append(ea)
-                        self.worker.editor_logging_handler.info(
-                            f"[GCal] Added attendee from duration response: {ea['name']}"
-                        )
-
-        # --- Confirmation ---
-        date_label = friendly_date_label(details["date"])
-        time_label = self.format_time_for_speech(details["time"])
-        recurring_weekly = details.get("recurring_weekly", False)
-
-        # Build readable duration
-        if duration >= 60 and duration % 60 == 0:
-            dur_label = f"{duration // 60} hour" + ("s" if duration >= 120 else "")
-        elif duration > 60:
-            hrs = duration // 60
-            mins = duration % 60
-            dur_label = f"{hrs} hour{'s' if hrs > 1 else ''} and {mins} minutes"
-        else:
-            dur_label = f"{duration} minute"
-
-        if recurring_weekly:
-            confirm_text = (
-                f"a weekly recurring {details['summary']}, "
-                f"starting {date_label} at {time_label} for {dur_label}"
-            )
-        else:
-            confirm_text = (
-                f"a {dur_label} event called {details['summary']} "
-                f"{date_label} at {time_label}"
-            )
-
-        if attendees:
-            names_str = " and ".join(a["name"] for a in attendees)
-            confirm_text += f" with {names_str}"
-
-        response = await self.capability_worker.run_io_loop(
-            f"I'll set up {confirm_text}. Sound good?"
+        self.worker.editor_logging_handler.error(
+            f"Quick → title: {title}, start: {start_dt}, end: {end_dt}, "
+            f"attendees: {attendees}, meet: {add_meet}, reminder: {reminder_minutes}m"
         )
-        parsed = self.parse_confirmation_response(response)
-        confirmed = parsed["confirmed"]
-        followup = parsed["followup"]
 
-        if not confirmed:
-            # Check if the user is correcting details instead of cancelling
-            correction = self.extract_meeting_details(response)
-            corrected_time = (correction or {}).get("time")
-            corrected_date = (correction or {}).get("date")
-            corrected_dur = (correction or {}).get("duration_explicit") and (correction or {}).get("duration_minutes")
-
-            if corrected_time or corrected_date or corrected_dur:
-                if corrected_time:
-                    details["time"] = corrected_time
-                if corrected_date:
-                    details["date"] = corrected_date
-                if corrected_dur:
-                    duration = correction["duration_minutes"]
-
-                self.worker.editor_logging_handler.info(
-                    f"[GCal] User corrected: time={details['time']} date={details['date']} dur={duration}"
-                )
-
-                date_label = friendly_date_label(details["date"])
-                time_label = self.format_time_for_speech(details["time"])
-
-                response2 = await self.capability_worker.run_io_loop(
-                    f"Got it, {time_label} {date_label} instead. Good?"
-                )
-                confirmed = self.interpret_yes_no(response2)
-                if not confirmed:
-                    await self.capability_worker.speak("No worries, scrapping that.")
-                    return
-            elif followup:
-                await self.dispatch_followup(followup)
-                return
-            else:
-                await self.capability_worker.speak("No worries, scrapping that.")
-                return
-
-        # --- Build ISO datetimes ---
+        # ── Create ──
+        await self.capability_worker.speak("Creating your event now...")
         try:
-            start_dt = datetime.strptime(f"{details['date']} {details['time']}", "%Y-%m-%d %H:%M")
-            end_dt = start_dt + timedelta(minutes=duration)
-            start_iso = start_dt.strftime("%Y-%m-%dT%H:%M:%S")
-            end_iso = end_dt.strftime("%Y-%m-%dT%H:%M:%S")
-        except Exception as e:
-            self.worker.editor_logging_handler.error(f"[GCal] Date parse error: {e}")
-            await self.capability_worker.speak("Something got mixed up with the date. Let's try that again.")
-            return
-
-        self.worker.editor_logging_handler.info(
-            f"[GCal] Scheduling: {details['summary']} from {start_iso} to {end_iso}"
-        )
-
-        # --- Conflict check ---
-        conflicts = self.detect_conflicts(start_iso, end_iso)
-        if conflicts:
-            warning = self.format_conflict_warning(conflicts)
-            self.worker.editor_logging_handler.info(f"[GCal] Conflict detected: {[c.get('summary') for c in conflicts]}")
-            conflict_response = await self.capability_worker.run_io_loop(
-                f"{warning} Want me to schedule it anyway?"
+            created = create_event(
+                service=service,
+                title=title,
+                description="",
+                start_dt=start_dt,
+                end_dt=end_dt,
+                timezone_str=tz,
+                attendees=attendees,
+                location=location,
+                reminder_minutes=reminder_minutes,
+                add_google_meet=add_meet,
             )
-            if not self.interpret_yes_no(conflict_response):
-                await self.capability_worker.speak("Alright, didn't schedule it.")
-                return
+            self.worker.editor_logging_handler.error(f"Quick event created: {created.get('id')}")
 
-        await self.capability_worker.speak("One sec.")
-        self.last_api_error = ""
-        event = self.create_event(
-            summary=details["summary"],
-            start_iso=start_iso,
-            end_iso=end_iso,
-            description=details.get("description", ""),
-            attendees=attendees if attendees else None,
-            recurring_weekly=recurring_weekly,
-        )
+            meet_link = ""
+            for ep in created.get("conferenceData", {}).get("entryPoints", []):
+                if ep.get("entryPointType") == "video":
+                    meet_link = ep.get("uri", "")
+                    break
 
-        if event:
-            self.last_event = event
-            event_link = event.get("htmlLink", "")
-            self.worker.editor_logging_handler.info(f"[GCal] Event link: {event_link}")
-            if recurring_weekly:
-                done_msg = f"Done. {details['summary']} is locked in as a weekly recurring event."
-            else:
-                done_msg = f"All set. {details['summary']} is on your calendar."
+            summary = f"Done! '{title}' has been created"
+            if meet_link:
+                summary += " with a Google Meet link"
             if attendees:
-                names_str = " and ".join(a["name"] for a in attendees)
-                done_msg += f" {names_str} will get an invite."
+                count = len(attendees)
+                summary += f". Invites sent to {count} {'person' if count == 1 else 'people'}"
+            summary += "."
+            await self.capability_worker.speak(summary)
+        except HttpError as e:
+            await self.capability_worker.speak(f"Sorry, there was a problem: {e.reason}")
 
-            # Save per-event reminder override if user specified one
-            reminder_mins = details.get("reminder_minutes")
-            if reminder_mins and isinstance(reminder_mins, int) and reminder_mins > 0:
-                event_id = event.get("id", "")
-                if event_id:
-                    await self.save_event_reminder(event_id, reminder_mins)
-                    done_msg += f" I'll remind you {reminder_mins} minutes before."
+    async def _flow_create_detailed(
+        self, service, tz: str,
+        pre_title: Optional[str] = None,
+        pre_start: Optional[str] = None
+    ) -> None:
+        """Full step-by-step create flow, optionally pre-filling title/start."""
+        # Title
+        if pre_title:
+            await self.capability_worker.speak(f"Got it, '{pre_title}'.")
+            title = pre_title
+        else:
+            title_raw = await self._ask("What should we call it?")
+            title = self.capability_worker.text_to_text_response(
+                f"The user said: \"{title_raw}\"\n"
+                "Extract ONLY the event title or name they mentioned.\n"
+                "Strip filler words like 'call it', 'name it', 'title is', 'let's call it'.\n"
+                "Examples: 'call it team standup' → 'Team Standup', 'it's a dentist appointment' → 'Dentist Appointment'\n"
+                "Reply with ONLY the clean title, nothing else."
+            ).strip().rstrip(".,!?;:")
+            title = title if title else title_raw
+            self.worker.editor_logging_handler.error(f"Extracted title: '{title}'")
 
-            await self.capability_worker.speak(done_msg)
-            await self.refresh_schedule_md()
+        # Description
+        description_raw = await self._ask("Would you like to add a description? If not, say skip.")
+        desc_words = re.sub(r"[^\w\s]", "", description_raw.lower()).strip().split()
+        if desc_words == "skip":
+            description = ""
+        else:
+            description = description_raw
 
-            # Dispatch any follow-up from the confirmation response
-            if followup:
-                await self.dispatch_followup(followup)
+        # Start date/time
+        if pre_start:
+            await self.capability_worker.speak(f"Using start time: {pre_start}. One moment.")
+            start_dt = self._parse_datetime_with_llm(pre_start, tz)
+        else:
+            start_raw = await self._ask("When does it start? For example, 'tomorrow at 3 PM'.")
+            await self.capability_worker.speak("Got it, one moment.")
+            start_dt = self._parse_datetime_with_llm(start_raw, tz)
+
+        while True:
+            if not self._is_valid_iso_dt(start_dt):
+                start_raw = await self._ask("I couldn't parse that. Try again, like 'Friday at 2 PM'.")
+                await self.capability_worker.speak("Got it, one moment.")
+                start_dt = self._parse_datetime_with_llm(start_raw, tz)
+                continue
+            dt_naive = datetime.fromisoformat(start_dt).replace(tzinfo=None)
+            now_local = datetime.now(ZoneInfo(tz)).replace(tzinfo=None)
+            
+            if dt_naive.hour == 0 and dt_naive.minute == 0 and dt_naive.second == 0:
+                has_time = self.capability_worker.text_to_text_response(
+                    f"The user said: \"{start_raw}\"\n"
+                    "Does this explicitly mention a specific time of day?\n"
+                    "YES examples: '12am', 'midnight', '12:00 AM', 'noon', '12pm', '3 PM', 'half past two'\n"
+                    "NO examples: 'tomorrow', 'next Friday', 'March 15th', 'this weekend'\n"
+                    "Reply with exactly one word: YES or NO"
+                ).strip().upper()
+                if "YES" not in has_time:
+                    start_raw = await self._ask(
+                        "Please include a specific time as well, like 'tomorrow at 3 PM'."
+                    )
+                    await self.capability_worker.speak("Got it, one moment.")
+                    start_dt = self._parse_datetime_with_llm(start_raw, tz)
+                    continue
+            if dt_naive < now_local:
+                start_raw = await self._ask(
+                    "That time has already passed. Please choose a future date and time."
+                )
+                await self.capability_worker.speak("Got it, one moment.")
+                start_dt = self._parse_datetime_with_llm(start_raw, tz)
+                continue
+            break
+
+        # End date/time
+        end_raw = await self._ask("When does it end?")
+        await self.capability_worker.speak("Got it, one moment.")
+        end_dt = self._parse_datetime_with_llm(end_raw, tz, reference_dt=start_dt)
+        while True:
+            if not self._is_valid_iso_dt(end_dt):
+                end_raw = await self._ask("I couldn't parse that end time. Please try again.")
+                end_dt = self._parse_datetime_with_llm(end_raw, tz, reference_dt=start_dt)
+                continue
+            if datetime.fromisoformat(end_dt) <= datetime.fromisoformat(start_dt):
+                end_raw = await self._ask(
+                    f"The end time must be after the start at {start_dt[11:16]}. When should it end?"
+                )
+                end_dt = self._parse_datetime_with_llm(end_raw, tz, reference_dt=start_dt)
+                continue
+            break
+        self.worker.editor_logging_handler.error(f"End time: {end_dt}")
+
+        # Attendees
+        attendees: list = []
+        want_attendee = await self._ask_yes_no("Would you like to add an attendee?")
+        while want_attendee:
+            raw_email_input = await self._ask(
+                "Please say the email address. You can spell it out."
+            )
+            email = self._extract_email_with_llm(raw_email_input)
+            if email:
+                attendees.append(email)
+                await self.capability_worker.speak(f"Got it. Added {email}.")
+            else:
+                await self.capability_worker.speak("I couldn't recognise that email. Let's try again.")
+                raw_email_input = await self._ask("Please spell it out clearly.")
+                email = self._extract_email_with_llm(raw_email_input)
+                if email:
+                    attendees.append(email)
+                    await self.capability_worker.speak(f"Got it. Added {email}.")
+                else:
+                    await self.capability_worker.speak("I still couldn't get that — skipping.")
+            want_attendee = await self._ask_yes_no("Would you like to add another attendee?")
+
+        # Location
+        location     = ""
+        want_location = await self._ask_yes_no("Would you like to add a location?")
+        if want_location:
+            location_raw = await self._ask("What is the location?")
+            location = self._normalize_location(location_raw.strip())
+        else:
+            location = ""
+        
+        add_meet     = await self._ask_yes_no("Should I add a Google Meet video call link?")
+        
+        # Reminder
+        reminder_raw = await self._ask("When should I remind you? Say skip to default to an hour before.")
+        reminder_minutes_str = self.capability_worker.text_to_text_response(
+            f"The user said: \"{reminder_raw}\"\n"
+            "Extract the reminder duration in minutes as an integer.\n"
+            "Examples: 'half an hour' → 30, 'an hour' → 60, '15 mins' → 15, 'skip' or unclear → 60.\n"
+            "Reply with ONLY the integer, nothing else."
+        ).strip()
+        reminder_nums = re.findall(r"\d+", reminder_minutes_str)
+        reminder_minutes = int(reminder_nums[0]) if reminder_nums else 60
+
+
+        await self.capability_worker.speak("Creating your event now...")
+        try:
+            created = create_event(
+                service=service,
+                title=title,
+                description=description,
+                start_dt=start_dt,
+                end_dt=end_dt,
+                timezone_str=tz,
+                attendees=attendees,
+                location=location,
+                reminder_minutes=reminder_minutes,
+                add_google_meet=add_meet,
+            )
+            self.worker.editor_logging_handler.error(f"Detailed event created: {created.get('id')}")
+
+            meet_link = ""
+            for ep in created.get("conferenceData", {}).get("entryPoints", []):
+                if ep.get("entryPointType") == "video":
+                    meet_link = ep.get("uri", "")
+                    break
+
+            summary = f"Done! I created '{title}'"
+            if meet_link:
+                summary += ". A Google Meet link has been added"
+            if attendees:
+                count = len(attendees)
+                summary += f". Invited {count} {'person' if count == 1 else 'people'}"
+            summary += "."
+            await self.capability_worker.speak(summary)
+        except HttpError as e:
+            await self.capability_worker.speak(f"Sorry, there was a problem creating the event: {e.reason}")
+
+    # -------------------- List Events --------------------
+    async def _flow_list_events(self, service, tz: str, raw_utterance: str = "") -> None:
+        now_str = datetime.now().strftime("%Y-%m-%d %H:%M")
+        
+        classify_prompt = (
+            f"Current date/time: {now_str}, timezone: {tz}.\n"
+            f"The user said: \"{raw_utterance}\"\n"
+            "Classify their calendar listing intent and extract any date info.\n"
+            "Reply with ONLY a JSON object, no markdown, no explanation:\n"
+            "{\n"
+            "  \"type\": \"today\" | \"this_week\" | \"this_month\" | \"specific_date\" | \"date_range\" | \"upcoming\",\n"
+            "  \"date\": \"YYYY-MM-DD or null\",\n"
+            "  \"date_from\": \"YYYY-MM-DD or null\",\n"
+            "  \"date_to\": \"YYYY-MM-DD or null\",\n"
+            "  \"n\": <number or null>\n"
+            "}"
+        )
+        raw_json = self.capability_worker.text_to_text_response(classify_prompt).strip()
+        raw_json = re.sub(r"```(?:json)?", "", raw_json).strip().rstrip("`").strip()
+        self.worker.editor_logging_handler.error(f"List intent classification: {raw_json}")
+
+        try:
+            parsed = json.loads(raw_json)
+        except Exception:
+            parsed = {"type": "unknown"}
+
+        sub_type = parsed.get("type", "unknown")
+        now_utc = datetime.now(timezone.utc)
+
+        # If ambiguous, ask once
+        if sub_type == "unknown":
+            choice = (await self._ask(
+                "Would you like today's events, this week's, this month's, "
+                "events for a specific date, a date range, or upcoming events?"
+            )).lower()
+            sub_type = self.capability_worker.text_to_text_response(
+                f"The user said: \"{choice}\"\n"
+                "Classify their calendar listing intent.\n"
+                "Examples:\n"
+                "  'what's on today' → today\n"
+                "  'what do I have on' → today\n"
+                "  'this week' / 'next few days' / 'what's coming up this week' → this_week\n"
+                "  'this month' / 'rest of the month' → this_month\n"
+                "  'on the 15th' / 'next Friday' / 'March 20th' → specific_date\n"
+                "  'from Monday to Thursday' / 'between the 1st and 5th' → date_range\n"
+                "  'what's next' / 'coming up' / 'my next few events' → upcoming\n"
+                "Reply with exactly one word: today, this_week, this_month, specific_date, date_range, or upcoming."
+            ).strip().lower()
+
+        # Execute sub-type
+        if sub_type == "today":
+            self.worker.editor_logging_handler.error("Listing today's events")
+            start_of_day = now_utc.replace(hour=0, minute=0, second=0, microsecond=0)
+            end_of_day = start_of_day + timedelta(days=1)
+            events = list_events(service, start_of_day.isoformat(), end_of_day.isoformat())
+            if not events:
+                await self.capability_worker.speak("You have no events scheduled for today.")
+            else:
+                await self.capability_worker.speak(f"You have {len(events)} events today.")
+                for ev in events:
+                    await self.capability_worker.speak(_format_event_for_speech(ev))
+
+        elif sub_type == "specific_date":
+            date_str = parsed.get("date")
+            # If LLM already extracted the date, use it — otherwise ask
+            if not date_str:
+                date_raw = await self._ask("Which date would you like to check?")
+                date_str = self._parse_datetime_with_llm(date_raw + " 00:00", tz)
+                if date_str:
+                    date_str = date_str[:10]  # keep YYYY-MM-DD only
+            self.worker.editor_logging_handler.error(f"Specific date: {date_str}")
+            if not date_str:
+                await self.capability_worker.speak("I couldn't understand that date. Please try again.")
+                return
+            start_dt = datetime.fromisoformat(date_str).replace(tzinfo=timezone.utc)
+            end_dt = start_dt + timedelta(days=1)
+            events = list_events(service, start_dt.isoformat(), end_dt.isoformat())
+            if not events:
+                readable = datetime.fromisoformat(date_str).strftime("%B %d")
+                await self.capability_worker.speak(f"Nothing on {readable}.")
+            else:
+                await self.capability_worker.speak(f"Found {len(events)} events on {date_str}.")
+                for ev in events:
+                    await self.capability_worker.speak(_format_event_for_speech(ev))
+
+        elif sub_type == "date_range":
+            from_str = parsed.get("date_from")
+            to_str   = parsed.get("date_to")
+            # Ask for any missing piece
+            if not from_str:
+                raw = await self._ask("What is the start date of the range?")
+                result = self._parse_datetime_with_llm(raw + " 00:00", tz)
+                from_str = result[:10] if result else None
+            if not to_str:
+                raw = await self._ask("What is the end date of the range?")
+                result = self._parse_datetime_with_llm(raw + " 23:59", tz)
+                to_str = result[:10] if result else None
+            self.worker.editor_logging_handler.error(f"Date range: {from_str} → {to_str}")
+            if not from_str or not to_str:
+                await self.capability_worker.speak("I couldn't parse those dates. Please try again.")
+                return
+            from_dt = datetime.fromisoformat(from_str).replace(tzinfo=timezone.utc)
+            to_dt   = datetime.fromisoformat(to_str).replace(hour=23, minute=59, tzinfo=timezone.utc)
+            events  = list_events(service, from_dt.isoformat(), to_dt.isoformat(), max_results=20)
+            if not events:
+                await self.capability_worker.speak("No events found in that range.")
+            else:
+                await self.capability_worker.speak(f"Found {len(events)} event(s) between {from_str} and {to_str}.")
+                for ev in events:
+                    await self.capability_worker.speak(_format_event_for_speech(ev))
+
+        elif sub_type == "this_week":
+            # Monday→Sunday of the current week
+            today = now_utc.replace(hour=0, minute=0, second=0, microsecond=0)
+            week_start = today - timedelta(days=today.weekday())          # Monday
+            week_end   = week_start + timedelta(days=7)
+            self.worker.editor_logging_handler.error(f"Listing this week: {week_start.date()} → {week_end.date()}")
+            events = list_events(service, now_utc.isoformat(), week_end.isoformat(), max_results=50)
+            if not events:
+                await self.capability_worker.speak("You have no events this week.")
+            else:
+                await self.capability_worker.speak(f"You have {len(events)} event(s) this week.")
+                for ev in events:
+                    await self.capability_worker.speak(_format_event_for_speech(ev))
+
+        elif sub_type == "this_month":
+            today = now_utc.replace(hour=0, minute=0, second=0, microsecond=0)
+            month_start = today.replace(day=1)
+            # First day of next month
+            if today.month == 12:
+                month_end = today.replace(year=today.year + 1, month=1, day=1)
+            else:
+                month_end = today.replace(month=today.month + 1, day=1)
+            self.worker.editor_logging_handler.error(f"Listing this month: {month_start.date()} → {month_end.date()}")
+            events = list_events(service, now_utc.isoformat(), month_end.isoformat(), max_results=100)
+            if not events:
+                await self.capability_worker.speak("You have no events this month.")
+            else:
+                await self.capability_worker.speak(f"You have {len(events)} event(s) this month.")
+                for ev in events:
+                    await self.capability_worker.speak(_format_event_for_speech(ev))
+
+        else:  # upcoming
+            n = parsed.get("n") or 5
+            self.worker.editor_logging_handler.error(f"Listing next {n} upcoming events")
+            far_future = (now_utc + timedelta(days=365)).isoformat()
+            events = list_events(service, now_utc.isoformat(), far_future, max_results=n)
+            if not events:
+                await self.capability_worker.speak("You have no upcoming events.")
+            else:
+                await self.capability_worker.speak(f"Here are your next {len(events)} events.")
+                for ev in events:
+                    await self.capability_worker.speak(_format_event_for_speech(ev))
+
+    # -------------------- Update Event --------------------
+    async def _flow_update_event(self, service, tz: str, raw_utterance: str = "") -> None:
+        now_utc = datetime.now(timezone.utc)
+        one_month = (now_utc + timedelta(days=30)).isoformat()
+        all_events = list_events(service, now_utc.isoformat(), one_month, max_results=50)
+
+        if not all_events:
+            await self.capability_worker.speak("You have no upcoming events to update.")
+            return
+
+        event_list_str = "\n".join(
+            [f"- id: {ev['id']} | title: {ev.get('summary', 'Untitled')}" for ev in all_events]
+        )
+
+        event = None
+        changes_raw = ""
+
+        # ── Step 1: Try to extract event name from trigger phrase ──
+        if raw_utterance:
+            extract_prompt = (
+                f"The user said: \"{raw_utterance}\"\n"
+                f"Here are all upcoming calendar events:\n{event_list_str}\n\n"
+                "Extract the event they want to update AND any changes they already mentioned.\n"
+                "Match the event name using case-insensitive, partial, and phonetic matching.\n"
+                "For example 'meeting' and 'gathering' are phonetic somewhat similar yet very different"
+                "Reply with ONLY a JSON object, no markdown:\n"
+                "{\n"
+                "  \"extracted_name\": \"event name they mentioned, or null if none\",\n"
+                "  \"matched_id\": \"matching event id, or null if no match\",\n"
+                "  \"has_changes\": true or false,\n"
+                "  \"changes_summary\": \"verbatim portion of the message describing what to change, or null\"\n"
+                "}"
+            )
+            raw_result = self.capability_worker.text_to_text_response(extract_prompt).strip()
+            raw_result = re.sub(r"```(?:json)?", "", raw_result).strip().rstrip("`").strip()
+            self.worker.editor_logging_handler.error(f"Update trigger extract: {raw_result}")
+
+            try:
+                match_data = json.loads(raw_result)
+            except Exception:
+                match_data = {}
+
+            extracted_name  = match_data.get("extracted_name")
+            matched_id      = match_data.get("matched_id")
+            has_changes     = bool(match_data.get("has_changes", False))
+            changes_summary = match_data.get("changes_summary")
+
+            # Clean nulls
+            for key in ["extracted_name", "matched_id", "changes_summary"]:
+                val = match_data.get(key)
+                if isinstance(val, str) and val.lower() in ("null", "none", ""):
+                    if key == "extracted_name": extracted_name = None
+                    elif key == "matched_id": matched_id = None
+                    elif key == "changes_summary": changes_summary = None
+
+            self.worker.editor_logging_handler.error(
+                f"Update → extracted: '{extracted_name}' | matched: '{matched_id}' | "
+                f"has_changes: {has_changes} | changes: '{changes_summary}'"
+            )
+
+            if extracted_name and matched_id:
+                event = next((ev for ev in all_events if ev["id"] == matched_id), None)
+                if event and has_changes and changes_summary:
+                    # Changes already in trigger — skip asking
+                    changes_raw = changes_summary
+                    self.worker.editor_logging_handler.error("Changes extracted from trigger, skipping ask")
+                elif event:
+                    # Event found but no changes in trigger — ask what to change with field menu
+                    await self.capability_worker.speak(
+                        f"Got '{event.get('summary', 'Untitled')}'. What do you want to change?"
+                    )
+                    changes_raw = await self.capability_worker.user_response()
+
+            elif extracted_name and not matched_id:
+                options_text = ", ".join([ev.get("summary", "Untitled") for ev in all_events[:3]])
+
+                await self.capability_worker.speak(
+                    f"I couldn't find an event called '{extracted_name}'. "
+                    f"Your upcoming events are: {options_text}."
+                )
+
+        # ── Step 2: If event not resolved yet, ask which event + what to change in one go ──
+        if not event:
+            combined_raw = await self._ask(
+                "Which event, and what do you want to change?"
+            )
+            self.worker.editor_logging_handler.error(f"Combined update input: '{combined_raw}'")
+
+            pick_prompt = (
+                f"The user said: \"{combined_raw}\"\n"
+                f"Here are all upcoming calendar events:\n{event_list_str}\n\n"
+                "Which event are they referring to? Use case-insensitive, partial, and phonetic matching.\n"
+                "Reply with ONLY the event id, or NONE."
+            )
+            matched_id = self.capability_worker.text_to_text_response(pick_prompt).strip().rstrip(".,!?;:")
+            event = next((ev for ev in all_events if ev["id"] == matched_id), None)
+
+            if not event:
+                options_text = ", ".join(
+                    [f"option {i+1}: {ev.get('summary', 'Untitled')}" for i, ev in enumerate(all_events[:5])]
+                )
+                pick_raw = await self._ask(
+                    f"I couldn't find that event. Your next 5 events are: {options_text}. Which one?"
+                )
+                pick_result = self.capability_worker.text_to_text_response(
+                    f"The user said: \"{pick_raw}\". There are up to 5 options. "
+                    "Reply with ONLY the integer (1-based) of the chosen option."
+                ).strip()
+                nums = re.findall(r"\d+", pick_result)
+                idx = max(0, min(int(nums[0]) - 1 if nums else 0, len(all_events[:5]) - 1))
+                event = all_events[idx]
+
+            # The combined input already contains what to change — reuse it
+            changes_raw = combined_raw
+        elif not changes_raw:
+            # Event resolved from trigger but no changes mentioned — ask what to change
+            await self.capability_worker.speak(
+                f"Got '{event.get('summary', 'Untitled')}'. What do you want to change?"
+            )
+            changes_raw = await self.capability_worker.user_response()
+        # else: changes_raw already populated from trigger — proceed directly
+
+        self.worker.editor_logging_handler.error(f"Updating event: '{event.get('summary')}' | changes: '{changes_raw}'")
+
+        # ── Step 3: Extract fields + values from changes_raw ──
+        def _classify_changes(text: str) -> dict:
+            classify_prompt = (
+                f"The user wants to update a calendar event and said: \"{text}\"\n"
+                "Extract what they want to change and any values they already provided.\n"
+                "For Google Meet: if they say 'add meet', 'add video call', set add_meet=true. "
+                "If they say 'remove meet', 'remove video call', set remove_meet=true.\n"
+                "Natural language examples and their field mappings:\n"
+                "  'bump it to 3 PM' / 'push it to Thursday' → start_time or date\n"
+                "  'move it back an hour' → start_time + end_time\n"
+                "  'rename it to kickoff' → title\n"
+                "  'add John to it' / 'invite sarah at gmail' → add_attendee\n"
+                "  'drop the meet link' / 'remove video call' → remove_meet\n"
+                "  'remind me earlier' / 'set a reminder for 30 minutes' → reminder\n"
+                "Reply with ONLY a JSON object, no markdown:\n"
+                "{\n"
+                "  \"fields\": [list from: \"title\", \"description\", \"start_time\", \"end_time\", \"date\", \"location\", \"add_attendee\", \"remove_attendee\", \"update_attendee\", \"reminder\", \"add_meet\", \"remove_meet\"],\n"
+                "  \"new_title\": \"extracted new title or null\",\n"
+                "  \"new_description\": \"extracted new description or null\",\n"
+                "  \"new_start_time\": \"extracted start time in natural language or null\",\n"
+                "  \"new_end_time\": \"extracted end time in natural language or null\",\n"
+                "  \"new_date\": \"extracted date in natural language or null\",\n"
+                "  \"new_location\": \"extracted location or null\",\n"
+                "  \"new_attendees\": [\"email1\", \"email2\"] or [],\n"
+                "  \"reminder_minutes\": \"extracted number or null\"\n"
+                "}"
+            )
+            raw = self.capability_worker.text_to_text_response(classify_prompt).strip()
+            raw = re.sub(r"```(?:json)?", "", raw).strip().rstrip("`").strip()
+            self.worker.editor_logging_handler.error(f"Update fields extracted: {raw}")
+            try:
+                return json.loads(raw)
+            except Exception:
+                return {"fields": []}
+
+        extracted = _classify_changes(changes_raw)
+        fields = extracted.get("fields", [])
+
+        # ── Step 4: Apply changes in a loop ──
+        while True:
+            updates: dict = {}
+
+            if "title" in fields:
+                new_title = extracted.get("new_title")
+                if new_title:
+                    await self.capability_worker.speak(f"Got it, renaming to '{new_title}'.")
+                    updates["summary"] = new_title
+                else:
+                    updates["summary"] = await self._ask("What should the new title be?")
+
+            if "description" in fields:
+                new_desc = extracted.get("new_description")
+                # Guard against LLM returning placeholder text instead of null
+                if new_desc and len(new_desc) < 500 and "extracted" not in new_desc.lower() and "null" not in new_desc.lower():
+                    updates["description"] = new_desc
+                else:
+                    updates["description"] = await self._ask("What should the new description be?")
+            
+            if "location" in fields:
+                new_location = extracted.get("new_location")
+                # Guard against LLM placeholder values
+                if new_location and str(new_location).lower().strip() not in ("null", "none", "extracted new location", ""):
+                    normalized = self._normalize_location(new_location)
+                    await self.capability_worker.speak(f"Got it, setting location to '{normalized}'.")
+                else:
+                    raw_loc = await self._ask("What should the new location be?")
+                    normalized = self._normalize_location(raw_loc.strip())
+                    await self.capability_worker.speak(f"Got it, setting location to '{normalized}'.")
+                updates["location"] = normalized
+
+            if "start_time" in fields and "end_time" not in fields:
+                new_start_raw = extracted.get("new_start_time") or await self._ask("What is the new start time?")
+                new_start_dt = self._parse_datetime_with_llm(new_start_raw, tz)
+                if new_start_dt:
+                    updates["start"] = {"dateTime": new_start_dt, "timeZone": tz}
+                    existing_start = event.get("start", {}).get("dateTime", "")
+                    existing_end   = event.get("end",   {}).get("dateTime", "")
+                    if existing_start and existing_end:
+                        duration = datetime.fromisoformat(existing_end.replace("Z", "+00:00")) - \
+                                datetime.fromisoformat(existing_start.replace("Z", "+00:00"))
+                        new_end = datetime.fromisoformat(new_start_dt) + duration
+                        updates["end"] = {"dateTime": new_end.isoformat(), "timeZone": tz}
+
+            if "end_time" in fields and "start_time" not in fields:
+                new_end_raw = extracted.get("new_end_time") or await self._ask("What is the new end time?")
+                new_end_dt = self._parse_datetime_with_llm(new_end_raw, tz)
+                if new_end_dt:
+                    updates["end"] = {"dateTime": new_end_dt, "timeZone": tz}
+                    existing_start = event.get("start", {}).get("dateTime", "")
+                    if existing_start and "start" not in updates:
+                        updates["start"] = {"dateTime": existing_start, "timeZone": tz}
+
+            if "start_time" in fields and "end_time" in fields:
+                new_start_raw = extracted.get("new_start_time") or await self._ask("What is the new start time?")
+                new_start_dt  = self._parse_datetime_with_llm(new_start_raw, tz)
+                new_end_raw   = extracted.get("new_end_time")   or await self._ask("What is the new end time?")
+                new_end_dt    = self._parse_datetime_with_llm(new_end_raw, tz, reference_dt=new_start_dt)
+                if new_start_dt:
+                    updates["start"] = {"dateTime": new_start_dt, "timeZone": tz}
+                if new_end_dt:
+                    updates["end"] = {"dateTime": new_end_dt, "timeZone": tz}
+
+            if "date" in fields and "start_time" not in fields and "end_time" not in fields:
+                new_date_raw    = extracted.get("new_date") or await self._ask("What is the new date?")
+                new_date_parsed = self._parse_datetime_with_llm(new_date_raw, tz)
+                existing_start  = event.get("start", {}).get("dateTime", "")
+                existing_end    = event.get("end",   {}).get("dateTime", "")
+                if new_date_parsed and existing_start:
+                    old_start = datetime.fromisoformat(existing_start.replace("Z", "+00:00"))
+                    old_end   = datetime.fromisoformat(existing_end.replace("Z", "+00:00"))
+                    duration  = old_end - old_start
+                    new_start = datetime.fromisoformat(new_date_parsed).replace(
+                        hour=old_start.hour, minute=old_start.minute, second=0
+                    )
+                    updates["start"] = {"dateTime": new_start.isoformat(), "timeZone": tz}
+                    updates["end"]   = {"dateTime": (new_start + duration).isoformat(), "timeZone": tz}
+
+            if "add_meet" in fields:
+                updates["conferenceData"] = {
+                    "createRequest": {
+                        "requestId": f"gcal-update-{int(datetime.now().timestamp())}",
+                        "conferenceSolutionKey": {"type": "hangoutsMeet"},
+                    }
+                }
+                await self.capability_worker.speak("Got it, adding a Google Meet link.")
+
+            if "remove_meet" in fields:
+                updates["conferenceData"] = {}
+                await self.capability_worker.speak("Got it, removing the Google Meet link.")
+
+            if "add_attendee" in fields:
+                new_emails = [e for e in extracted.get("new_attendees", []) if e and "@" in e]
+                # Confirm pre-extracted emails
+                for email in new_emails:
+                    await self.capability_worker.speak(f"Got it. Adding {email}.")
+                # Then ask for more
+                adding = await self._ask_yes_no("Would you like to add another attendee?") if new_emails else True
+                while adding:
+                    raw_email = await self._ask("Say the email address to add, or spell it out.")
+                    email = self._extract_email_with_llm(raw_email)
+                    if email:
+                        new_emails.append(email)
+                        await self.capability_worker.speak(f"Got it. Adding {email}.")
+                    else:
+                        await self.capability_worker.speak("I couldn't recognise that email, skipping.")
+                    adding = await self._ask_yes_no("Add another attendee?")
+                existing = [a["email"] for a in event.get("attendees", [])]
+                updates["attendees"] = [{"email": e} for e in list(set(existing + new_emails))]
+
+            if "remove_attendee" in fields:
+                existing = [a["email"] for a in event.get("attendees", [])]
+                if not existing:
+                    await self.capability_worker.speak("This event has no attendees to remove.")
+                else:
+                    to_remove = []
+                    removing = True
+                    while removing:
+                        raw_email = await self._ask("Say the email address to remove.")
+                        email = self._extract_email_with_llm(raw_email)
+                        if email:
+                            to_remove.append(email)
+                            await self.capability_worker.speak(f"Got it. Removing {email}.")
+                        else:
+                            await self.capability_worker.speak("I couldn't recognise that email, skipping.")
+                        removing = await self._ask_yes_no("Remove another attendee?")
+                    updates["attendees"] = [{"email": e} for e in existing if e not in to_remove]
+
+            if "update_attendee" in fields:
+                existing = [a["email"] for a in event.get("attendees", [])]
+                if not existing:
+                    await self.capability_worker.speak("This event has no attendees to update.")
+                else:
+                    old_raw   = await self._ask("Say the old email address to replace.")
+                    old_email = self._extract_email_with_llm(old_raw)
+                    if old_email and old_email in existing:
+                        new_raw   = await self._ask("Say the new email address.")
+                        new_email = self._extract_email_with_llm(new_raw)
+                        if new_email:
+                            updates["attendees"] = [
+                                {"email": new_email if e == old_email else e} for e in existing
+                            ]
+                            await self.capability_worker.speak(f"Replaced {old_email} with {new_email}.")
+                        else:
+                            await self.capability_worker.speak("Couldn't recognise the new email, skipping.")
+                    else:
+                        await self.capability_worker.speak("Couldn't find that attendee on the event.")
+
+            if "reminder" in fields:
+                mins = extracted.get("reminder_minutes")
+                if mins:
+                    reminder_minutes = int(str(mins))
+                else:
+                    reminder_raw = await self._ask("How many minutes before should the reminder fire?")
+                    reminder_str = self.capability_worker.text_to_text_response(
+                        f"The user said: \"{reminder_raw}\"\n"
+                        "Extract the reminder duration in minutes as an integer.\n"
+                        "Examples: 'half an hour' → 30, 'an hour' → 60, '15 mins' → 15, 'skip' or unclear → 60.\n"
+                        "Reply with ONLY the integer, nothing else."
+                    ).strip()
+                    nums = re.findall(r"\d+", reminder_str)
+                    reminder_minutes = int(nums[0]) if nums else 60
+
+                updates["reminders"] = {
+                    "useDefault": False,
+                    "overrides": [
+                        {"method": "email",  "minutes": reminder_minutes},
+                        {"method": "popup",  "minutes": reminder_minutes},
+                    ],
+                }
+                await self.capability_worker.speak(f"Got it, reminder set to {reminder_minutes} minutes.")
+
+            # ── Apply ──
+            if not updates:
+                await self.capability_worker.speak("I didn't catch what you'd like to change. Please try again.")
+            else:
+                try:
+                    conference_version = 1 if "conferenceData" in updates else 0
+                    updated_body = service.events().get(calendarId="primary", eventId=event["id"]).execute()
+                    updated_body.update(updates)
+                    event = service.events().update(
+                        calendarId="primary",
+                        eventId=event["id"],
+                        body=updated_body,
+                        conferenceDataVersion=conference_version,
+                        sendUpdates="all",
+                    ).execute()
+                    await self.capability_worker.speak(f"Done! '{event.get('summary', 'the event')}' has been updated.")
+                    self.worker.editor_logging_handler.error(f"Event updated: {event.get('id')}")
+                except HttpError as e:
+                    await self.capability_worker.speak("Something went wrong on my end. Try again in a moment.")
+                    self.worker.editor_logging_handler.error(f"HttpError: {e.reason}")
+                    
+            # ── Ask for more changes ──
+            next_raw = await self._ask("Anything else to change? Or say done to finish.")
+            done_check = self.capability_worker.text_to_text_response(
+                f"The user said: \"{next_raw}\"\n"
+                "Are they done or do they want more changes?\n"
+                "DONE examples: 'done', 'that's it', 'all good', 'we're good', 'that's all', 'nothing else', 'no', 'nope', 'finished'\n"
+                "CONTINUE examples: 'also change', 'and update', 'one more thing', 'actually', 'wait'\n"
+                "Reply with exactly one word: DONE or CONTINUE"
+            ).strip().upper()
+            if done_check.strip() == "DONE":
+                break
+
+            extracted = _classify_changes(next_raw)
+            fields = extracted.get("fields", [])
+
+    # -------------------- Delete Event --------------------
+    async def _flow_delete_event(self, service, tz: str, raw_utterance: str = "") -> None:
+        # ── Step 1: Fetch all events in the next 30 days ──
+        now_utc = datetime.now(timezone.utc)
+        one_month = (now_utc + timedelta(days=30)).isoformat()
+        all_events = list_events(service, now_utc.isoformat(), one_month, max_results=50)
+
+        if not all_events:
+            await self.capability_worker.speak("You have no upcoming events to delete.")
+            return
+
+        event_list_str = "\n".join(
+            [f"- id: {ev['id']} | title: {ev.get('summary', 'Untitled')}" for ev in all_events]
+        )
+        self.worker.editor_logging_handler.error(f"Fetched {len(all_events)} events for delete match")
+
+        # ── Step 2: Check if trigger phrase already contains an event name ──
+        if raw_utterance:
+            intent_prompt = (
+                f"The user said: \"{raw_utterance}\"\n"
+                f"Here are all upcoming calendar events in the next 30 days:\n"
+                f"{event_list_str}\n\n"
+                "Did the user clearly mention a specific event name?\n"
+                "Rules for extracted_name:\n"
+                "  - Only extract if the user actually said an event name or title\n"
+                "  - Do NOT extract vague descriptions like 'the night event', 'my meeting', 'some event'\n"
+                "  - If no clear event name was spoken, set extracted_name to null\n"
+                "Rules for matched_id:\n"
+                "  - Only match if the extracted name closely matches a calendar event (exact, near-exact, or clear voice transcription error)\n"
+                "  - Do NOT match based on themes, loose associations, or vague similarity\n"
+                "  - For example: 'diner' → 'dinner' is OK. 'night event' → 'dinner' is NOT OK\n"
+                "  - If no confident match exists, set matched_id to null\n"
+                "Reply with ONLY a JSON object, no markdown:\n"
+                "{\n"
+                "  \"extracted_name\": \"the event name the user mentioned, or null if none\",\n"
+                "  \"matched_id\": \"matching event id, or null if no confident match\"\n"
+                "}"
+            )
+            raw_result = self.capability_worker.text_to_text_response(intent_prompt).strip()
+            raw_result = re.sub(r"```(?:json)?", "", raw_result).strip().rstrip("`").strip()
+            self.worker.editor_logging_handler.error(f"Trigger intent match raw: '{raw_result}'")
+
+            try:
+                match_data = json.loads(raw_result)
+            except Exception:
+                match_data = {"extracted_name": None, "matched_id": None}
+
+            extracted_name = match_data.get("extracted_name")
+            matched_id     = match_data.get("matched_id")
+
+            # Clean nulls
+            if isinstance(extracted_name, str) and extracted_name.lower() in ("null", "none", ""):
+                extracted_name = None
+            if isinstance(matched_id, str) and matched_id.lower() in ("null", "none", ""):
+                matched_id = None
+
+            self.worker.editor_logging_handler.error(f"Extracted name: '{extracted_name}' | Matched id: '{matched_id}'")
+
+            if extracted_name and matched_id:
+                # ── Scenario 1: name extracted AND matched ──
+                event = next((ev for ev in all_events if ev["id"] == matched_id), None)
+                if event:
+                    confirmed = await self._ask_yes_no(
+                        f"I found '{event.get('summary', 'Untitled')}'. Should I delete it?"
+                    )
+                    if confirmed:
+                        try:
+                            delete_event(service, event["id"])
+                            await self.capability_worker.speak(
+                                f"Done. '{event.get('summary', 'Untitled')}' has been deleted."
+                            )
+                            self.worker.editor_logging_handler.error(f"Deleted event id: {event['id']}")
+                        except HttpError as e:
+                            await self.capability_worker.speak(f"Sorry, I couldn't delete it: {e.reason}")
+                    else:
+                        await self.capability_worker.speak("Okay, I'll leave it as is.")
+                    return
+
+            elif extracted_name and not matched_id:
+                # ── Scenario 2: name extracted but NOT matched ──
+                options_text = ", ".join([ev.get("summary", "Untitled") for ev in all_events[:5]])
+                await self.capability_worker.speak(
+                    f"I couldn't find an event called '{extracted_name}' in your calendar. "
+                    f"Your upcoming events are: {options_text}. "
+                )
+                pick_raw = await self._ask("Which event should I delete?")
+                cancel_check = self.capability_worker.text_to_text_response(
+                    f"The user said: \"{pick_raw}\".\n"
+                    "Are they cancelling or picking an event to delete?\n"
+                    "CANCEL examples: 'never mind', 'forget it', 'leave it', 'don't bother', 'actually no', 'skip it'\n"
+                    "PICK examples: naming an event, saying a number, 'the first one', 'that one'\n"
+                    "Reply with exactly one word: CANCEL or PICK"
+                ).strip().upper()
+                if "CANCEL" in cancel_check:
+                    await self.capability_worker.speak("Okay, no event deleted.")
+                    return
+                # Match their pick
+                pick_prompt = (
+                    f"The user said: \"{pick_raw}\"\n"
+                    f"Here are all upcoming calendar events:\n{event_list_str}\n\n"
+                    "Which event best matches? Reply with ONLY the event id, or NONE."
+                )
+                pick_id = self.capability_worker.text_to_text_response(pick_prompt).strip().rstrip(".,!?;:")
+                event = next((ev for ev in all_events if ev["id"] == pick_id), None)
+                if not event:
+                    await self.capability_worker.speak("I still couldn't find that event. Please try again later.")
+                    return
+                confirmed = await self._ask_yes_no(
+                    f"I found '{event.get('summary', 'Untitled')}'. Should I delete it?"
+                )
+                if confirmed:
+                    try:
+                        delete_event(service, event["id"])
+                        await self.capability_worker.speak(f"Done. '{event.get('summary', 'Untitled')}' has been deleted.")
+                        self.worker.editor_logging_handler.error(f"Deleted event id: {event['id']}")
+                    except HttpError as e:
+                        await self.capability_worker.speak(f"Sorry, I couldn't delete it: {e.reason}")
+                else:
+                    await self.capability_worker.speak("Okay, I'll leave it as is.")
+                return
+
+            # ── Scenario 3: no name in trigger — fall through to ask ──
+            self.worker.editor_logging_handler.error("No event name in trigger, asking user")
+
+        # ── Step 3: No event name in trigger — ask the user ──
+        user_query = await self._ask(
+            "Which event would you like to delete? Say the title or describe it."
+        )
+        self.worker.editor_logging_handler.error(f"Delete query from user: '{user_query}'")
+
+        # ── Step 4: Match user query against event list ──
+        match_prompt = (
+            f"The user said: \"{user_query}\"\n"
+            f"Here are all upcoming calendar events:\n"
+            f"{event_list_str}\n\n"
+            "Does the user clearly mention a specific event name that closely matches one of the events above?\n"
+            "Rules:\n"
+            "  - Only match if the user said an actual event name (exact, close spelling, or obvious voice transcription error)\n"
+            "  - Do NOT match based on vague descriptions, themes, or loosely related words\n"
+            "  - For example: 'diner' → 'dinner' is OK (typo). 'night event' → 'dinner' is NOT OK (too vague)\n"
+            "  - If the user is describing rather than naming, return NONE\n"
+            "Reply with ONLY the event id of the match, or NONE."
+        )
+        matched_id = self.capability_worker.text_to_text_response(match_prompt).strip().rstrip(".,!?;:")
+        event = next((ev for ev in all_events if ev["id"] == matched_id), None)
+
+        # ── Step 5: Fallback — list options manually ──
+        if not event:
+            retry_query = await self._ask(
+                "I couldn't find that event. Please say the exact event title you'd like to delete."
+            )
+            self.worker.editor_logging_handler.error(f"Delete retry query: '{retry_query}'")
+
+            retry_prompt = (
+                f"The user said: \"{retry_query}\"\n"
+                f"Here are all upcoming calendar events:\n"
+                f"{event_list_str}\n\n"
+                "Does the user clearly mention a specific event name that closely matches one of the events above?\n"
+                "Rules:\n"
+                "  - Only match if the user said an actual event name (exact, close spelling, or obvious voice transcription error)\n"
+                "  - Do NOT match based on vague descriptions, themes, or loosely related words\n"
+                "  - If no confident match, return NONE\n"
+                "Reply with ONLY the event id of the match, or NONE."
+            )
+            retry_id = self.capability_worker.text_to_text_response(retry_prompt).strip().rstrip(".,!?;:")
+            event = next((ev for ev in all_events if ev["id"] == retry_id), None)
+
+            if not event:
+                await self.capability_worker.speak(
+                    "I still couldn't find a matching event. Please try again later."
+                )
+                return
+
+        # ── Step 6: Confirm and delete ──
+        confirmed = await self._ask_yes_no(
+            f"I found '{event.get('summary', 'Untitled')}'. Should I delete it?"
+        )
+        if confirmed:
+            try:
+                delete_event(service, event["id"])
+                await self.capability_worker.speak(
+                    f"Done. '{event.get('summary', 'Untitled')}' has been deleted."
+                )
+                self.worker.editor_logging_handler.error(f"Deleted event id: {event['id']}")
+            except HttpError as e:
+                await self.capability_worker.speak(f"Sorry, I couldn't delete it: {e.reason}")
+        else:
+            await self.capability_worker.speak("Okay, I'll leave it as is.")
+
+    # -------------------- Entry point --------------------
+    def call(self, worker: AgentWorker):
+        self.worker = worker
+        self.capability_worker = CapabilityWorker(self.worker)
+        self.worker.session_tasks.create(self.run())
+
+    async def run(self):
+        first_msg = await self.capability_worker.wait_for_complete_transcription()
+
+        # Build Calendar service
+        token = self.capability_worker.get_token("google")
+        self.worker.editor_logging_handler.error(f"Token: {token}")
+
+        if not token:
+            await self.capability_worker.speak(
+                "Your Google account isn't linked yet. Head to Settings, then Linked Accounts to connect it."
+            )
+            self.capability_worker.resume_normal_flow()
+            return
+
+        try:
+            service = _build_calendar_service_using_access_token(token)
+        except Exception:
+            await self.capability_worker.speak(
+                "Couldn't connect to Google Calendar. Try again in a moment."
+            )
+            self.capability_worker.resume_normal_flow()
+            return
+
+        # Auto-detect timezone from IP
+        user_timezone = self.capability_worker.get_timezone()
+
+        # Determine intent
+        intent_prompt = (
+            f"Classify this intent: '{first_msg}'.\n"
+            "Examples:\n"
+            "  'set up a meeting' / 'add something to my calendar' / 'schedule a call' / 'make a new event' / 'put something on my calendar' / 'I need to schedule something' → CREATE\n"
+            "  'what's on my calendar' / 'what do I have tomorrow' / 'show my events' / 'show me what's coming up' / 'what do I have on' / 'check my schedule' → LIST\n"
+            "  'move my dentist appointment' / 'bump that call' / 'push the meeting to Friday' / 'reschedule' / 'change that meeting' → UPDATE\n"
+            "  'cancel my standup' / 'get rid of that event' / 'remove the meeting' / 'delete that' / 'get rid of it' / 'take that off my calendar' / 'remove it' → DELETE\n"
+            "Reply with exactly one word — CREATE, LIST, UPDATE, DELETE or UNKNOWN."
+        )
+        intent = self.capability_worker.text_to_text_response(intent_prompt).strip().upper()
+
+        routing_msg = first_msg
+        if intent == "UNKNOWN" or intent.lower() == "unknown":
+            await self.capability_worker.speak("Google Calendar ready. What would you like to do?")
+            intent_raw = (await self.capability_worker.user_response()).strip()
+            routing_msg = intent_raw  # ← second message carries the real intent
+
+            intent_prompt = (
+                f"Classify this intent: '{intent_raw}'.\n"
+                "Examples:\n"
+                "  'make a new event' / 'schedule something' / 'create event step by step' → CREATE\n"
+                "  'show my calendar' / 'what do I have on' → LIST\n"
+                "  'change that meeting' / 'move it' → UPDATE\n"
+                "  'delete it' / 'remove that event' → DELETE\n"
+                "Reply with exactly one word — CREATE, LIST, UPDATE, or DELETE."
+            )
+            intent = self.capability_worker.text_to_text_response(intent_prompt).strip().upper()
+
+        if intent.strip() == "CREATE":
+            await self._flow_create_event(service, user_timezone, routing_msg)
+        elif intent.strip() == "LIST":
+            await self._flow_list_events(service, user_timezone, routing_msg)
+        elif intent.strip() == "UPDATE":
+            await self._flow_update_event(service, user_timezone, routing_msg)
+        elif intent.strip() == "DELETE":
+            await self._flow_delete_event(service, user_timezone, routing_msg)
         else:
             await self.capability_worker.speak(
-                f"That didn't work. The error was: {self.last_api_error}."
+                "I'm not sure what you'd like to do. "
+                "You can ask me to create, list, update, or delete calendar events."
             )
+
+        self.capability_worker.resume_normal_flow()
