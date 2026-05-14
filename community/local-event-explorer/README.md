@@ -1,6 +1,6 @@
-# Local Event Explorer
+# Events Explorer
 
-Local Event Explorer is an OpenHome community ability for finding events by voice. It helps users discover concerts, comedy, sports, festivals, hackathons, workshops, networking events, food events, wellness events, and other local things to do.
+Event Explorer is an OpenHome community ability for finding events by voice. It helps users discover concerts, comedy, sports, festivals, hackathons, workshops, networking events, food events, wellness events, and other local things to do.
 
 ## What It Does
 
@@ -33,7 +33,7 @@ The ability supports broad event categories, including:
 
 ## Data Sources
 
-Local Event Explorer can use three event sources:
+Events Explorer can use three event sources:
 
 | Source | OpenHome API key name | Role |
 |---|---|---|
