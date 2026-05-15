@@ -1,1040 +1,1296 @@
 import base64
 import json
-import os
 import re
-from datetime import datetime
+import requests
+from datetime import datetime, timezone, timedelta
+from zoneinfo import ZoneInfo
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
 from typing import Optional
 
-import requests
+from google.oauth2.credentials import Credentials
+from googleapiclient.discovery import build
+from googleapiclient.errors import HttpError
+
 from src.agent.capability import MatchingCapability
-from src.agent.capability_worker import CapabilityWorker
 from src.main import AgentWorker
+from src.agent.capability_worker import CapabilityWorker
 
-# =============================================================================
-# GMAIL CONNECTOR
-# A voice-powered Gmail client. Summarize unread emails, read specific messages,
-# reply, compose, search, mark read, archive, and triage your inbox — all by
-# voice. Uses Composio middleware for Gmail API access.
-#
-# Composio slugs (tested):
-#   - GMAIL_FETCH_EMAILS      — list unread emails
-#   - GMAIL_GET_MESSAGE        — get single email by ID
-#   - GMAIL_SEND_EMAIL         — send a new email
-#   - GMAIL_REPLY_TO_THREAD    — reply to an existing thread
-#   - GMAIL_SEARCH             — search emails by query
-#   - GMAIL_MODIFY_MESSAGE     — add/remove labels (mark read, archive)
-#
-# NOTE: These slugs may need adjustment. Build Phase 0 debug ability first
-# to discover the correct slugs and response formats for your Composio account.
-# =============================================================================
+CONTACTS_FILE = "gmail_contacts.json"
 
-# -- Composio credentials (replace with your real keys) -----------------------
-COMPOSIO_API_KEY = "YOUR_COMPOSIO_API_KEY"
-COMPOSIO_USER_ID = "YOUR_COMPOSIO_USER_ID"
-COMPOSIO_ENTITY_ID = "YOUR_COMPOSIO_ENTITY_ID"
-COMPOSIO_BASE_URL = "https://backend.composio.dev/api/v2"
-
-# -- Persistent storage -------------------------------------------------------
-PREFS_FILE = "gmail_connector_prefs.json"
-CACHE_FILE = "gmail_connector_cache.json"
-
-# -- Exit detection -----------------------------------------------------------
-EXIT_WORDS = [
-    "done", "exit", "stop", "quit", "bye", "goodbye",
-    "nothing else", "all good", "nope", "no thanks",
-    "i'm good", "that's it", "that's all", "leave", "cancel",
-]
-
-# -- Intent classification prompts --------------------------------------------
-TRIGGER_INTENT_PROMPT = (
-    "You are classifying a user's email-related request.\n\n"
-    "Given the user's recent messages, return ONLY a JSON object:\n"
-    '{{\n'
-    '    "intent": one of ["summary", "read_specific", "reply", "compose", '
-    '"search", "triage", "mark_read", "archive", "unknown"],\n'
-    '    "mode": "quick" or "full",\n'
-    '    "details": {{any extracted info like sender name, keywords, etc}}\n'
-    '}}\n\n'
-    "Rules:\n"
-    '- "summary" = user wants overview of inbox. Mode: quick if asking a '
-    'count, full if asking to "go through" or "catch me up"\n'
-    '- "read_specific" = user wants to hear a specific email. Mode: quick\n'
-    '- "reply" = user wants to reply to an email. Mode: quick\n'
-    '- "compose" = user wants to write a new email. Mode: quick\n'
-    '- "search" = user wants to find an email. Mode: quick\n'
-    '- "triage" = user wants to go through emails one by one. Mode: full\n'
-    '- "mark_read" / "archive" = user wants to manage a specific email. '
-    'Mode: quick\n'
-    '- If the request is vague like just "email" or "check email", default '
-    'to summary with mode: full\n\n'
-    "User's recent messages:\n{context}"
+EMAIL_SYSTEM = (
+    "You are an intelligent voice email assistant running on OpenHome. "
+    "The user is speaking — all your output will be read aloud. "
+    "Keep responses concise and natural for speech, under 2 sentences and 25 words. "
+    "Never use markdown, bullet points, numbered lists, emojis, URLs, or raw email addresses. "
+    "When drafting emails, be professional yet conversational."
 )
 
-SESSION_INTENT_PROMPT = (
-    "You are classifying an in-session email command.\n"
-    "The user is already inside the Gmail assistant.\n\n"
-    "Return ONLY valid JSON, no markdown:\n"
-    '{{\n'
-    '    "intent": one of ["summary", "read_specific", "reply", "compose", '
-    '"search", "triage", "mark_read", "archive", "unknown"],\n'
-    '    "details": {{any extracted info like sender name, keywords, subject, '
-    'body content, recipient, etc}}\n'
-    '}}\n\n'
-    "Examples:\n"
-    '"What did Sarah say?" -> {{"intent": "read_specific", '
-    '"details": {{"sender": "Sarah"}}}}\n'
-    '"Reply to that one" -> {{"intent": "reply", "details": {{}}}}\n'
-    '"Send an email to Mike" -> {{"intent": "compose", '
-    '"details": {{"recipient": "Mike"}}}}\n'
-    '"Find the email about the budget" -> {{"intent": "search", '
-    '"details": {{"keywords": "budget"}}}}\n'
-    '"Mark it as read" -> {{"intent": "mark_read", "details": {{}}}}\n'
-    '"Archive that" -> {{"intent": "archive", "details": {{}}}}\n'
-    '"Go through my inbox" -> {{"intent": "triage", "details": {{}}}}\n\n'
-    "User said: {user_input}"
-)
+# Shared ordinal/positional word-to-number map for voice input
+_ORDINAL_MAP = {
+    "first": 1, "1st": 1, "one": 1,
+    "second": 2, "2nd": 2, "two": 2,
+    "third": 3, "3rd": 3, "three": 3,
+    "fourth": 4, "4th": 4, "four": 4,
+    "fifth": 5, "5th": 5, "five": 5,
+    "sixth": 6, "6th": 6, "six": 6,
+    "seventh": 7, "7th": 7, "seven": 7,
+    "eighth": 8, "8th": 8, "eight": 8,
+    "ninth": 9, "9th": 9, "nine": 9,
+    "tenth": 10, "10th": 10, "ten": 10,
+    "top": 1,
+}
 
-COMPOSE_EXTRACT_PROMPT = (
-    "The user wants to send an email. Extract whatever info is available "
-    "from their message. Return ONLY valid JSON:\n"
-    '{{\n'
-    '    "recipient": "name or email or null",\n'
-    '    "subject": "subject line or null",\n'
-    '    "body": "message content or null"\n'
-    '}}\n\n'
-    "If the user gave everything in one sentence, extract all fields.\n"
-    "If only partial info, fill what you can and leave the rest as null.\n\n"
-    "User said: {user_input}"
-)
-
-DRAFT_EMAIL_PROMPT = (
-    "Turn this casual spoken input into a properly formatted short email. "
-    "Keep it natural and concise — 2-4 sentences max. "
-    "Do NOT add a subject line. Do NOT add a greeting if one is not needed. "
-    "Just the body text.\n\n"
-    "User said: {user_input}"
-)
-
-SEARCH_EXTRACT_PROMPT = (
-    "Extract search parameters from the user's email search request. "
-    "Return ONLY valid JSON:\n"
-    '{{\n'
-    '    "sender": "sender name or email or null",\n'
-    '    "keywords": "search keywords or null",\n'
-    '    "date_range": "today|yesterday|this_week|last_week|this_month|null"\n'
-    '}}\n\n'
-    "User said: {user_input}"
-)
-
-SUMMARIZE_PROMPT = (
-    "Summarize these emails in 2-3 spoken sentences. Lead with the most "
-    "important or urgent ones. Keep it short — this will be read aloud.\n\n"
-    "Emails:\n{emails}"
-)
-
-EMAIL_BODY_PROMPT = (
-    "Summarize this email body in 1-2 spoken sentences. Strip HTML, "
-    "signatures, and reply chains. Only the actual message content. "
-    "Format for voice — say 'at' for @, 'dot' for periods in emails, "
-    "and natural dates like 'Tuesday at 3 PM'.\n\n"
-    "From: {sender}\nSubject: {subject}\nBody:\n{body}"
-)
+_ORDINAL_MAP_ZERO = {k: v - 1 for k, v in _ORDINAL_MAP.items()}
 
 
-class GmailConnectorCapability(MatchingCapability):
+#  Low-level Gmail helpers
+def _build_gmail_service(token: str):
+    creds = Credentials(token=token)
+    return build("gmail", "v1", credentials=creds)
+
+
+def _make_message(to: str, subject: str, body: str) -> dict:
+    msg = MIMEMultipart()
+    msg["to"] = to
+    msg["subject"] = subject.title()
+    msg.attach(MIMEText(body, "plain"))
+    return {"raw": base64.urlsafe_b64encode(msg.as_bytes()).decode()}
+
+
+def _make_reply(to: str, subject: str, body: str,
+                thread_id: str, message_id_header: str) -> dict:
+    msg = MIMEMultipart()
+    msg["to"] = to
+    msg["subject"] = subject.title() if subject.startswith("Re:") else f"Re: {subject}"
+    msg["In-Reply-To"] = message_id_header
+    msg["References"] = message_id_header
+    msg.attach(MIMEText(body, "plain"))
+    raw = base64.urlsafe_b64encode(msg.as_bytes()).decode()
+    return {"raw": raw, "threadId": thread_id}
+
+
+def _get_header(headers: list, name: str) -> str:
+    for h in headers:
+        if h.get("name", "").lower() == name.lower():
+            return h.get("value", "")
+    return ""
+
+
+def _decode_body(msg: dict) -> str:
+    payload = msg.get("payload", {})
+    def _extract(part):
+        if part.get("mimeType", "") == "text/plain":
+            data = part.get("body", {}).get("data", "")
+            if data:
+                return base64.urlsafe_b64decode(data).decode("utf-8", errors="replace")
+        for sub in part.get("parts", []):
+            result = _extract(sub)
+            if result:
+                return result
+        return ""
+    return _extract(payload).strip()
+
+
+def _sender_display(msg: dict) -> tuple:
+    """Returns (display_name, email_address) from a Gmail message dict."""
+    headers = msg.get("payload", {}).get("headers", [])
+    sender = _get_header(headers, "From")
+    m = re.search(r"<([^>]+)>", sender)
+    email = m.group(1) if m else sender
+    name = re.sub(r"<[^>]+>", "", sender).strip().strip('"') or sender
+    return name, email
+
+
+def _clean_subject(subject: str) -> str:
+    """Strip GitHub/CI noise from subject lines before speaking them."""
+    subject = re.sub(r"\[openhome[^\]]*\]", "", subject)
+    subject = re.sub(r"\(PR #\d+\)", "", subject)
+    subject = re.sub(r"#\d+", "", subject)
+    subject = re.sub(r"\s{2,}", " ", subject)
+    return subject.strip() or "no subject"
+
+
+def _list_messages(service, query: str, max_results: int = 500) -> list:
+    messages, page_token = [], None
+    while len(messages) < max_results:
+        kwargs = {
+            "userId": "me",
+            "q": query,
+            "maxResults": min(500, max_results - len(messages)),
+        }
+        if page_token:
+            kwargs["pageToken"] = page_token
+        result = service.users().messages().list(**kwargs).execute()
+        messages.extend(result.get("messages", []))
+        page_token = result.get("nextPageToken")
+        if not page_token:
+            break
+    return messages
+
+
+def _get_message(service, msg_id: str) -> dict:
+    return service.users().messages().get(
+        userId="me", id=msg_id, format="full"
+    ).execute()
+
+
+def _send_message(service, message: dict) -> dict:
+    return service.users().messages().send(userId="me", body=message).execute()
+
+
+def _modify_labels(service, msg_id: str,
+                   add_labels: list = None, remove_labels: list = None) -> dict:
+    return service.users().messages().modify(
+        userId="me", id=msg_id,
+        body={"addLabelIds": add_labels or [], "removeLabelIds": remove_labels or []}
+    ).execute()
+
+
+def _mark_read(service, msg_id: str) -> None:
+    try:
+        _modify_labels(service, msg_id, remove_labels=["UNREAD"])
+    except Exception:
+        pass
+
+
+#  Capability class
+class GmailCapability(MatchingCapability):
     worker: AgentWorker = None
     capability_worker: CapabilityWorker = None
-    emails: list = None
-    current_email: dict = None
-    pending_reply: dict = None
-    pending_compose: dict = None
-    idle_count: int = 0
-    mode: str = "quick"
-    prefs: dict = None
 
-    #{{register_capability}}
+    # Do not change following tag of register capability
+    #{{register capability}}
 
+    # LLM shorthand
+    def _llm(self, prompt: str, history: list = None) -> str:
+        return self.capability_worker.text_to_text_response(
+            prompt,
+            history=history or [],
+            system_prompt=EMAIL_SYSTEM,
+        ).strip()
+
+    # Voice helpers
+
+    async def _speak(self, text: str) -> None:
+        await self.capability_worker.speak(text)
+
+    async def _ask(self, question: str) -> str:
+        await self.capability_worker.speak(question)
+        return (await self.capability_worker.user_response()).strip()
+
+    # KV upsert helper
+
+    def _upsert_key(self, key: str, value) -> None:
+        try:
+            existing = self.capability_worker.get_single_key(key)
+            if existing is not None:
+                self.capability_worker.update_key(key, value)
+            else:
+                self.capability_worker.create_key(key, value)
+        except Exception:
+            try:
+                self.capability_worker.create_key(key, value)
+            except Exception:
+                pass
+
+    # Persistent contact memory
+    async def _load_contacts(self) -> dict:
+        try:
+            if await self.capability_worker.check_if_file_exists(CONTACTS_FILE, False):
+                raw = await self.capability_worker.read_file(CONTACTS_FILE, False)
+                return json.loads(raw)
+        except Exception:
+            pass
+        return {}
+
+    async def _save_contacts(self, contacts: dict) -> None:
+        try:
+            if await self.capability_worker.check_if_file_exists(CONTACTS_FILE, False):
+                await self.capability_worker.delete_file(CONTACTS_FILE, False)
+            await self.capability_worker.write_file(
+                CONTACTS_FILE, json.dumps(contacts), False
+            )
+        except Exception as e:
+            self.worker.editor_logging_handler.error(f"Contact save error: {e}")
+
+    async def _remember_contact(self, email: str, name: str = "") -> None:
+        # Strip trailing punctuation from name before storing
+        name = name.strip().rstrip(".,!?;:") if name else ""
+        
+        # Reject LLM "NONE" values that slipped through
+        if name.upper() in ("NONE", "NONE.", "", "N/A", "NA", "UNKNOWN", "NULL", "-"):
+            name = ""
+
+        contacts = await self._load_contacts()
+        local = email.split("@")[0].lower()
+        entry = {"email": email, "name": name or local}
+        contacts[local] = entry
+        if name:
+            name_key = re.sub(r"\s+", "_", name.lower().strip())
+            contacts[name_key] = entry
+        await self._save_contacts(contacts)
+
+    async def _lookup_contact(self, raw_name: str) -> Optional[str]:
+        contacts = await self._load_contacts()
+        if not contacts:
+            return None
+        summary = "\n".join([
+            f"{k}: {v['email']} ({v.get('name', '')})"
+            for k, v in contacts.items()
+        ])
+        result = self._llm(
+            f"The user wants to contact: \"{raw_name}\"\n"
+            f"Known contacts:\n{summary}\n\n"
+            "Fuzzy-match by name or local email part.\n"
+            "Reply with ONLY the email address, or NONE."
+        )
+        if result.upper() == "NONE" or "@" not in result:
+            return None
+        return result.strip()
+
+    # Email context (KV session memory)
+    def _store_email_context(self, emails: list) -> None:
+        context = []
+        for msg in emails:
+            headers = msg.get("payload", {}).get("headers", [])
+            name, sender_email = _sender_display(msg)
+            context.append({
+                "id": msg.get("id"),
+                "threadId": msg.get("threadId"),
+                "sender_name": name,
+                "sender_email": sender_email,
+                "subject": _clean_subject(_get_header(headers, "Subject") or "no subject"),
+                "message_id_header": _get_header(headers, "Message-ID"),
+            })
+        self._upsert_key("recent_emails_context", context)
+        debug_lines = [
+            f"  [{i+1}] id={e['id']} | from={e['sender_name']} | subject={e['subject']}"
+            for i, e in enumerate(context)
+        ]
+        
+    def _resolve_from_context(self, hint: str, service) -> Optional[dict]:
+        """Fast-path: match against KV-stored email list before hitting Gmail API."""
+        try:
+            context = self.capability_worker.get_single_key("recent_emails_context")
+            if not context or not isinstance(context, list):
+                self.worker.editor_logging_handler.info(
+                    f"KV[recent_emails_context] is empty or missing — hint='{hint}'"
+                )
+                return None
+            self.worker.editor_logging_handler.info(
+                f"KV[recent_emails_context] resolving '{hint}' against "
+                f"{len(context)} entries: "
+                + ", ".join(f"{e.get('sender_name','?')}:{e.get('subject','?')[:30]}" for e in context)
+            )
+        except Exception:
+            return None
+
+        hint_lower = hint.lower()
+
+        # "last" / "bottom" → last item in context
+        if re.search(r'\b(last|bottom)\b', hint_lower) and context:
+            try:
+                return _get_message(service, context[-1]["id"])
+            except Exception:
+                pass
+
+        num_m = re.search(r'\b(?:no\.?|number|#)\s*(\d+)\b', hint_lower)
+        if num_m:
+            idx = int(num_m.group(1)) - 1
+            if 0 <= idx < len(context):
+                try:
+                    return _get_message(service, context[idx]["id"])
+                except Exception:
+                    pass
+
+        for word, num in _ORDINAL_MAP.items():
+            if re.search(r'\b' + word + r'\b', hint_lower):
+                idx = num - 1
+                if 0 <= idx < len(context):
+                    try:
+                        return _get_message(service, context[idx]["id"])
+                    except Exception:
+                        pass
+                break
+
+        summary = "\n".join([
+            f"{i+1}. From: {e['sender_name']} <{e['sender_email']}>, Subject: {e['subject']}"
+            for i, e in enumerate(context)
+        ])
+        result = self._llm(
+            f"The user said: \"{hint}\"\n"
+            f"Recently listed emails:\n{summary}\n\n"
+            "Does this refer to one of these emails?\n"
+            "Match by ordinal, name, or subject keyword.\n"
+            "Reply with ONLY the 1-based index, or NONE."
+        )
+        if result.upper() == "NONE":
+            return None
+        nums = re.findall(r"\d+", result)
+        if nums:
+            idx = int(nums[0]) - 1
+            if 0 <= idx < len(context):
+                try:
+                    return _get_message(service, context[idx]["id"])
+                except Exception as e:
+                    self.worker.editor_logging_handler.error(f"Context fetch error: {e}")
+        return None
+
+    # Email resolution
+    async def _resolve_email(self, service, hint: str = "") -> Optional[dict]:
+        """Resolve a natural-language description to a Gmail message."""
+        if not hint:
+            hint = await self._ask(
+                "Which email? Say the sender, subject, or a keyword."
+            )
+
+        ctx = self._resolve_from_context(hint, service)
+        if ctx:
+            self.worker.editor_logging_handler.info("Resolved from KV context.")
+            return ctx
+
+        query = self._llm(
+            f"The user described an email: \"{hint}\"\n"
+            "Convert to a precise Gmail search query.\n"
+            "Rules:\n"
+            "- Use subject:\"exact phrase\" (with quotes) for subject keywords\n"
+            "- Use from:name for sender names\n"
+            "- Combine with AND if both sender and subject are mentioned\n"
+            "- Do NOT include in:inbox — added automatically\n"
+            "- Do NOT use broad single-word queries that could match unrelated emails\n"
+            "Examples:\n"
+            "  'Eid holidays email'         → subject:\"Eid holidays\"\n"
+            "  'email from Ahmed'           → from:Ahmed\n"
+            "  'PR review email from danial'→ from:danial subject:\"PR\"\n"
+            "  'invoice email'              → subject:\"invoice\"\n"
+            "Reply with ONLY the query string."
+        )
+        # Always restrict to inbox so sent/reply threads don't appear
+        query = f"in:inbox {query}".strip()
+        self.worker.editor_logging_handler.info(f"Gmail primary query: '{query}'")
+        messages = _list_messages(service, query, max_results=5)
+
+        if not messages:
+            # Loose fallback: quoted keywords only (no operators that could misfire)
+            loose_kw = self._llm(
+                f"The user described: \"{hint}\"\n"
+                "Extract the 1-2 most distinctive keywords (no operators, no stop words).\n"
+                "Wrap multi-word phrases in double quotes.\n"
+                "Examples: 'Eid holidays email' → \"Eid holidays\"  |  'email from ahmed' → ahmed\n"
+                "Reply with ONLY the keyword(s)."
+            )
+            loose_query = f"in:inbox {loose_kw}".strip()
+            self.worker.editor_logging_handler.info(f"Gmail loose query: '{loose_query}'")
+            messages = _list_messages(service, loose_query, max_results=5)
+
+        if not messages:
+            # Final fallback: drop in:inbox restriction — email may have been read/replied
+            # and lost its INBOX label, but still exists in All Mail
+            all_mail_query = re.sub(r'\bin:inbox\s*', '', query).strip()
+            if all_mail_query:
+                self.worker.editor_logging_handler.info(
+                    f"Gmail all-mail fallback query: '{all_mail_query}'"
+                )
+                messages = _list_messages(service, all_mail_query, max_results=5)
+
+        if not messages:
+            hint = await self._ask(
+                "Couldn't find that. Be more specific — "
+                "sender name, their email, or the subject?"
+            )
+            query2 = self._llm(
+                f"The user described an email: \"{hint}\"\n"
+                "Convert to a Gmail search query. Reply with ONLY the query."
+            )
+            messages = _list_messages(service, query2, max_results=5)
+            if not messages:
+                await self._speak("Still couldn't find any matching emails.")
+                return None
+
+        if len(messages) == 1:
+            return _get_message(service, messages[0]["id"])
+
+        candidates = [_get_message(service, m["id"]) for m in messages[:5]]
+        self._store_email_context(candidates)
+
+        preselect = self._llm(
+            f"The user said: \"{hint}\"\n"
+            f"Search returned {len(candidates)} results.\n"
+            "If they specified an ordinal or precise subject keyword → give 1-based index.\n"
+            "If only a sender name with no other detail → NONE.\n"
+            "Reply with ONLY the index or NONE."
+        )
+        nums = re.findall(r"\d+", preselect)
+        if nums:
+            idx = max(0, min(int(nums[0]) - 1, len(candidates) - 1))
+            return candidates[idx]
+
+        preamble = f"I found {len(candidates)} matching emails."
+
+        shown = candidates[:3]
+        options = ". ".join([
+            f"Number {i+1}, from {_sender_display(c)[0]}, "
+            f"about {_clean_subject(_get_header(c.get('payload', {}).get('headers', []), 'Subject') or 'no subject')}"
+            for i, c in enumerate(shown)
+        ])
+        await self._speak(f"{preamble} {options}.")
+        pick_raw = await self._ask(f"Which one? Say a number, 1 to {len(shown)}.")
+
+        pick_lower = pick_raw.lower()
+        direct_idx = None
+        if re.search(r'\b(last|bottom)\b', pick_lower):
+            direct_idx = len(candidates) - 1
+        else:
+            for word, i in _ORDINAL_MAP_ZERO.items():
+                if re.search(r'\b' + word + r'\b', pick_lower):
+                    direct_idx = i
+                    break
+        if direct_idx is None:
+            num_m2 = re.search(r'\b(?:no\.?|number|#)?\s*(\d+)\b', pick_lower)
+            if num_m2:
+                direct_idx = int(num_m2.group(1)) - 1
+        if direct_idx is not None and 0 <= direct_idx < len(candidates):
+            return candidates[direct_idx]
+
+        pick_result = self._llm(
+            f"The user said: \"{pick_raw}\". There are {len(candidates)} options.\n"
+            "Reply with ONLY the integer of the chosen option."
+        )
+        nums2 = re.findall(r"\d+", pick_result)
+        idx = max(0, min(int(nums2[0]) - 1 if nums2 else 0, len(candidates) - 1))
+        return candidates[idx]
+
+    # Text cleaning
+    def _clean_for_speech(self, text: str) -> str:
+        if not text:
+            return ""
+        text = (text.replace("&amp;", "and").replace("&lt;", "less than")
+                .replace("&gt;", "greater than").replace("&nbsp;", " ")
+                .replace("&quot;", '"').replace("&#39;", "'").replace("&apos;", "'"))
+        text = re.sub(r"<[^>]+>", " ", text)
+        text = re.sub(r"https?://\S+|www\.\S+", "", text)
+        text = re.sub(r"[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}",
+                      "an email address", text)
+        text = re.sub(r"—\s*Reply to this email directly.*", "", text, flags=re.DOTALL)
+        text = re.sub(r"You are receiving this because.*", "", text, flags=re.DOTALL)
+        text = re.sub(r"^[\-=_]{3,}\s*$", "", text, flags=re.MULTILINE)
+        text = re.sub(r"#{1,6}\s+", "", text)
+        text = re.sub(r"\*{1,3}([^*]+)\*{1,3}", r"\1", text)
+        text = re.sub(r"\[openhome[^\]]*\]|\(PR #\d+\)|#\d+", "", text)
+        text = re.sub(r"\([^)]{0,40}\)", "", text)
+        text = re.sub(r" {2,}", " ", text)
+        text = re.sub(r"\n{3,}", "\n\n", text)
+        return text.strip()
+
+    def _summarize_for_speech(self, body: str) -> str:
+        if len(body) <= 150:
+            return body
+        return self._llm(
+            "Summarize this email in 2-3 concise spoken sentences, under 40 words total. "
+            "Natural and conversational — it will be read aloud. "
+            "No markdown, no URLs, no email addresses, no emojis, no lists.\n\n"
+            f"{body[:3000]}"
+        )
+
+    def _spell_email_for_speech(self, email: str) -> str:
+        if "@" not in email:
+            return email
+        local, domain = email.split("@", 1)
+        common = {
+            "gmail.com": "gmail dot com", "yahoo.com": "yahoo dot com",
+            "outlook.com": "outlook dot com", "hotmail.com": "hotmail dot com",
+            "icloud.com": "icloud dot com", "me.com": "me dot com",
+        }
+        punct = {".": "dot", "-": "dash", "_": "underscore", "+": "plus"}
+        def spell(part):
+            return " ".join(punct.get(ch, ch) for ch in part)
+        return f"{spell(local)} at {common.get(domain.lower(), spell(domain))}"
+
+    def _extract_email_with_llm(self, raw_text: str) -> Optional[str]:
+        cleaned = raw_text.strip().rstrip(".,!?;:")
+        direct = re.search(r"[^@\s]+@[^@\s]+\.[^@\s]+", cleaned)
+        if direct:
+            candidate = direct.group(0).rstrip(".,!?;:")
+            if re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", candidate):
+                return candidate
+        result = self._llm(
+            "Voice transcription of someone saying an email address. "
+            "'at' means '@', 'dot' means '.'. Reconstruct the email.\n"
+            "Reply with ONLY the email, or NONE.\n\n"
+            f"Transcription: \"{cleaned}\""
+        ).lower().rstrip(".,!?;:")
+        if result == "none" or "@" not in result:
+            return None
+        if re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", result):
+            return result
+        return None
+
+    # Shared: read a message aloud
+    async def _read_full_message(self, service, msg: dict) -> None:
+        headers = msg.get("payload", {}).get("headers", [])
+        name, _ = _sender_display(msg)
+        subject = _clean_subject(_get_header(headers, "Subject") or "no subject")
+        date = _get_header(headers, "Date")
+        body = self._clean_for_speech(_decode_body(msg))
+
+        # Build one combined speech: Subject → From → Body → Received time
+        parts = [f"{subject}, from {name}."]
+        parts.append(
+            self._summarize_for_speech(body) if body
+            else "The email body appears to be empty."
+        )
+        if date:
+            try:
+                from email.utils import parsedate_to_datetime
+                dt = parsedate_to_datetime(date)
+                day = dt.day
+                hour = dt.hour % 12 or 12
+                minute = dt.minute
+                am_pm = "in the morning" if dt.hour < 12 else (
+                    "in the afternoon" if dt.hour < 17 else "in the evening"
+                )
+                if minute == 0:
+                    time_str = f"{hour} o'clock"
+                elif minute < 10:
+                    time_str = f"{hour} oh {minute}"
+                else:
+                    time_str = f"{hour} {minute}"
+                parts.append(
+                    f"Received {dt.strftime('%A')} {dt.strftime('%B')} {day} at {time_str} {am_pm}."
+                )
+            except Exception:
+                pass
+
+        await self._speak(" ".join(parts))
+        _mark_read(service, msg["id"])
+        self._store_email_context([msg])
+
+    # Shared: handle post-read reply decision
+    async def _handle_post_read_reply(self, service, msg: dict) -> None:
+        """After reading an email aloud, ask user what to do and handle reply/archive."""
+        post_raw = await self._ask("Want to reply, archive, or move on?")
+        decision = self._llm(
+            f"The user said: \"{post_raw}\"\n"
+            "Classify AND extract in one step. Reply with ONLY valid JSON:\n"
+            '{"action": "SEND|REPLY|ARCHIVE|NO", "content": "extracted reply text or null"}\n'
+            "SEND = they stated reply content directly (e.g. 'got it', 'yeah I'll be there', 'sounds good').\n"
+            "REPLY = said yes/sure but gave NO specific content.\n"
+            "ARCHIVE = wants to archive/trash/delete.\n"
+            "NO = declined (no, nah, done, skip, move on, I'm good).\n"
+            "For SEND, extract the reply content stripping filler like 'yes'/'sure'."
+        ).strip()
+
+        try:
+            parsed = json.loads(re.sub(r"```(?:json)?|```", "", decision).strip())
+        except Exception:
+            parsed = {"action": "NO", "content": None}
+
+        action = parsed.get("action", "NO").upper()
+        content = parsed.get("content")
+
+        if action == "SEND" and content:
+            headers_t = msg.get("payload", {}).get("headers", [])
+            _, reply_to = _sender_display(msg)
+            subj_t = _clean_subject(_get_header(headers_t, "Subject") or "no subject")
+            msg_id_t = _get_header(headers_t, "Message-ID")
+            thread_t = msg.get("threadId", "")
+            try:
+                _send_message(service, _make_reply(reply_to, subj_t, content, thread_t, msg_id_t))
+                await self._speak("Reply sent.")
+                await self._remember_contact(reply_to)
+            except Exception as e:
+                await self._speak("Something went wrong sending the reply.")
+                self.worker.editor_logging_handler.error(f"Reply error: {e}")
+        elif action == "REPLY":
+            await self._flow_reply(service, raw_utterance=post_raw, msg=msg)
+        elif action == "ARCHIVE":
+            try:
+                _modify_labels(service, msg["id"], remove_labels=["INBOX"])
+                await self._speak("Archived.")
+            except Exception:
+                await self._speak("Couldn't archive that one.")
+
+    #  Flow: Compose / Send
+    async def _flow_compose(self, service, raw_utterance: str = "") -> None:
+        pre = {}
+        if raw_utterance:
+            raw = self._llm(
+                f"The user said: \"{raw_utterance}\"\n"
+                "Extract email fields already mentioned. Reply with ONLY valid JSON:\n"
+                '{"to": "email or null", "subject": "subject or null", "body": "body or null"}'
+            )
+            try:
+                pre = json.loads(re.sub(r"```(?:json)?|```", "", raw).strip())
+            except Exception:
+                pre = {}
+
+        def clean(v):
+            return None if not v or str(v).lower().strip() in ("null", "none", "") else v
+
+        to_address = clean(pre.get("to"))
+        subject    = clean(pre.get("subject"))
+        body       = clean(pre.get("body"))
+
+        # ── Collect missing fields — batch into one question when possible ──
+        missing = []
+        if not to_address:
+            missing.append("recipient")
+        if not subject:
+            missing.append("subject")
+        if not body:
+            missing.append("body")
+
+        if len(missing) >= 2:
+            field_labels = {
+                "recipient": "who it's to",
+                "subject": "the subject",
+                "body": "what you want to say",
+            }
+            parts = [field_labels[f] for f in missing]
+            if len(parts) == 2:
+                question = f"I need {parts[0]} and {parts[1]}."
+            else:
+                question = f"I need {', '.join(parts[:-1])}, and {parts[-1]}."
+            combined = await self._ask(question)
+            extracted = self._llm(
+                f"The user said: \"{combined}\"\n"
+                "Extract email fields mentioned. Reply with ONLY valid JSON:\n"
+                '{"to": "email or name or null", "subject": "subject or null", "body": "body or null"}'
+            )
+            try:
+                parsed = json.loads(re.sub(r"```(?:json)?|```", "", extracted).strip())
+            except Exception:
+                parsed = {}
+            if not to_address:
+                to_address = clean(parsed.get("to"))
+            if not subject:
+                subject = clean(parsed.get("subject"))
+            if not body:
+                body = clean(parsed.get("body"))
+
+        # ── Recipient ──
+        if not to_address:
+            raw_to = await self._ask("Who should I send this to?")
+            to_address = await self._lookup_contact(raw_to)
+            if not to_address:
+                direct = re.search(r"[^@\s]+@[^@\s]+\.[^@\s]+", raw_to)
+                if direct:
+                    candidate = direct.group(0).rstrip(".,!?;:")
+                    if re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", candidate):
+                        to_address = candidate
+                if not to_address:
+                    to_address = self._extract_email_with_llm(raw_to)
+            if not to_address:
+                await self._speak("Couldn't recognize that email address. Please try again.")
+                return
+        else:
+            # Resolve name to email if needed
+            if "@" not in to_address:
+                resolved = await self._lookup_contact(to_address)
+                if resolved:
+                    to_address = resolved
+                else:
+                    extracted_addr = self._extract_email_with_llm(to_address)
+                    if extracted_addr:
+                        to_address = extracted_addr
+                    else:
+                        raw_to = await self._ask(f"What's the email address for {to_address}?")
+                        to_address = self._extract_email_with_llm(raw_to)
+                        if not to_address:
+                            await self._speak("Couldn't recognize that email address.")
+                            return
+
+        # ── Subject ──
+        if not subject:
+            subject = (await self._ask("What's the subject?")).strip().rstrip(".,!?;:")
+
+        # ── Body ──
+        if not body:
+            body = (await self._ask("What would you like to say?")).strip()
+
+        # ── Grammar-fix only: keep user's exact words, fix spelling/caps/grammar ──
+        final_body = self._llm(
+            f"Fix ONLY grammar, spelling, and capitalization in this text.\n"
+            f"Do NOT rewrite, expand, or change the meaning. Keep it as close "
+            f"to the original as possible. Output must be same length or shorter.\n\n"
+            f"Original: \"{body}\"\n\n"
+            "Reply with ONLY the corrected text."
+        )
+        self.worker.editor_logging_handler.info(
+            f"Compose grammar fix: '{body}' → '{final_body}'"
+        )
+
+        try:
+            _send_message(service, _make_message(to_address, subject, final_body))
+            await self._speak("Done! Email sent.")
+            # Save contact using the name from the original extraction (no extra LLM call)
+            raw_name = clean(pre.get("to", "")) or ""
+            if raw_name and "@" not in raw_name:
+                await self._remember_contact(to_address, raw_name)
+            else:
+                await self._remember_contact(to_address)
+        except HttpError as e:
+            await self._speak("Something went wrong sending the email. Try again in a moment.")
+            self.worker.editor_logging_handler.error(f"Send error: {e.reason}")
+
+    #  Flow: Reply
+    async def _flow_reply(self, service, raw_utterance: str = "",
+                          msg: dict = None) -> None:
+        prefilled_intent = ""
+
+        if msg is not None:
+            # Pre-resolved from list/read flow — extract inline reply content if any
+            if raw_utterance:
+                extracted = self._llm(
+                    f"The user said: \"{raw_utterance}\"\n"
+                    "Did they also state what they want to say in the reply?\n"
+                    "Examples:\n"
+                    "  'reply to danial thank you' → 'thank you'\n"
+                    "  'reply to the invoice email saying payment sent' → 'payment sent'\n"
+                    "  'reply to the invoice email' → NONE\n"
+                    "  'yes' / 'reply' / 'reply to it' → NONE\n"
+                    "Reply with the reply content only, or NONE."
+                )
+                if extracted.upper() != "NONE" and extracted:
+                    prefilled_intent = extracted
+        else:
+            # Single LLM call: specificity + search hint + reply content in one shot
+            parse_result = self._llm(
+                f"The user said: \"{raw_utterance}\"\n"
+                "Analyze this reply request. Reply with ONLY valid JSON:\n"
+                '{"specific": true/false, "search_hint": "identifier or null", "reply_content": "content or null"}\n'
+                "specific: true if they named a sender, subject, or described a particular email. "
+                "false if vague like 'reply to email', 'reply to a mail', 'reply'.\n"
+                "search_hint: the part identifying WHICH email, stripped of reply verb, filler words, and reply content. "
+                "Examples: 'reply to Ahmed saying thanks' → 'Ahmed', 'get back to the invoice email' → 'invoice', "
+                "'hit Sarah back that I'll be there' → 'Sarah'. null if vague.\n"
+                "reply_content: what they want to say in the reply, or null if not stated. "
+                "Examples: 'reply to Ahmed saying thanks' → 'thanks', 'reply to the invoice email' → null."
+            ).strip()
+
+            try:
+                parsed = json.loads(re.sub(r"```(?:json)?|```", "", parse_result).strip())
+            except Exception:
+                parsed = {"specific": False, "search_hint": None, "reply_content": None}
+
+            is_specific = parsed.get("specific", False)
+            search_hint = parsed.get("search_hint") or ""
+            reply_content = parsed.get("reply_content")
+
+            self.worker.editor_logging_handler.info(
+                f"Reply parse: '{raw_utterance}' → specific={is_specific}, "
+                f"hint='{search_hint}', content='{reply_content}'"
+            )
+
+            if reply_content:
+                prefilled_intent = reply_content
+
+            if not is_specific:
+                hint = await self._ask(
+                    "Which email? You can say a name or subject."
+                )
+                raw_utterance = hint
+                search_hint = hint
+
+            # Try KV context first
+            msg = self._resolve_from_context(search_hint or raw_utterance, service)
+            if msg:
+                self.worker.editor_logging_handler.info("Reply: resolved from KV context.")
+            else:
+                if not search_hint:
+                    search_hint = raw_utterance
+                msg = await self._resolve_email(service, hint=search_hint)
+
+        if not msg:
+            return
+
+        headers = msg.get("payload", {}).get("headers", [])
+        name, reply_to = _sender_display(msg)
+        subject = _clean_subject(_get_header(headers, "Subject") or "no subject")
+        msg_id = _get_header(headers, "Message-ID")
+        thread = msg.get("threadId", "")
+        original_body = self._clean_for_speech(_decode_body(msg))[:2000]
+
+        # ── Collect reply intent ──
+        while True:
+            if prefilled_intent:
+                intent_raw = prefilled_intent
+                prefilled_intent = ""
+            else:
+                intent_raw = await self._ask(
+                    f"Replying to {name}. What would you like to say?"
+                )
+
+            if not intent_raw.strip():
+                await self._speak("Didn't catch that. What would you like to say?")
+                continue
+            break
+
+        # ── Grammar-fix only: keep user's exact words, fix spelling/caps/grammar ──
+        final_body = self._llm(
+            f"Fix ONLY grammar, spelling, and capitalization in this text.\n"
+            f"Do NOT rewrite, expand, or change the meaning. Keep it as close "
+            f"to the original as possible.\n\n"
+            f"Original: \"{intent_raw}\"\n\n"
+            "Reply with ONLY the corrected text."
+        )
+        self.worker.editor_logging_handler.info(
+            f"Reply grammar fix: '{intent_raw}' → '{final_body}'"
+        )
+
+        try:
+            _send_message(service, _make_reply(reply_to, subject, final_body, thread, msg_id))
+            await self._speak("Reply sent.")
+            await self._remember_contact(reply_to, name)
+        except HttpError as e:
+            await self._speak("Something went wrong sending the reply.")
+            self.worker.editor_logging_handler.error(f"Reply error: {e.reason}")
+
+    #  Flow: Read Email
+    async def _flow_read(self, service, raw_utterance: str = "") -> None:
+        # LLM decides if the request targets a specific email or is a vague "read my email"
+        specificity = self._llm(
+            f"The user said: \"{raw_utterance}\"\n"
+            "Does this mention a SPECIFIC email to read?\n"
+            "SPECIFIC means they named a sender, subject keyword, or described a particular email.\n"
+            "  Examples: 'read the email from Ahmed', 'open that invoice email', 'what did Sarah say'\n"
+            "VAGUE means they just want to see their emails in general with no particular target.\n"
+            "  Examples: 'read my email', 'check my inbox', 'pull up my mail', 'what's in my inbox',\n"
+            "  'go through my emails', 'lemme see my messages', 'any new stuff'\n"
+            "Reply with exactly one word: SPECIFIC or VAGUE."
+        ).strip().upper()
+        is_specific = "SPECIFIC" in specificity
+
+        if not is_specific:
+            unread_msgs = _list_messages(service, "is:unread in:inbox", max_results=5)
+            if not unread_msgs:
+                await self._speak("You have no unread emails.")
+                return
+            candidates = [_get_message(service, m["id"]) for m in unread_msgs]
+            self._store_email_context(candidates)
+            lines = []
+            for i, m in enumerate(candidates, 1):
+                hdrs = m.get("payload", {}).get("headers", [])
+                subj = _clean_subject(_get_header(hdrs, "Subject") or "no subject")
+                name, _ = _sender_display(m)
+                lines.append(f"Number {i}, {subj}, from {name}.")
+            await self._speak(
+                f"You have {len(candidates)} unread emails. " + " ".join(lines)
+            )
+            pick_raw = await self._ask(f"Which one? Say a number, 1 to {len(candidates)}.")
+
+            p_lower = pick_raw.lower()
+            msg = None
+
+            # "last" / "bottom" → last item
+            if re.search(r'\b(last|bottom)\b', p_lower):
+                msg = candidates[-1]
+
+            if not msg:
+                num_m = re.search(r'\b(?:no\.?|number|#)?\s*(\d+)\b', p_lower)
+                if num_m:
+                    idx = int(num_m.group(1)) - 1
+                    if 0 <= idx < len(candidates):
+                        msg = candidates[idx]
+            if not msg:
+                for word, num in _ORDINAL_MAP.items():
+                    if re.search(r'\b' + word + r'\b', p_lower):
+                        idx = num - 1
+                        if 0 <= idx < len(candidates):
+                            msg = candidates[idx]
+                        break
+            if not msg:
+                # LLM fallback: match by sender name or subject keyword
+                summary = "\n".join([
+                    f"{i+1}. From: {_sender_display(c)[0]}, "
+                    f"Subject: {_clean_subject(_get_header(c.get('payload',{}).get('headers',[]), 'Subject') or 'no subject')}"
+                    for i, c in enumerate(candidates)
+                ])
+                pick_result = self._llm(
+                    f"The user said: \"{pick_raw}\"\nEmails:\n{summary}\n"
+                    "Which one? Reply with ONLY the 1-based index or NONE."
+                )
+                nums = re.findall(r"\d+", pick_result)
+                if nums:
+                    idx = max(0, min(int(nums[0]) - 1, len(candidates) - 1))
+                    msg = candidates[idx]
+            if not msg:
+                await self._speak("Couldn't identify which email. Please try again.")
+                return
+        else:
+            msg = await self._resolve_email(service, hint=raw_utterance)
+            if not msg:
+                return
+
+
+        await self._read_full_message(service, msg)
+        await self._handle_post_read_reply(service, msg)
+
+    #  Flow: List Emails
+    async def _flow_list(self, service, raw_utterance: str = "") -> None:
+        # ── Timezone — try get_timezone(), fall back to IP geolocation ──
+        user_tz_str = ""
+        try:
+            user_tz_str = self.capability_worker.get_timezone() or ""
+        except Exception:
+            pass
+
+        if not user_tz_str:
+            try:
+                ip = self.worker.user_socket.client.host
+                resp = requests.get(f"http://ip-api.com/json/{ip}", timeout=5)
+                if resp.status_code == 200:
+                    data = resp.json()
+                    if data.get("status") == "success":
+                        user_tz_str = data.get("timezone", "")
+            except Exception:
+                pass
+
+        try:
+            now = datetime.now(ZoneInfo(user_tz_str)) if user_tz_str else datetime.now(timezone.utc)
+        except Exception:
+            now = datetime.now(timezone.utc)
+
+        self.worker.editor_logging_handler.info(
+            f"List emails: local time {now.strftime('%Y-%m-%d %H:%M %Z')} (tz={user_tz_str or 'UTC fallback'})"
+        )
+
+        # ── Intent classification — explicit examples so LLM doesn't misfire ──
+        intent = self._llm(
+            f"The user said: \"{raw_utterance}\"\n\n"
+            "Classify which emails they want. Reply with ONLY one word from this list:\n\n"
+            "today       — 'today', 'today's emails', 'emails today', 'this morning', 'tonight', 'what came in today'\n"
+            "yesterday   — 'yesterday', 'yesterday's emails', 'last night'\n"
+            "unread      — 'unread', 'new emails', 'what did I miss', 'haven't checked', 'anything I missed', 'anything new'\n"
+            "recent      — 'recent', 'latest', 'last few', 'show me emails' (no time/filter)\n"
+            "from_sender — 'from X', 'emails from X', 'X's emails'\n"
+            "specific_date — a named date like 'March 5th', 'last Monday', 'on the 10th'\n"
+            "unknown     — completely unclear\n\n"
+            "Reply with ONE word only: today, yesterday, unread, recent, from_sender, specific_date, or unknown."
+        ).lower().strip()
+
+        self.worker.editor_logging_handler.info(f"List email intent: '{intent}' for utterance: '{raw_utterance}'")
+
+        if intent == "unknown":
+            choice = await self._ask(
+                "Which emails? Like today's, unread, or from someone specific?"
+            )
+            intent = self._llm(
+                f"The user said: \"{choice}\"\n"
+                "Classify: today, yesterday, unread, recent, from_sender, specific_date\n"
+                "Reply with ONE word."
+            ).lower().strip()
+            raw_utterance = choice
+
+        # ── Build query ──
+        today_str     = now.strftime("%Y/%m/%d")
+        yesterday_str = (now - timedelta(days=1)).strftime("%Y/%m/%d")
+        tomorrow_str  = (now + timedelta(days=1)).strftime("%Y/%m/%d")
+
+        if intent == "today":
+            # after: is inclusive of the date, before: is exclusive
+            # Adding in:inbox avoids sent/spam/trash polluting results
+            query = f"in:inbox after:{today_str} before:{tomorrow_str}"
+            label = "today's"
+            max_fetch = 25
+
+        elif intent == "yesterday":
+            query = f"in:inbox after:{yesterday_str} before:{today_str}"
+            label = "yesterday's"
+            max_fetch = 25
+
+        elif intent == "unread":
+            query = "is:unread in:inbox"
+            label = "unread"
+            max_fetch = 50
+
+        elif intent == "from_sender":
+            sender_hint = self._llm(
+                f"The user said: \"{raw_utterance}\"\n"
+                "Extract the sender name or email. Reply with ONLY that, or NONE."
+            ).strip()
+            if not sender_hint or sender_hint.upper() == "NONE":
+                sender_hint = await self._ask("Emails from who?")
+            query = f"from:{sender_hint}"
+            label = f"emails from {sender_hint}"
+            max_fetch = 20
+
+        elif intent == "specific_date":
+            query = self._llm(
+                f"Today is {now.strftime('%Y-%m-%d')}. The user said: \"{raw_utterance}\"\n"
+                "Convert to Gmail query using after: and before: operators.\n"
+                "Format: in:inbox after:YYYY/MM/DD before:YYYY/MM/DD\n"
+                "Examples:\n"
+                "  'March 5th'   → in:inbox after:2026/03/05 before:2026/03/06\n"
+                "  'last Monday' → in:inbox after:2026/03/16 before:2026/03/17\n"
+                "Reply with ONLY the query string."
+            ).strip()
+            label = "emails from that date"
+            max_fetch = 20
+
+        else:  # recent
+            query = "in:inbox"
+            label = "recent"
+            max_fetch = 5
+
+        self.worker.editor_logging_handler.info(f"Gmail list query: '{query}' max_fetch={max_fetch}")
+
+        messages = _list_messages(service, query, max_results=max_fetch)
+
+        # ── Friendly empty state per intent ──
+        if not messages:
+            empty_msg = {
+                "today":         "You have no emails in your inbox today.",
+                "yesterday":     "You have no emails from yesterday.",
+                "unread":        "You have no unread emails.",
+                "from_sender":   f"No emails found from {sender_hint if intent == 'from_sender' else 'that person'}.",
+                "specific_date": "No emails found for that date.",
+            }.get(intent, "No emails found.")
+            await self._speak(empty_msg)
+            return
+
+        count = len(messages)
+        my_email = ""
+        try:
+            my_email = service.users().getProfile(userId="me").execute().get("emailAddress", "").lower()
+        except Exception:
+            pass
+
+        BATCH = 5
+        offset = 0
+        all_shown: list = []
+
+        def _pick_from_shown(utterance: str) -> Optional[dict]:
+            if not all_shown:
+                return None
+            u_lower = utterance.lower()
+
+            # "last" / "bottom" → last shown item
+            if re.search(r'\b(last|bottom)\b', u_lower):
+                return all_shown[-1]
+
+            # Fast path 1: "no 2", "number 3", "#4", plain digits
+            num_m = re.search(r'\b(?:no\.?|number|#)?\s*(\d+)\b', u_lower)
+            if num_m:
+                idx = int(num_m.group(1)) - 1
+                if 0 <= idx < len(all_shown):
+                    return all_shown[idx]
+
+            # Fast path 2: ordinal words ("second", "third", …)
+            for word, num in _ORDINAL_MAP.items():
+                if re.search(r'\b' + word + r'\b', u_lower):
+                    idx = num - 1
+                    if 0 <= idx < len(all_shown):
+                        return all_shown[idx]
+                    break
+
+            # Fallback: LLM matches by name / subject keyword
+            summary = "\n".join([
+                f"{i+1}. From: {_sender_display(m)[0]}, "
+                f"Subject: {_clean_subject(_get_header(m.get('payload', {}).get('headers', []), 'Subject') or 'no subject')}"
+                for i, m in enumerate(all_shown)
+            ])
+            pick = self._llm(
+                f"The user said: \"{utterance}\"\n"
+                f"Emails:\n{summary}\n"
+                "Which one? Match by name or subject keyword.\n"
+                "Reply with ONLY the 1-based index or NONE."
+            )
+            nums = re.findall(r"\d+", pick)
+            if nums:
+                idx = max(0, min(int(nums[0]) - 1, len(all_shown) - 1))
+                return all_shown[idx]
+            return None
+
+        while True:
+            batch_meta = messages[offset:offset + BATCH]
+            if not batch_meta:
+                await self._speak("That's all the emails.")
+                break
+
+            full_batch = [_get_message(service, m["id"]) for m in batch_meta]
+            all_shown.extend(full_batch)
+            self._store_email_context(all_shown)
+
+            if offset == 0:
+                await self._speak(
+                    f"You have {count} {label} {'email' if count == 1 else 'emails'}. "
+                    f"Here {'is' if len(full_batch) == 1 else 'are'} the first {len(full_batch)}."
+                )
+            else:
+                await self._speak(f"Emails {offset + 1} to {offset + len(full_batch)}.")
+
+            # Build all subjects into one speech string (faster, more natural)
+            lines = []
+            for i, m in enumerate(full_batch, offset + 1):
+                headers = m.get("payload", {}).get("headers", [])
+                subj = _clean_subject(_get_header(headers, "Subject") or "no subject")
+                sender = _get_header(headers, "From") or ""
+                addr_m = re.search(r"<([^>]+)>", sender)
+                sender_addr = addr_m.group(1).lower() if addr_m else sender.lower()
+                display = "you" if (my_email and sender_addr == my_email) else \
+                          (re.sub(r"<[^>]+>", "", sender).strip().strip('"') or sender)
+                lines.append(f"Number {i}, {subj}, from {display}.")
+            await self._speak(" ".join(lines))
+
+            has_more = (offset + BATCH) < count
+            more_hint = ", show more" if has_more else ""
+            follow_up_raw = await self._ask(
+                f"Want to read one, reply{more_hint}, or are you all set?"
+            )
+
+            follow_up_intent = self._llm(
+                f"The user said: \"{follow_up_raw}\"\n"
+                "READ: open/read an email in full\n"
+                "REPLY: reply to a specific email\n"
+                "MARK_READ: mark one or all as read\n"
+                "COMPOSE: write a new email\n"
+                "MORE: show more / next page\n"
+                "DONE: done, stop, nothing\n"
+                "Reply with ONE word."
+            ).upper()
+
+            if follow_up_intent == "MORE":
+                if has_more:
+                    offset += BATCH
+                    continue
+                await self._speak("No more emails to show.")
+                break
+
+            elif follow_up_intent == "READ":
+                target = _pick_from_shown(follow_up_raw)
+                if not target:
+                    pick_raw = await self._ask(
+                        f"Which one? Say a number, 1 to {len(all_shown)}."
+                    )
+                    target = _pick_from_shown(pick_raw)
+                    if not target:
+                        target = self._resolve_from_context(pick_raw, service)
+                if target:
+                    await self._read_full_message(service, target)
+                    await self._handle_post_read_reply(service, target)
+                break
+
+            elif follow_up_intent == "REPLY":
+                target = _pick_from_shown(follow_up_raw)
+                await self._flow_reply(service, follow_up_raw, msg=target)
+                break
+
+            elif follow_up_intent == "MARK_READ":
+                scope = self._llm(
+                    f"The user said: \"{follow_up_raw}\"\n"
+                    f"There are {len(all_shown)} emails shown.\n"
+                    "Mark ALL or a specific one? Reply ALL or a 1-based number."
+                ).upper()
+                if scope == "ALL":
+                    for m in all_shown:
+                        _mark_read(service, m["id"])
+                    await self._speak(f"Marked all {len(all_shown)} as read.")
+                else:
+                    nums = re.findall(r"\d+", scope)
+                    idx = max(0, min(int(nums[0]) - 1, len(all_shown) - 1)) if nums else 0
+                    _mark_read(service, all_shown[idx]["id"])
+                    await self._speak("Marked as read.")
+                break
+
+            elif follow_up_intent == "COMPOSE":
+                await self._flow_compose(service, follow_up_raw)
+                break
+
+            else:  # DONE
+                break
+
+    #  Entry point
     def call(self, worker: AgentWorker):
         self.worker = worker
         self.capability_worker = CapabilityWorker(self.worker)
         self.worker.session_tasks.create(self.run())
 
-    # ------------------------------------------------------------------
-    # Main entry
-    # ------------------------------------------------------------------
-
     async def run(self):
-        try:
-            self._log("info", "Gmail Connector started")
-            self.emails = []
-            self.current_email = None
-            self.pending_reply = None
-            self.pending_compose = None
-            self.idle_count = 0
-            self.prefs = await self.load_preferences()
+        first_msg = await self.capability_worker.wait_for_complete_transcription()
 
-            # Read trigger context and classify
-            trigger_context = self.get_trigger_context()
-            intent_data = self.classify_trigger_intent(trigger_context)
-            intent = intent_data.get("intent", "unknown")
-            self.mode = intent_data.get("mode", "full")
-
-            self._log("info", f"Trigger intent: {intent} | Mode: {self.mode}")
-
-            # Fetch emails upfront with filler speech
-            await self.capability_worker.speak(
-                "One sec, checking your inbox."
+        token = self.capability_worker.get_token("google")
+        if not token:
+            await self._speak(
+                "Your Google account isn't linked yet. "
+                "Head to Settings, then Linked Accounts to connect it."
             )
-            self.emails = self.gmail_list_unread()
-
-            if self.mode == "quick":
-                await self.handle_quick_intent(intent, intent_data)
-            else:
-                await self.handle_full_mode(intent, intent_data)
-
-        except Exception as e:
-            self._log("error", f"Unexpected error: {e}")
-            await self.capability_worker.speak(
-                "Something went wrong with Gmail. Try again in a moment."
-            )
-        finally:
-            self._log("info", "Gmail Connector ended")
             self.capability_worker.resume_normal_flow()
-
-    # ------------------------------------------------------------------
-    # Trigger context + intent classification
-    # ------------------------------------------------------------------
-
-    def get_trigger_context(self) -> str:
-        """Read last 5 user messages from conversation history."""
+            return
+ 
         try:
-            history = self.worker.agent_memory.full_message_history
-            if not history:
-                return ""
-            user_msgs = []
-            for msg in reversed(history):
-                try:
-                    if isinstance(msg, dict):
-                        role = msg.get("role")
-                        content = msg.get("content")
-                    else:
-                        role = msg.role if hasattr(msg, "role") else None
-                        content = msg.content if hasattr(msg, "content") else None
-                    if role == "user" and content:
-                        user_msgs.append(content)
-                    if len(user_msgs) >= 5:
-                        break
-                except Exception:
-                    continue
-            return "\n".join(reversed(user_msgs))
+            service = _build_gmail_service(token)
+            self.worker.editor_logging_handler.info("Gmail service ready.")
         except Exception as e:
-            self._log("error", f"Trigger context error: {e}")
-            return ""
-
-    def classify_trigger_intent(self, context: str) -> dict:
-        """Use LLM to classify the trigger intent and decide quick/full mode."""
-        if not context:
-            return {"intent": "summary", "mode": "full", "details": {}}
-        try:
-            raw = self.capability_worker.text_to_text_response(
-                TRIGGER_INTENT_PROMPT.format(context=context)
-            )
-            clean = raw.replace("```json", "").replace("```", "").strip()
-            return json.loads(clean)
-        except (json.JSONDecodeError, Exception) as e:
-            self._log("error", f"Trigger classification error: {e}")
-            return {"intent": "summary", "mode": "full", "details": {}}
-
-    def classify_session_intent(self, user_input: str) -> dict:
-        """Classify intent during an active session."""
-        try:
-            raw = self.capability_worker.text_to_text_response(
-                SESSION_INTENT_PROMPT.format(user_input=user_input)
-            )
-            clean = raw.replace("```json", "").replace("```", "").strip()
-            return json.loads(clean)
-        except (json.JSONDecodeError, Exception) as e:
-            self._log("error", f"Session classification error: {e}")
-            return {"intent": "unknown", "details": {}}
-
-    # ------------------------------------------------------------------
-    # Quick mode
-    # ------------------------------------------------------------------
-
-    async def handle_quick_intent(self, intent: str, intent_data: dict):
-        """Answer a specific question and offer brief follow-up."""
-        details = intent_data.get("details", {})
-
-        if intent == "summary":
-            await self.handle_summary()
-        elif intent == "read_specific":
-            await self.handle_read_specific(details)
-        elif intent == "reply":
-            await self.handle_reply(details)
-        elif intent == "compose":
-            await self.handle_compose(details)
-        elif intent == "search":
-            await self.handle_search(details)
-        elif intent == "mark_read":
-            await self.handle_mark_read(details)
-        elif intent == "archive":
-            await self.handle_archive(details)
-        else:
-            await self.handle_summary()
-
-        # Brief follow-up window
-        await self.capability_worker.speak(
-            "Anything else with your email?"
-        )
-        follow_up = await self.capability_worker.user_response()
-        if follow_up and not self._is_exit(follow_up):
-            session_intent = self.classify_session_intent(follow_up)
-            await self.route_session_intent(
-                session_intent.get("intent", "unknown"),
-                session_intent.get("details", {}),
-            )
-
-    # ------------------------------------------------------------------
-    # Full mode
-    # ------------------------------------------------------------------
-
-    async def handle_full_mode(self, intent: str, intent_data: dict):
-        """Full interactive session with inbox."""
-        details = intent_data.get("details", {})
-
-        # Initial action based on trigger
-        if intent == "triage":
-            await self.handle_triage()
-        elif intent == "read_specific":
-            await self.handle_read_specific(details)
-        elif intent == "compose":
-            await self.handle_compose(details)
-        elif intent == "reply":
-            await self.handle_reply(details)
-        elif intent == "search":
-            await self.handle_search(details)
-        else:
-            await self.handle_summary()
-
-        # Session loop
-        for _ in range(30):
-            user_input = await self.capability_worker.user_response()
-
-            if not user_input or not user_input.strip():
-                self.idle_count += 1
-                if self.idle_count >= 2:
-                    await self.capability_worker.speak(
-                        "Sounds like you're all set. Closing Gmail."
-                    )
-                    return
-                continue
-
-            self.idle_count = 0
-
-            if self._is_exit(user_input):
-                await self.capability_worker.speak(
-                    "Got it. Closing Gmail. Have a good one!"
-                )
-                return
-
-            session_intent = self.classify_session_intent(user_input)
-            await self.route_session_intent(
-                session_intent.get("intent", "unknown"),
-                session_intent.get("details", {}),
-            )
-
-    async def route_session_intent(self, intent: str, details: dict):
-        """Route a classified in-session intent to its handler."""
-        if intent == "summary":
-            await self.handle_summary()
-        elif intent == "read_specific":
-            await self.handle_read_specific(details)
-        elif intent == "reply":
-            await self.handle_reply(details)
-        elif intent == "compose":
-            await self.handle_compose(details)
-        elif intent == "search":
-            await self.handle_search(details)
-        elif intent == "mark_read":
-            await self.handle_mark_read(details)
-        elif intent == "archive":
-            await self.handle_archive(details)
-        elif intent == "triage":
-            await self.handle_triage()
-        else:
-            await self.capability_worker.speak(
-                "I can summarize, read, reply, compose, search, "
-                "or triage your emails. What would you like?"
-            )
-
-    # ------------------------------------------------------------------
-    # Feature handlers
-    # ------------------------------------------------------------------
-
-    async def handle_summary(self):
-        """Summarize unread emails."""
-        if not self.emails:
-            await self.capability_worker.speak(
-                "Your inbox is clear — no unread emails."
-            )
+            await self._speak("Couldn't connect to Gmail. Try again in a moment.")
+            self.worker.editor_logging_handler.error(f"Gmail service build error: {e}")
+            self.capability_worker.resume_normal_flow()
             return
 
-        email_list = self._format_email_list_for_llm(self.emails[:15])
-        summary = self.capability_worker.text_to_text_response(
-            SUMMARIZE_PROMPT.format(emails=email_list)
-        )
-        await self.capability_worker.speak(summary)
-
-    async def handle_read_specific(self, details: dict):
-        """Read a specific email based on sender/subject match."""
-        sender = details.get("sender", "")
-        keywords = details.get("keywords", "")
-
-        if not self.emails:
-            await self.capability_worker.speak("No unread emails to read.")
-            return
-
-        # Find matching email
-        match = self._find_email(sender, keywords)
-        if not match:
-            await self.capability_worker.speak(
-                "I don't see a recent email matching that. "
-                "Can you give me more details?"
-            )
-            return
-
-        self.current_email = match
-
-        # Get full message if we only have a snippet
-        email_id = match.get("id")
-        if email_id and not match.get("body"):
-            full = self.gmail_get_message(email_id)
-            if full:
-                match.update(full)
-                self.current_email = match
-
-        # Summarize for voice
-        sender_name = match.get("sender", "someone")
-        subject = match.get("subject", "no subject")
-        body = match.get("body", match.get("snippet", ""))
-
-        spoken = self.capability_worker.text_to_text_response(
-            EMAIL_BODY_PROMPT.format(
-                sender=sender_name, subject=subject, body=body[:2000]
-            )
-        )
-        await self.capability_worker.speak(
-            f"From {self.format_email_for_speech(sender_name)}, "
-            f"subject: {subject}."
-        )
-        await self.capability_worker.speak(spoken)
-        await self.capability_worker.speak(
-            "Want to reply, archive, or move on?"
-        )
-
-    async def handle_reply(self, details: dict):
-        """Reply to the current or specified email."""
-        # Determine which email to reply to
-        if not self.current_email and self.emails:
-            sender = details.get("sender", "")
-            if sender:
-                match = self._find_email(sender, "")
-                if match:
-                    self.current_email = match
-
-        if not self.current_email:
-            await self.capability_worker.speak(
-                "Which email do you want to reply to?"
-            )
-            clarify = await self.capability_worker.user_response()
-            if not clarify or self._is_exit(clarify):
-                return
-            match = self._find_email(clarify, clarify)
-            if not match:
-                await self.capability_worker.speak(
-                    "I couldn't find that email. Let's skip this one."
-                )
-                return
-            self.current_email = match
-
-        # Collect reply content
-        body_text = details.get("body") or details.get("content")
-        if not body_text:
-            await self.capability_worker.speak("What do you want to say?")
-            body_text = await self.capability_worker.user_response()
-            if not body_text or self._is_exit(body_text):
-                await self.capability_worker.speak("Reply cancelled.")
-                return
-
-        # Draft with LLM
-        draft = self.capability_worker.text_to_text_response(
-            DRAFT_EMAIL_PROMPT.format(user_input=body_text)
-        )
-
-        # Confirm before sending
-        await self.capability_worker.speak(
-            f"Here's what I'll send: {draft}. Should I send it?"
-        )
-        confirmed = await self.capability_worker.run_confirmation_loop(
-            "Say yes to send, or no to cancel."
-        )
-
-        if confirmed:
-            await self.capability_worker.speak("Sending your reply.")
-            thread_id = self.current_email.get("thread_id", "")
-            to_email = self.current_email.get("sender_email", "")
-            subject = self.current_email.get("subject", "")
-            success = self.gmail_send_reply(thread_id, to_email, subject, draft)
-            if success:
-                await self.capability_worker.speak("Reply sent!")
-            else:
-                await self.capability_worker.speak(
-                    "I had trouble sending that. Try again later."
-                )
-        else:
-            await self.capability_worker.speak(
-                "Okay, reply cancelled."
-            )
-
-    async def handle_compose(self, details: dict):
-        """Compose and send a new email with multi-turn collect flow."""
-        # Try to extract everything from the initial utterance
-        extracted = details
-        if not extracted.get("recipient"):
-            try:
-                raw = self.capability_worker.text_to_text_response(
-                    COMPOSE_EXTRACT_PROMPT.format(
-                        user_input=json.dumps(details)
-                    )
-                )
-                clean = raw.replace("```json", "").replace("```", "").strip()
-                extracted = json.loads(clean)
-            except Exception:
-                extracted = {}
-
-        # Collect recipient
-        recipient = extracted.get("recipient")
-        if not recipient:
-            await self.capability_worker.speak("Who should I send it to?")
-            recipient = await self.capability_worker.user_response()
-            if not recipient or self._is_exit(recipient):
-                await self.capability_worker.speak("Email cancelled.")
-                return
-
-        # Try to resolve name to email from recent messages
-        recipient_email = self._resolve_recipient(recipient)
-        if not recipient_email:
-            await self.capability_worker.speak(
-                f"What's {recipient}'s email address?"
-            )
-            recipient_email = await self.capability_worker.user_response()
-            if not recipient_email or self._is_exit(recipient_email):
-                await self.capability_worker.speak("Email cancelled.")
-                return
-
-        # Collect subject
-        subject = extracted.get("subject")
-        if not subject:
-            await self.capability_worker.speak("What's the subject?")
-            subject = await self.capability_worker.user_response()
-            if not subject or self._is_exit(subject):
-                await self.capability_worker.speak("Email cancelled.")
-                return
-
-        # Collect body
-        body_input = extracted.get("body")
-        if not body_input:
-            await self.capability_worker.speak("What do you want to say?")
-            body_input = await self.capability_worker.user_response()
-            if not body_input or self._is_exit(body_input):
-                await self.capability_worker.speak("Email cancelled.")
-                return
-
-        # Draft with LLM
-        draft = self.capability_worker.text_to_text_response(
-            DRAFT_EMAIL_PROMPT.format(user_input=body_input)
-        )
-
-        # Read back and confirm
-        spoken_email = self.format_email_for_speech(recipient_email)
-        await self.capability_worker.speak(
-            f"To {spoken_email}, subject: {subject}. "
-            f"Message: {draft}. Should I send it?"
-        )
-        confirmed = await self.capability_worker.run_confirmation_loop(
-            "Say yes to send, or no to cancel."
-        )
-
-        if confirmed:
-            await self.capability_worker.speak("Sending your email.")
-            success = self.gmail_send_new(recipient_email, subject, draft)
-            if success:
-                await self.capability_worker.speak("Email sent!")
-            else:
-                await self.capability_worker.speak(
-                    "I had trouble sending that. Try again later."
-                )
-        else:
-            await self.capability_worker.speak("Okay, email cancelled.")
-
-    async def handle_search(self, details: dict):
-        """Search emails by sender, keywords, or date."""
-        search_input = json.dumps(details) if details else ""
-
-        # Extract search params
+        context_prefix = ""
         try:
-            raw = self.capability_worker.text_to_text_response(
-                SEARCH_EXTRACT_PROMPT.format(user_input=search_input)
-            )
-            clean = raw.replace("```json", "").replace("```", "").strip()
-            params = json.loads(clean)
+            history = self.capability_worker.get_full_message_history()
+            if history:
+                recent = [m for m in history[-6:] if isinstance(m.get("content"), str)]
+                if recent:
+                    context_prefix = "Recent conversation:\n" + "\n".join([
+                        f"{m.get('role', '')}: {m['content'][:120]}" for m in recent
+                    ]) + "\n\n"
         except Exception:
-            params = details or {}
+            pass
 
-        # Build Gmail search query
-        query_parts = []
-        if params.get("sender"):
-            query_parts.append(f"from:{params['sender']}")
-        if params.get("keywords"):
-            query_parts.append(params["keywords"])
-        date_range = params.get("date_range")
-        if date_range == "today":
-            query_parts.append(f"after:{datetime.now().strftime('%Y/%m/%d')}")
-        elif date_range == "yesterday":
-            query_parts.append("newer_than:1d")
-        elif date_range in ("this_week", "last_week"):
-            query_parts.append("newer_than:7d")
-        elif date_range == "this_month":
-            query_parts.append("newer_than:30d")
+        # LLM-based intent classification — no hardcoded keyword gates
+        intent = self._llm(
+            f"{context_prefix}"
+            f"Classify this Gmail intent: '{first_msg}'.\n"
+            "COMPOSE — user wants to send, write, shoot, or fire off a new email\n"
+            "REPLY   — user wants to reply, respond, get back to, answer, or hit someone back\n"
+            "READ    — user wants to read, open, hear, or know what an email says\n"
+            "LIST    — user wants to list, show, check, see what came in, or know about unread/new emails\n"
+            "UNKNOWN — not related to email, too vague to tell, or just filler like 'okay', 'hey', 'hmm'\n"
+            "Reply with exactly one word: COMPOSE, REPLY, READ, LIST, or UNKNOWN."
+        ).upper()
 
-        query = " ".join(query_parts) if query_parts else "is:unread"
+        routing_msg = first_msg
 
-        await self.capability_worker.speak("Searching your email.")
-        results = self.gmail_search(query)
-
-        if not results:
-            await self.capability_worker.speak(
-                "I didn't find any emails matching that."
-            )
-            return
-
-        # Summarize results
-        count = len(results)
-        first = results[0]
-        sender = first.get("sender", "someone")
-        subject = first.get("subject", "no subject")
-        await self.capability_worker.speak(
-            f"I found {count} email{'s' if count != 1 else ''} matching that. "
-            f"The most recent is from {self.format_email_for_speech(sender)} "
-            f"about {subject}. Want me to read it?"
-        )
-
-        answer = await self.capability_worker.user_response()
-        if answer and any(w in answer.lower() for w in ["yes", "yeah", "sure", "read"]):
-            self.current_email = first
-            await self.handle_read_specific({"sender": sender})
-
-    async def handle_mark_read(self, details: dict):
-        """Mark the current email as read."""
-        target = self.current_email
-        if not target:
-            await self.capability_worker.speak(
-                "Which email should I mark as read?"
-            )
-            return
-
-        email_id = target.get("id")
-        if email_id:
-            success = self.gmail_mark_read(email_id)
-            if success:
-                await self.capability_worker.speak("Marked as read.")
-            else:
-                await self.capability_worker.speak(
-                    "Sorry, mark as read isn't available right now."
+        if intent == "UNKNOWN":
+            await self._speak("Gmail ready. What would you like to do?")
+            while True:
+                intent_raw = (await self.capability_worker.user_response()).strip()
+                routing_msg = intent_raw
+                intent = self._llm(
+                    f"Classify this Gmail intent: '{intent_raw}'.\n"
+                    "COMPOSE — send / shoot / write / fire off a new email to someone\n"
+                    "REPLY   — reply / respond / get back to / answer / hit back\n"
+                    "READ    — read / open / what does X say / read it to me\n"
+                    "LIST    — list / show / check / anything new / what came in / any unread\n"
+                    "UNKNOWN — unclear, unrelated, or just a filler word like 'okay', 'yes', 'hmm'\n"
+                    "Reply with exactly one word: COMPOSE, REPLY, READ, LIST, or UNKNOWN."
+                ).upper()
+                if intent != "UNKNOWN":
+                    break
+                await self._speak(
+                    "Sorry, I didn't catch that. "
+                    "You can send, reply, read, or check your emails."
                 )
-        else:
-            await self.capability_worker.speak(
-                "I don't have a reference to that email."
-            )
 
-    async def handle_archive(self, details: dict):
-        """Archive the current email (moves to trash via Composio)."""
-        target = self.current_email
-        if not target:
-            await self.capability_worker.speak(
-                "Which email should I archive?"
-            )
-            return
-
-        email_id = target.get("id")
-        if email_id:
-            success = self.gmail_archive(email_id)
-            if success:
-                await self.capability_worker.speak(
-                    "Done — moved to trash."
-                )
-            else:
-                await self.capability_worker.speak(
-                    "I had trouble with that. Try again."
-                )
-        else:
-            await self.capability_worker.speak(
-                "I don't have a reference to that email."
-            )
-
-    async def handle_triage(self):
-        """Walk through unread emails one by one."""
-        if not self.emails:
-            await self.capability_worker.speak(
-                "No unread emails to triage. You're all caught up!"
-            )
-            return
-
-        await self.capability_worker.speak(
-            f"You have {len(self.emails)} unread email"
-            f"{'s' if len(self.emails) != 1 else ''}. Let's go through them."
-        )
-
-        for i, email in enumerate(self.emails[:15]):
-            self.current_email = email
-            sender = email.get("sender", "someone")
-            subject = email.get("subject", "no subject")
-            snippet = email.get("snippet", "")
-
-            # One-sentence summary per email
-            summary = self.capability_worker.text_to_text_response(
-                f"Give a 1-sentence spoken summary of this email. "
-                f"From: {sender}, Subject: {subject}, "
-                f"Preview: {snippet[:200]}"
-            )
-
-            position = "First" if i == 0 else "Next"
-            await self.capability_worker.speak(
-                f"{position} — {summary}"
-            )
-            await self.capability_worker.speak(
-                "Reply, skip, mark read, or archive?"
-            )
-
-            action = await self.capability_worker.user_response()
-            if not action or self._is_exit(action):
-                await self.capability_worker.speak(
-                    "Okay, stopping triage."
-                )
-                return
-
-            lower = action.lower()
-            if "reply" in lower:
-                await self.handle_reply({})
-            elif "archive" in lower:
-                await self.handle_archive({})
-            elif "read" in lower and "mark" in lower:
-                await self.handle_mark_read({})
-            elif "read" in lower:
-                await self.handle_read_specific(
-                    {"sender": sender}
-                )
-            # "skip" or anything else → move to next
-
-        await self.capability_worker.speak(
-            "That's all your unread emails. Nice work!"
-        )
-
-    # ------------------------------------------------------------------
-    # Gmail API helpers (Composio)
-    # ------------------------------------------------------------------
-
-    def execute_composio_action(self, action_slug: str, params: dict) -> Optional[dict]:
-        """Call a Composio action. Returns response dict or None on error."""
-        url = f"{COMPOSIO_BASE_URL}/actions/{action_slug}/execute"
-        headers = {
-            "X-API-KEY": COMPOSIO_API_KEY,
-            "Content-Type": "application/json",
-        }
-        payload = {
-            "connectedAccountId": COMPOSIO_USER_ID,
-            "entityId": COMPOSIO_ENTITY_ID,
-            "input": params,
-        }
         try:
-            response = requests.post(
-                url, json=payload, headers=headers, timeout=15
-            )
-            if response.status_code == 200:
-                return response.json()
-            elif response.status_code == 401:
-                self._log("error", "Composio 401 — token may be expired")
-            elif response.status_code == 429:
-                self._log("error", "Composio 429 — rate limited")
+            if intent == "COMPOSE":
+                await self._flow_compose(service, routing_msg)
+            elif intent == "REPLY":
+                await self._flow_reply(service, routing_msg)
+            elif intent == "LIST":
+                await self._flow_list(service, routing_msg)
+            elif intent == "READ":
+                await self._flow_read(service, routing_msg)
             else:
-                self._log(
-                    "error",
-                    f"Composio {response.status_code}: {response.text[:200]}",
+                await self._speak(
+                    "Not sure what you'd like to do. "
+                    "You can compose, reply, read, or list emails."
                 )
-            return None
-        except requests.exceptions.Timeout:
-            self._log("error", "Composio request timed out")
-            return None
         except Exception as e:
-            self._log("error", f"Composio request failed: {e}")
-            return None
-
-    def gmail_list_unread(self) -> list:
-        """Fetch unread emails. Returns list of email dicts."""
-        result = self.execute_composio_action(
-            "GMAIL_FETCH_EMAILS",
-            {"query": "is:unread", "max_results": 15, "user_id": "me"},
-        )
-        if not result:
-            return []
-        return self._parse_email_list(result)
-
-    def gmail_get_message(self, message_id: str) -> Optional[dict]:
-        """Get a single email by ID."""
-        result = self.execute_composio_action(
-            "GMAIL_FETCH_MESSAGE_BY_MESSAGE_ID",
-            {"message_id": message_id, "format": "full", "user_id": "me"},
-        )
-        if not result:
-            return None
-        return self._parse_single_email(result)
-
-    def gmail_send_reply(
-        self, thread_id: str, to: str, subject: str, body: str
-    ) -> bool:
-        """Reply to an email thread."""
-        result = self.execute_composio_action(
-            "GMAIL_REPLY_TO_THREAD",
-            {
-                "thread_id": thread_id,
-                "recipient_email": to,
-                "message_body": body,
-                "user_id": "me",
-            },
-        )
-        return result is not None
-
-    def gmail_send_new(self, to: str, subject: str, body: str) -> bool:
-        """Send a new email."""
-        result = self.execute_composio_action(
-            "GMAIL_SEND_EMAIL",
-            {
-                "recipient_email": to,
-                "subject": subject,
-                "body": body,
-                "user_id": "me",
-            },
-        )
-        return result is not None
-
-    def gmail_search(self, query: str) -> list:
-        """Search emails by query string (uses GMAIL_FETCH_EMAILS with query)."""
-        result = self.execute_composio_action(
-            "GMAIL_FETCH_EMAILS",
-            {"query": query, "max_results": 10, "user_id": "me"},
-        )
-        if not result:
-            return []
-        return self._parse_email_list(result)
-
-    def gmail_mark_read(self, message_id: str) -> bool:
-        """Mark as read — not directly supported by Composio.
-        Uses GMAIL_FETCH_MESSAGE_BY_MESSAGE_ID as a workaround to
-        trigger a read, or logs that the action is unavailable.
-        """
-        self._log("warning", "Mark-as-read not available via Composio")
-        return False
-
-    def gmail_archive(self, message_id: str) -> bool:
-        """Archive — uses GMAIL_MOVE_TO_TRASH as closest available action.
-        NOTE: This trashes, not archives. Inform user accordingly.
-        """
-        result = self.execute_composio_action(
-            "GMAIL_MOVE_TO_TRASH",
-            {"message_id": message_id, "user_id": "me"},
-        )
-        return result is not None
-
-    # ------------------------------------------------------------------
-    # Response parsers (adapt these once you know Composio's response format)
-    # ------------------------------------------------------------------
-
-    def _parse_email_list(self, api_response: dict) -> list:
-        """Parse Composio v2 response into a list of email dicts.
-
-        Actual Composio format: {"data": {"messages": [{"messageId": ...,
-        "payload": {"headers": [{"name":...,"value":...}]}, ...}]}}
-        """
-        emails = []
-        try:
-            data = api_response
-            if isinstance(data, dict) and "data" in data:
-                data = data["data"]
-            if isinstance(data, dict):
-                data = data.get("messages", data.get("emails", []))
-            if not isinstance(data, list):
-                data = [data] if data else []
-
-            for msg in data:
-                if not isinstance(msg, dict):
-                    continue
-                headers = {}
-                payload = msg.get("payload", {})
-                for h in payload.get("headers", []):
-                    headers[h.get("name", "").lower()] = h.get("value", "")
-
-                sender = headers.get("from", msg.get("from", ""))
-                subject = headers.get("subject", msg.get("subject", ""))
-                snippet = msg.get("snippet", "")
-                body = self._extract_body(payload)
-
-                emails.append({
-                    "id": msg.get("messageId", msg.get("id", "")),
-                    "thread_id": msg.get("threadId", msg.get("thread_id", "")),
-                    "sender": sender,
-                    "sender_email": self._extract_email_address(sender),
-                    "subject": subject,
-                    "snippet": snippet,
-                    "body": body or snippet,
-                    "date": msg.get("messageTimestamp", headers.get("date", "")),
-                    "labels": msg.get("labelIds", []),
-                })
-        except Exception as e:
-            self._log("error", f"Email list parse error: {e}")
-        return emails
-
-    def _parse_single_email(self, api_response: dict) -> Optional[dict]:
-        """Parse a single email response from Composio."""
-        emails = self._parse_email_list(api_response)
-        return emails[0] if emails else None
-
-    @staticmethod
-    def _extract_body(payload: dict) -> str:
-        """Recursively extract plain text body from Gmail payload."""
-        body_data = payload.get("body", {}).get("data", "")
-        if body_data:
-            try:
-                return base64.urlsafe_b64decode(body_data).decode("utf-8", errors="replace")
-            except Exception:
-                return body_data
-        for part in payload.get("parts", []):
-            if part.get("mimeType", "").startswith("text/plain"):
-                data = part.get("body", {}).get("data", "")
-                if data:
-                    try:
-                        return base64.urlsafe_b64decode(data).decode("utf-8", errors="replace")
-                    except Exception:
-                        return data
-            nested = GmailConnectorCapability._extract_body(part)
-            if nested:
-                return nested
-        return ""
-
-    # ------------------------------------------------------------------
-    # Utility methods
-    # ------------------------------------------------------------------
-
-    def _find_email(self, sender: str, keywords: str) -> Optional[dict]:
-        """Find an email matching sender name or keywords."""
-        sender_lower = (sender or "").lower()
-        keywords_lower = (keywords or "").lower()
-
-        for email in self.emails:
-            email_sender = (email.get("sender", "") or "").lower()
-            email_subject = (email.get("subject", "") or "").lower()
-            email_snippet = (email.get("snippet", "") or "").lower()
-
-            if sender_lower and sender_lower in email_sender:
-                return email
-            if keywords_lower and (
-                keywords_lower in email_subject
-                or keywords_lower in email_snippet
-            ):
-                return email
-        return None
-
-    def _resolve_recipient(self, name: str) -> Optional[str]:
-        """Try to find an email address from recent messages by name."""
-        name_lower = (name or "").lower()
-        # Check if it already looks like an email
-        if "@" in name:
-            return name
-        # Search through fetched emails
-        for email in self.emails:
-            sender = (email.get("sender", "") or "").lower()
-            if name_lower in sender:
-                return email.get("sender_email", "")
-        return None
-
-    @staticmethod
-    def _extract_email_address(sender_str: str) -> str:
-        """Extract email address from 'Name <email>' format."""
-        match = re.search(r"<([^>]+)>", sender_str)
-        if match:
-            return match.group(1)
-        if "@" in sender_str:
-            return sender_str.strip()
-        return sender_str
-
-    @staticmethod
-    def format_email_for_speech(text: str) -> str:
-        """Convert email addresses and tech strings for spoken output."""
-        return text.replace("@", " at ").replace(".", " dot ")
-
-    def _format_email_list_for_llm(self, emails: list) -> str:
-        """Format email list as text for LLM summarization."""
-        lines = []
-        for i, e in enumerate(emails, 1):
-            lines.append(
-                f"{i}. From: {e.get('sender', '?')} | "
-                f"Subject: {e.get('subject', '?')} | "
-                f"Preview: {e.get('snippet', '')[:100]}"
-            )
-        return "\n".join(lines)
-
-    def _is_exit(self, text: str) -> bool:
-        """Check if user input contains exit intent."""
-        if not text:
-            return False
-        lower = text.lower().strip()
-        lower = re.sub(r"[^\w\s']", "", lower)
-        for word in EXIT_WORDS:
-            if word in lower:
-                return True
-        return False
-
-    def _log(self, level: str, message: str):
-        """Log to the editor logging handler."""
-        handler = self.worker.editor_logging_handler
-        if level == "error":
-            handler.error(f"[GmailConnector] {message}")
-        elif level == "warning":
-            handler.warning(f"[GmailConnector] {message}")
-        else:
-            handler.info(f"[GmailConnector] {message}")
-
-    # ------------------------------------------------------------------
-    # Persistence (delete + write pattern)
-    # ------------------------------------------------------------------
-
-    async def load_preferences(self) -> dict:
-        """Load user preferences or return defaults."""
-        if await self.capability_worker.check_if_file_exists(PREFS_FILE, False):
-            try:
-                raw = await self.capability_worker.read_file(PREFS_FILE, False)
-                return json.loads(raw)
-            except (json.JSONDecodeError, Exception):
-                self._log("error", "Corrupt prefs file, using defaults.")
-        return {
-            "max_emails_in_summary": 10,
-            "triage_order": "newest_first",
-            "auto_mark_read_after_listening": False,
-        }
-
-    async def save_json(self, filename: str, data: dict, temp: bool = False):
-        """Save JSON using delete + write pattern."""
-        if await self.capability_worker.check_if_file_exists(filename, temp):
-            await self.capability_worker.delete_file(filename, temp)
-        await self.capability_worker.write_file(
-            filename, json.dumps(data), temp
-        )
+            self.worker.editor_logging_handler.error(f"Gmail unhandled error: {e}")
+            await self._speak("Something went wrong. Please try again.")
+        finally:
+            self.capability_worker.resume_normal_flow()

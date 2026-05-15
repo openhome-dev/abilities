@@ -1,55 +1,137 @@
-# Google Daily Brief
+# Daily Morning Brief
 
-![Community](https://img.shields.io/badge/OpenHome-Community-orange?style=flat-square)
-![Author](https://img.shields.io/badge/Author-@ammyyou112-lightgrey?style=flat-square)
+Daily Morning Brief is an OpenHome community ability that gives the user a short voice briefing for the day. It combines weather, today's Google Calendar events, and today's unread Gmail count into three concise spoken sections.
 
 ## What It Does
 
-Voice-activated morning briefing that fetches weather, Google Calendar, and Gmail in parallel, then synthesizes everything into one ~60-second spoken summary. Weather is personalized per user via IP geolocation.
+- Gives a warm morning introduction
+- Fetches local weather using Open-Meteo
+- Uses the user's OpenHome timezone for today's date and calendar window
+- Fetches today's Google Calendar events from the primary calendar
+- Counts today's unread Gmail messages in the inbox
+- Synthesizes weather, email, and calendar into a short spoken briefing
+- Speaks temperatures in Celsius
+- Falls back from IP-based location to saved location, then timezone-based location when possible
+- Stores only non-secret location preferences for faster future weather lookup
+- Exits cleanly back to the normal OpenHome conversation
 
-## Suggested Trigger Words
+## Briefing Sections
 
-- "good morning"
-- "give me my brief"
-- "give me a brief"
-- "daily brief"
-- "brief me"
-- "start my day"
-- "what did I miss"
+| Section | Data source | What it says |
+|---|---|---|
+| Weather | Open-Meteo plus detected location | Current temperature, conditions, high, low, and rain chance |
+| Email | Gmail API | Today's unread inbox count |
+| Calendar | Google Calendar API | Up to five events from today's primary calendar |
 
-## Setup
+## Example Prompts
 
-1. **Google Cloud Console** — Create a project, enable Google Calendar API and Gmail API.
+- "Daily brief."
+- "Morning brief."
+- "Brief me."
+- "Start my day."
+- "What's up for today?"
+- "What's on my calendar today?"
 
-2. **Create OAuth 2.0 credentials**: Go to **APIs & Services** -> **Credentials** -> Click **create credentials** -> select **Web application** -> give it a name -> and  under **Authorized redirect URIs** add this URL: `https://developers.google.com/oauthplayground`. Click save and download the JSON.
-   
-3. **Get tokens** — Use [Google OAuth 2.0 Playground](https://developers.google.com/oauthplayground/):
-   - Click the gear icon (⚙️) and enable "Use your own OAuth credentials"
-   - Enter your Client ID and Client Secret from the downloaded JSON
-   - Select scopes: `https://www.googleapis.com/auth/calendar.readonly` and `https://www.googleapis.com/auth/gmail.readonly`
-   - Click "Authorize APIs" and sign in with your Google account
-   - Click "Exchange authorization code for tokens"
-   - Copy the `access_token` and `refresh_token` — you'll paste these into `main.py`
+## Trigger Phrases
 
-4. **Update main.py** — Replace `YOUR_CLIENT_ID_HERE`, `YOUR_CLIENT_SECRET_HERE`, `YOUR_ACCESS_TOKEN_HERE`, and `YOUR_REFRESH_TOKEN_HERE` with your values.
+- `daily brief`
+- `morning brief`
+- `brief me`
+- `start my day`
+- `what's up for today`
+- `what's on my calendar today`
 
-5. **Upload** — Zip this folder, upload to [app.openhome.com](https://app.openhome.com) → Abilities → Add Custom Ability, set trigger words in the dashboard.
+Avoid using only `good morning` as the trigger phrase because it can overlap with normal assistant conversation.
 
-## How It Works
+## Account Linking Guide
 
-1. User says a trigger phrase (e.g. "good morning").
-2. Ability fetches weather (Open-Meteo, free), calendar (Google Calendar API), and email (Gmail API) in parallel.
-3. LLM synthesizes the data into one cohesive spoken briefing.
-4. User can say "repeat", "check my calendar", or "no" to exit.
+This ability does not use a manual Google API key. It reads a Google OAuth token from OpenHome with:
 
-## Example Conversation
+```python
+self.capability_worker.get_token("google")
+```
 
-> **User:** "Good morning."
-> **AI:** "Good morning! Let me get your brief."
-> **AI:** "Right now in Lahore it's 79 degrees with clear skies. Your calendar is clear today. You've got 201 unread emails including one from iCloud about storage. That's your brief!"
-> **AI:** "Anything else?"
-> **User:** "Check my calendar."
-> **AI:** "There's nothing on your calendar today."
-> **AI:** "Anything else?"
-> **User:** "No."
-> **AI:** "Have a great day!"
+Before using the ability, connect the Google account that contains the Gmail inbox and Google Calendar you want included in the brief.
+
+1. Open OpenHome.
+2. Go to **Settings -> Linked Accounts**.
+3. Choose **Google**.
+4. Sign in to the Google account you want to use.
+5. Approve the requested Google permissions for Gmail and Calendar access.
+6. Return to OpenHome and enable or install the Daily Morning Brief ability.
+7. Add trigger phrases such as `daily brief`, `morning brief`, and `start my day`.
+8. Start a conversation and say one of the trigger phrases.
+
+If the Google account is not linked, the ability will say that the account is not connected and stop.
+
+## Data Access
+
+| Service | Authentication | Used for |
+|---|---|---|
+| Google Calendar API | Linked Google account | Reading today's primary calendar events |
+| Gmail API | Linked Google account | Counting today's unread inbox messages |
+| Open-Meteo | No API key | Fetching current weather and daily forecast |
+| IP geolocation | Public client IP when available | Estimating location for weather |
+
+The ability reads only the minimum data needed for the brief: event titles/times/locations, unread Gmail count, and weather information. It does not send emails, modify calendar events, or change tasks.
+
+## Location Behavior
+
+Weather needs a latitude and longitude. The ability resolves location in this order:
+
+1. Public IP geolocation when available.
+2. A previously saved location from `daily_brief_prefs.json`.
+3. A timezone-based fallback for known timezones.
+4. If none of those work, the weather section is reported as unavailable.
+
+## Stored Data
+
+The ability stores non-secret location preferences in:
+
+```json
+daily_brief_prefs.json
+```
+
+Example shape:
+
+```json
+{
+  "location": {
+    "lat": 40.7128,
+    "lon": -74.006,
+    "city": "New York",
+    "source": "ip_geolocation",
+    "saved_at": "2026-05-14T12:00:00+00:00"
+  }
+}
+```
+
+OAuth tokens are handled by OpenHome and are not stored in this file.
+
+## Voice Flow
+
+1. User triggers the ability.
+2. The ability checks for a linked Google account.
+3. It speaks a short opening line.
+4. It determines the user's timezone.
+5. It resolves a weather location.
+6. It fetches weather, today's calendar events, and today's unread Gmail count.
+7. It asks the LLM to synthesize the data into three short sections: weather, email, and calendar.
+8. It speaks each section with a short pause between them.
+9. It speaks a short closing line.
+10. It calls `resume_normal_flow()` so the OpenHome agent can continue normally.
+
+## Failure Handling
+
+- If Google is not linked, the ability gives setup guidance and exits.
+- If weather location cannot be determined, the weather section becomes unavailable instead of guessing.
+- If Gmail or Calendar is temporarily unavailable, the brief continues with the data that did load.
+- If every data source fails, the ability asks the user to try again later.
+- Generated text is cleaned to remove duplicate greetings, duplicate sign-offs, markdown, URLs, and awkward formatting.
+
+## Files
+
+- `main.py` - ability implementation.
+- `README.md` - this documentation.
+
+Developed by [@Ammad Yousaf](https://github.com/ammyyou112).
