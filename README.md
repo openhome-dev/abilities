@@ -119,9 +119,16 @@ Maintained by the OpenHome team. Tested, stable, and supported.
 
 Built by the community. Reviewed for security and SDK compliance before merging.
 
-| Ability | Description | Author | API Required |
-|---------|-------------|--------|--------------|
-| *Your Ability here* | [Contribute one →](CONTRIBUTING.md) | | |
+| Ability | Description | Example Triggers | API Required | Docs |
+|---------|-------------|------------------|--------------|------|
+| [Gmail Voice Assistant](https://github.com/openhome-dev/abilities/tree/dev/community/gmail-connector) | Manage Gmail by voice — list, read, reply, compose, archive, and mark as read | "check my email", "gmail", "send an email" | Google OAuth | [README](https://github.com/openhome-dev/abilities/blob/dev/community/gmail-connector/README.md) |
+| [Google Calendar Assistant](https://github.com/openhome-dev/abilities/tree/dev/community/google-calendar) | Create, list, update, and delete Google Calendar events | "google calendar", "what's on my calendar", "schedule a meeting" | Google OAuth | [README](https://github.com/openhome-dev/abilities/blob/dev/community/google-calendar/README.md) |
+| [Google Tasks Assistant](https://github.com/openhome-dev/abilities/tree/dev/community/google-tasks) | Add, view, complete, delete, and rename Google Tasks across task lists | "tasks", "todo", "add a task" | Google OAuth | [README](https://github.com/openhome-dev/abilities/blob/dev/community/google-tasks/README.md) |
+| [Daily Morning Brief](https://github.com/openhome-dev/abilities/tree/dev/community/google-daily-brief) | Short morning brief covering weather, today's calendar, and unread emails | "daily brief", "morning brief", "start my day" | Google OAuth, Open-Meteo (keyless) | [README](https://github.com/openhome-dev/abilities/blob/dev/community/google-daily-brief/README.md) |
+| [Podcast Player](https://github.com/openhome-dev/abilities/tree/dev/community/podcast-player) | Find and play podcast episodes by voice, including trending picks and guest search | "play a podcast", "podcast player", "play the latest <show>" | Listen Notes | [README](https://github.com/openhome-dev/abilities/blob/dev/community/podcast-player/README.md) |
+| [Movie Recommender](https://github.com/openhome-dev/abilities/tree/dev/community/movie-recommender) | Discover movies by voice — recommendations, trending, ratings, and where to watch | "recommend a movie", "what should I watch", "trending movies" | TMDB | [README](https://github.com/openhome-dev/abilities/blob/dev/community/movie-recommender/README.md) |
+| [Local Event Explorer](https://github.com/openhome-dev/abilities/tree/dev/community/local-event-explorer) | Find local concerts, comedy, festivals, and other things to do | "events", "find events", "event explorer" | Ticketmaster, Serper, SeatGeek | [README](https://github.com/openhome-dev/abilities/blob/dev/community/local-event-explorer/README.md) |
+| *Your Ability here* | [Contribute one →](CONTRIBUTING.md) | | | |
 
 > **Note:** Community Abilities are reviewed for security and SDK compliance. OpenHome does not guarantee ongoing maintenance. See [Contributing](CONTRIBUTING.md) for details.
 
