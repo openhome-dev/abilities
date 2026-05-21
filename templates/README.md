@@ -249,6 +249,6 @@ self.capability_worker.write_file("state.json", json.dumps(data))
 4. **Add guardrails** — error handling, confirmation steps, and safety checks appropriate for your use case.
 5. **Coordinating a Skill + Daemon?** Use the `ReadWriteFile` pattern to pass state between `main.py` and `background.py` via shared JSON files.
 
-For full SDK documentation, see the [OpenHome Developer Docs](./docs).
+For full SDK documentation, see the [OpenHome Developer Docs](https://docs.openhome.com).
 
 ---
