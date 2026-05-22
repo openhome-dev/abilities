@@ -1,612 +1,368 @@
-import re
-import time
-from difflib import SequenceMatcher
-from typing import Any, Dict, List, Optional
+import random
+
+import httpx
 
 from src.agent.capability import MatchingCapability
-from src.main import AgentWorker
 from src.agent.capability_worker import CapabilityWorker
+from src.main import AgentWorker
 
+# =====================================================================
+# AMBIENT SOUNDS — streams ambient/relaxation audio from Freesound.
+# Single LLM router decides intent, single play_music streams audio.
+# =====================================================================
 
-EXIT_WORDS = {"stop", "exit", "quit", "done", "cancel", "bye", "goodbye", "leave"}
-REPEAT_PHRASES = {"repeat", "again", "say that again", "repeat last"}
-LIST_MORE_PHRASES = {"list more", "more options", "what else", "show more", "more sounds", "more"}
+FREESOUND_BASE = "https://freesound.org/apiv2"
 
-DEFAULT_DURATION_MINUTES = 30
-MIN_DURATION_MINUTES = 5
-MAX_DURATION_MINUTES = 120
-
-INTER_LOOP_GAP_SECONDS = 0.05
-# Brief says clips are typically 30–60s; if playback returns much earlier, treat it as an interrupt.
-MIN_EXPECTED_CLIP_SECONDS = 30.0
-PREFS_FILE = "noise_machine_prefs.json"
-
-SOUNDS: Dict[str, Dict[str, Any]] = {
-    "rain": {
-        "name": "Rain",
-        "file": "rain.mp3",
-        "keywords": ["rain", "rain sounds", "rainfall", "drizzle", "shower", "soft rain"],
-    },
-    "heavy_rain": {
-        "name": "Heavy rain",
-        "file": "heavy_rain.mp3",
-        "keywords": ["heavy rain", "downpour", "pouring rain", "rainstorm", "storm rain"],
-    },
-    "ocean_waves": {
-        "name": "Ocean waves",
-        "file": "ocean_waves.mp3",
-        "keywords": ["ocean", "waves", "sea", "beach", "shore", "surf", "wave sounds"],
-    },
-    "river_stream": {
-        "name": "River stream",
-        "file": "river_stream.mp3",
-        "keywords": ["river", "stream", "creek", "brook", "flowing water", "water stream"],
-    },
-    "white_noise": {
-        "name": "White noise",
-        "file": "white_noise.mp3",
-        "keywords": ["white noise", "static", "hiss", "background noise"],
-    },
-    "pink_noise": {
-        "name": "Pink noise",
-        "file": "pink_noise.mp3",
-        "keywords": ["pink noise", "soft noise", "gentle noise"],
-    },
-    "brown_noise": {
-        "name": "Brown noise",
-        "file": "brown_noise.mp3",
-        "keywords": ["brown noise", "deep noise", "low rumble", "bass noise"],
-    },
-    "forest_birds": {
-        "name": "Forest birds",
-        "file": "forest_birds.mp3",
-        "keywords": ["forest", "birds", "birdsong", "birds chirping", "nature birds", "woods"],
-    },
-    "crickets": {
-        "name": "Crickets",
-        "file": "crickets.mp3",
-        "keywords": ["crickets", "night crickets", "insects", "night sounds"],
-    },
-    "campfire": {
-        "name": "Campfire",
-        "file": "campfire.mp3",
-        "keywords": ["campfire", "fire", "fireplace", "crackling", "bonfire", "embers"],
-    },
-    "wind": {
-        "name": "Wind",
-        "file": "wind.mp3",
-        "keywords": ["wind", "breeze", "gust", "air", "windy"],
-    },
-    "thunder": {
-        "name": "Thunder",
-        "file": "thunder.mp3",
-        "keywords": ["thunder", "storm", "lightning", "rumble", "thunderstorm"],
-    },
-    "cafe": {
-        "name": "Cafe",
-        "file": "cafe.mp3",
-        "keywords": ["cafe", "coffee shop", "coffee", "restaurant", "chatter", "ambient chatter"],
-    },
-    "fan": {
-        "name": "Fan",
-        "file": "fan.mp3",
-        "keywords": ["fan", "fan noise", "fan sound", "hum", "air conditioner", "ac"],
-    },
-    "waterfall": {
-        "name": "Waterfall",
-        "file": "waterfall.mp3",
-        "keywords": ["waterfall", "falls", "rushing water", "water fall", "cascade"],
-    },
+# Categories registry — single source of truth. The LLM router is
+# constrained to pick one of these keys (or EXIT / NOT_AMBIENT / NEEDS_INPUT).
+#   query: Freesound search terms
+#   label: human-friendly spoken form, must read naturally in templates
+CATEGORIES = {
+    "rain":        {"query": "rain ambient",         "label": "rain sounds"},
+    "thunder":     {"query": "thunderstorm rain ambient", "label": "thunder sounds"},
+    "wind":        {"query": "wind ambient",         "label": "wind sounds"},
+    "ocean":       {"query": "ocean waves",          "label": "ocean waves"},
+    "river":       {"query": "river stream",         "label": "river sounds"},
+    "waterfall":   {"query": "waterfall",            "label": "waterfall sounds"},
+    "forest":      {"query": "forest birds ambient", "label": "forest sounds"},
+    "crickets":    {"query": "crickets night",       "label": "crickets at night"},
+    "fire":        {"query": "campfire crackling",   "label": "campfire sounds"},
+    "cafe":        {"query": "cafe ambience",        "label": "cafe ambience"},
+    "city":        {"query": "city traffic ambient", "label": "city ambience"},
+    "white_noise": {"query": "white noise",          "label": "white noise"},
+    "pink_noise":  {"query": "pink noise",           "label": "pink noise"},
+    "brown_noise": {"query": "brown noise",          "label": "brown noise"},
+    "fan":         {"query": "fan hum ambient",      "label": "fan sounds"},
+    "focus":       {"query": "ambient study",        "label": "focus sounds"},
+    "sleep":       {"query": "ambient pad sleep",    "label": "sleep sounds"},
+    "meditation":  {"query": "ambient meditation",   "label": "meditation sounds"},
 }
 
-POPULAR_MENU = ["rain", "ocean_waves", "white_noise", "campfire", "forest_birds"]
 
-_FILLER_WORDS = {
-    "for", "about", "around", "like", "maybe", "please", "just", "roughly", "approximately", "set", "play", "it", "to"
-}
-
-_NUM_UNITS = {
-    "zero": 0, "one": 1, "two": 2, "three": 3, "four": 4,
-    "five": 5, "six": 6, "seven": 7, "eight": 8, "nine": 9,
-}
-_NUM_TEENS = {
-    "ten": 10, "eleven": 11, "twelve": 12, "thirteen": 13, "fourteen": 14,
-    "fifteen": 15, "sixteen": 16, "seventeen": 17, "eighteen": 18, "nineteen": 19,
-}
-_NUM_TENS = {
-    "twenty": 20, "thirty": 30, "forty": 40, "fifty": 50,
-    "sixty": 60, "seventy": 70, "eighty": 80, "ninety": 90,
-}
-
-_HOUR_WORDS = {"hour", "hours", "hr", "hrs"}
-_MIN_WORDS = {"minute", "minutes", "min", "mins"}
-
-
-def _clean(text: str) -> str:
-    text = (text or "").strip().lower()
-    text = re.sub(r"[^a-z0-9\s]", " ", text)
-    text = re.sub(r"\s+", " ", text).strip()
-    return text
-
-
-def _tokens(text: str) -> List[str]:
-    t = _clean(text)
-    if not t:
-        return []
-    toks = t.split()
-    out: List[str] = []
-    for w in toks:
-        if w.endswith("s") and len(w) > 3:
-            out.append(w[:-1])
-        else:
-            out.append(w)
-    return out
-
-
-def _contains_exit(text: str) -> bool:
-    toks = set(_tokens(text))
-    return any(w in toks for w in EXIT_WORDS)
-
-
-def _is_repeat(text: str) -> bool:
-    t = _clean(text)
-    return any(p == t or p in t for p in REPEAT_PHRASES)
+def _build_router_prompt() -> str:
+    """Build the LLM router prompt dynamically from CATEGORIES so
+    adding/removing a category automatically updates the LLM's options."""
+    catalog = "\n".join(
+        f"  {key:<12}— {meta['label']}"
+        for key, meta in CATEGORIES.items()
+    )
+    return (
+        "You route voice input for an ambient sound player.\n\n"
+        "WHAT IT DOES:\n"
+        "Streams ambient/relaxation sounds (rain, ocean, fire, forest, "
+        "etc.) one at a time. It does NOT play music, songs, artists, "
+        "specific tracks, or genres like jazz/rock/pop.\n\n"
+        "AVAILABLE CATEGORIES (key on left, what it plays on right):\n"
+        f"{catalog}\n\n"
+        "PICK EXACTLY ONE OUTCOME:\n"
+        "  <category key>  — user wants one of the categories above\n"
+        "  EXIT            — user wants to stop/quit/leave the session\n"
+        "  NOT_AMBIENT     — user asked for music outside ambient\n"
+        "                    (jazz, rock, pop, a specific song/artist, etc.)\n"
+        "  NEEDS_INPUT     — message has no actionable content\n"
+        "                    ('hey', 'test', 'ambient player', '')\n\n"
+        "RULES:\n"
+        "- If the user wants ANY ambient sound, pick the closest category.\n"
+        "  Vague requests like 'play anything', 'something relaxing', or\n"
+        "  'play me something good' should still pick the best-fit category\n"
+        "  (e.g. rain, forest, meditation).\n"
+        "- Return EXIT only for clear stop/quit/leave/done/bye intent.\n"
+        "- Return NOT_AMBIENT only when the request is clearly outside\n"
+        "  the ambient set (specific song/artist/non-ambient genre).\n\n"
+        "EXAMPLES:\n"
+        "  'play rain'              -> rain\n"
+        "  'ocean for a while'      -> ocean\n"
+        "  'something cozy'         -> fire\n"
+        "  'help me focus'          -> focus\n"
+        "  'play anything'          -> rain   (best fit)\n"
+        "  'something calm'         -> meditation\n"
+        "  'play jazz'              -> NOT_AMBIENT\n"
+        "  'play taylor swift'      -> NOT_AMBIENT\n"
+        "  'stop' / 'exit' / 'bye'  -> EXIT\n"
+        "  'ambient player'         -> NEEDS_INPUT\n"
+        "  'hey'                    -> NEEDS_INPUT\n\n"
+        "User said: '{text}'\n\n"
+        "Reply with ONLY one token: a category key, EXIT, NOT_AMBIENT, "
+        "or NEEDS_INPUT. No punctuation, no explanation."
+    )
 
 
-def _wants_more(text: str) -> bool:
-    t = _clean(text)
-    return any(p == t or p in t for p in LIST_MORE_PHRASES)
+ROUTER_PROMPT = _build_router_prompt()
 
 
-def _clamp_minutes(m: int) -> int:
-    if m < MIN_DURATION_MINUTES:
-        return MIN_DURATION_MINUTES
-    if m > MAX_DURATION_MINUTES:
-        return MAX_DURATION_MINUTES
-    return m
+# Single combined announcement spoken before play_music runs. Long enough
+# (~15-22 words, ~5-7s spoken) to cover the silent gap while Freesound
+# searches and the stream opens — so audio comes in right as the speak
+# finishes, with no awkward dead air.
+PLAY_ANNOUNCEMENTS = [
+    "Alright, getting some {label} ready. Just a moment to set things up. "
+    "{stop_hint}",
+    "Sure — finding some {label} for you. One moment, then we'll drift in. "
+    "{stop_hint}",
+    "Cueing up some {label}, just a moment to find the right one. "
+    "{stop_hint}",
+    "Pulling up some {label} now. Give me a beat, then we'll ease in. "
+    "{stop_hint}",
+    "Setting up some {label} for you, hang with me for just a sec. "
+    "{stop_hint}",
+]
+
+STOP_HINTS = [
+    "Say stop whenever you'd like.",
+    "Stop me anytime.",
+    "Let me know when you've had enough.",
+    "Say stop to ease out.",
+    "Just say stop when you're ready.",
+]
+
+# Advertise breadth — touch one category from each group so users
+# learn what's available without listing all 18.
+INTRO_PROMPTS = [
+    "Want me to play some white, pink, or brown noise, or I can play "
+    "rain, ocean, or campfire sounds?",
+    "I can play rain, ocean, or fire sounds — or maybe white noise, "
+    "focus, or sleep sounds. What feels right?",
+    "Want me to drift you into rain, ocean, or cafe sounds, or I can "
+    "do white noise, focus, or sleep sounds?",
+    "I can play forest, fire, or rain — or noise, focus, or meditation "
+    "sounds. What sounds good?",
+]
+
+NOT_AMBIENT_REPLIES = [
+    "I only do ambient — rain, ocean, fire, cafe, forest, white noise, "
+    "focus, sleep, and the like. What kind of mood are you after?",
+    "That one's outside my range. I do rain, ocean, fire, cafe, white "
+    "noise, focus and sleep sounds. Want any of those?",
+    "Not built for songs — I'm here for ambient soundscapes. Rain, ocean, "
+    "campfire, cafe, focus, sleep. What sounds good?",
+    "I stick to ambient sounds — nature, fire, cafe, noise, focus, sleep. "
+    "Want me to try one of those instead?",
+]
+
+CONTINUE_PROMPTS = [
+    "Alright. Want me to play some rain, ocean, or campfire next — or "
+    "maybe white noise, focus, or sleep sounds? Or wrap up?",
+    "Done with that one. I can do rain, fire, or cafe ambience — or "
+    "noise, focus, or sleep sounds. Or call it here?",
+    "Okay. Want to drift into rain, ocean, or campfire next? Or maybe "
+    "white noise, focus, or meditation sounds? Or are we done?",
+    "All set. I can play rain, fire, or ocean — or white noise, focus, "
+    "or sleep sounds. Or wrap up for now?",
+]
+
+GOODBYE_REPLIES = [
+    "Take care — come back when you need a moment.",
+    "Be well. I'll be here when you want to slow down again.",
+    "Catch you later — enjoy the quiet.",
+    "Done for now. Hope you found your moment.",
+]
 
 
-def _format_duration(minutes: int) -> str:
-    minutes = max(1, int(minutes))
-    if minutes < 60:
-        return f"{minutes} minute" if minutes == 1 else f"{minutes} minutes"
-    hours = minutes // 60
-    rem = minutes % 60
-    if rem == 0:
-        return f"{hours} hour" if hours == 1 else f"{hours} hours"
-    hp = f"{hours} hour" if hours == 1 else f"{hours} hours"
-    mp = f"{rem} minute" if rem == 1 else f"{rem} minutes"
-    return f"{hp} and {mp}"
-
-
-def _words_to_int(tokens: List[str]) -> Optional[int]:
-    toks = [t for t in tokens if t not in {"and"} and t not in _FILLER_WORDS]
-    if not toks:
-        return None
-
-    if len(toks) == 1 and re.fullmatch(r"\d{1,3}", toks[0]):
-        return int(toks[0])
-
-    if len(toks) == 1:
-        w = toks[0]
-        if w in _NUM_UNITS:
-            return _NUM_UNITS[w]
-        if w in _NUM_TEENS:
-            return _NUM_TEENS[w]
-        if w in _NUM_TENS:
-            return _NUM_TENS[w]
-        if w in {"a", "an"}:
-            return 1
-        return None
-
-    a, b = toks[0], toks[1]
-    if a in _NUM_TENS:
-        base = _NUM_TENS[a]
-        if b in _NUM_UNITS:
-            return base + _NUM_UNITS[b]
-        if re.fullmatch(r"\d{1,2}", b):
-            return base + int(b)
-        return base
-    return None
-
-
-def _user_mentioned_duration(text: str) -> bool:
-    t = _clean(text)
-    if re.search(r"\b\d+\b", t):
-        return True
-    for w in ["minute", "minutes", "min", "mins", "hour", "hours", "hr", "hrs", "half"]:
-        if w in t:
-            return True
-    for w in list(_NUM_UNITS.keys()) + list(_NUM_TEENS.keys()) + list(_NUM_TENS.keys()):
-        if w in t:
-            return True
-    return False
-
-
-def _extract_duration_minutes(text: str) -> Optional[int]:
-    t = _clean(text)
-    if not t:
-        return None
-
-    if "half" in t and "hour" in t and "and" not in t:
-        return 30
-
-    if "half" in t and "hour" in t and "and" in t:
-        m = re.search(r"\b(\d{1,2})\s*(?:and\s*)?a\s*half\s*(?:hour|hours|hr|hrs)\b", t)
-        if m:
-            return int(m.group(1)) * 60 + 30
-        toks = _tokens(t)
-        if "and" in toks:
-            and_idx = toks.index("and")
-            num = _words_to_int(toks[max(0, and_idx - 2):and_idx])
-            if num is not None:
-                return int(num) * 60 + 30
-        return 90
-
-    fm = re.search(r"\b(\d+(?:\.\d+)?)\s*(hour|hours|hr|hrs)\b", t)
-    if fm:
-        try:
-            return int(float(fm.group(1)) * 60)
-        except Exception:
-            pass
-
-    toks = _tokens(t)
-
-    def _prev_number(idx: int) -> Optional[int]:
-        collected: List[str] = []
-        j = idx - 1
-        while j >= 0 and len(collected) < 3:
-            w = toks[j]
-            if w in _FILLER_WORDS:
-                j -= 1
-                continue
-            collected.insert(0, w)
-            j -= 1
-        if len(collected) >= 2:
-            n = _words_to_int(collected[-2:])
-            if n is not None:
-                return n
-        if len(collected) >= 1:
-            n = _words_to_int(collected[-1:])
-            if n is not None:
-                return n
-        return None
-
-    hours_total = 0
-    minutes_total = 0
-    found_unit = False
-
-    for i, w in enumerate(toks):
-        if w in _HOUR_WORDS:
-            found_unit = True
-            n = _prev_number(i)
-            if n is None and i - 1 >= 0 and toks[i - 1] in {"a", "an"}:
-                n = 1
-            if n is not None:
-                hours_total += int(n)
-
-        if w in _MIN_WORDS:
-            found_unit = True
-            n = _prev_number(i)
-            if n is None and i - 1 >= 0 and toks[i - 1] in {"a", "an"}:
-                n = 1
-            if n is not None:
-                minutes_total += int(n)
-
-    if found_unit and (hours_total > 0 or minutes_total > 0):
-        return hours_total * 60 + minutes_total
-
-    m2 = re.search(r"\b(\d{1,3})\b", t)
-    if m2:
-        return int(m2.group(1))
-
-    n3 = _words_to_int(toks[:2]) or _words_to_int(toks[:1])
-    if n3 is not None:
-        return int(n3)
-
-    return None
-
-
-def _similarity(a: str, b: str) -> float:
-    if not a or not b:
-        return 0.0
-    return SequenceMatcher(None, a, b).ratio()
-
-
-def _match_sound(user_text: str) -> tuple[Optional[str], float]:
-    t = _clean(user_text)
-    if not t:
-        return None, 0.0
-
-    # Direct shortcuts for very short requests
-    if t in {"cafe", "coffee", "restaurant"}:
-        return "cafe", 1.0
-    if t in {"fan"}:
-        return "fan", 1.0
-    if t in {"wind", "breeze"}:
-        return "wind", 1.0
-    if t in {"thunder", "storm"}:
-        return "thunder", 1.0
-
-    toks = set(_tokens(t))
-
-    if t in SOUNDS:
-        return t, 1.0
-
-    best_key: Optional[str] = None
-    best_score = 0.0
-
-    for key, meta in SOUNDS.items():
-        name = _clean(meta["name"])
-        phrases = [name] + [_clean(k) for k in meta.get("keywords", [])]
-
-        name_toks = set(_tokens(name))
-        overlap = len(toks.intersection(name_toks))
-        overlap_score = overlap / max(1, len(name_toks))
-
-        phrase_score = 0.0
-        for ph in phrases:
-            if not ph:
-                continue
-            if ph in t or t in ph:
-                phrase_score = max(phrase_score, 1.0)
-                continue
-            phrase_score = max(phrase_score, _similarity(t, ph))
-
-        score = max(0.0, min(1.0, 0.55 * phrase_score + 0.45 * overlap_score))
-
-        if score > best_score:
-            best_score = score
-            best_key = key
-
-    if best_key is None:
-        return None, 0.0
-    return best_key, best_score
-
-
-# ---------------------------
-# Trigger guard: avoid auto-selecting a sound from generic activation phrases
-# ---------------------------
-_GENERIC_TRIGGER_WORDS = {"noise", "machine", "sound", "start", "hey", "the", "a", "an", "please", "my", "some", "play", "up"}
-
-_SOUND_HINT_WORDS = set()
-for _k, _meta in SOUNDS.items():
-    _SOUND_HINT_WORDS.update(_tokens(_meta.get("name", "")))
-    for _kw in _meta.get("keywords", []):
-        _SOUND_HINT_WORDS.update(_tokens(_kw))
-
-# Remove generic words so "noise machine" doesn't count as a sound hint
-_SOUND_HINT_WORDS.discard("noise")
-_SOUND_HINT_WORDS.discard("sound")
-_SOUND_HINT_WORDS.discard("machine")
-
-
-def _is_generic_trigger(text: str) -> bool:
-    toks = set(_tokens(text))
-    if not toks:
-        return True
-    if toks.issubset(_GENERIC_TRIGGER_WORDS):
-        return True
-    if toks.intersection(_SOUND_HINT_WORDS):
-        return False
-    if "noise" in toks and "machine" in toks:
-        return True
-    return False
-
-
-class NoiseMachineCapability(MatchingCapability):
+class AmbientPlayerCapability(MatchingCapability):
     worker: AgentWorker = None
     capability_worker: CapabilityWorker = None
 
+    freesound_key: str = ""
+
     # {{register capability}}
 
-    last_spoken: str = ""
-    stop_requested: bool = False
+    # ---- Helpers ----------------------------------------------------
 
-    async def speak(self, text: str) -> None:
-        self.last_spoken = text
-        await self.capability_worker.speak(text)
+    def _err(self, msg: str):
+        self.worker.editor_logging_handler.error(msg)
 
-    async def listen(self) -> str:
+    # ---- Intent router ----------------------------------------------
+
+    def _route_intent(self, text: str) -> str:
+        """Single LLM call. Returns a CATEGORIES key, EXIT, NOT_AMBIENT,
+        or NEEDS_INPUT."""
+        if not text or not text.strip():
+            return "NEEDS_INPUT"
         try:
-            msg = await self.capability_worker.user_response()
-            return (msg or "").strip()
+            raw = self.capability_worker.text_to_text_response(
+                ROUTER_PROMPT.format(text=text.strip()),
+                [],
+            )
+            raw_str = (raw or "").strip()
+            if not raw_str:
+                return "NEEDS_INPUT"
+            # First token, lowercase, strip non-letters/underscores.
+            first = ""
+            for ch in raw_str.split()[0].lower():
+                if ch.isalpha() or ch == "_":
+                    first += ch
+            if first == "exit":
+                return "EXIT"
+            if first in ("not_ambient", "notambient"):
+                return "NOT_AMBIENT"
+            if first in ("needs_input", "needsinput"):
+                return "NEEDS_INPUT"
+            if first in CATEGORIES:
+                return first
+            self._err(f"[Ambient] off-list intent: {first!r}")
+            return "NEEDS_INPUT"
         except Exception as e:
-            self.worker.editor_logging_handler.warning(f"Listen failed: {e}")
-            return ""
+            self._err(f"[Ambient] router failed: {e}")
+            return "NEEDS_INPUT"
 
-    async def nap(self, seconds: float) -> None:
-        await self.worker.session_tasks.sleep(seconds)
+    # ---- Search + stream --------------------------------------------
 
-    async def set_music_mode(self, on: bool) -> None:
+    async def play_music(self, category: str) -> str:
+        """Search Freesound and stream the audio.
+        Returns 'STOPPED' if user interrupted, 'FINISHED' otherwise.
+        Announcement is spoken in run() before calling this — this
+        function does search + stream silently. Errors are logged only."""
+        meta = CATEGORIES[category]
+
+        # Search Freesound.
+        params = {
+            "query": meta["query"],
+            "filter": "duration:[60 TO 1800] type:(mp3 OR wav)",
+            "sort": "rating_desc",
+            "fields": "id,name,previews,username",
+            "page_size": 15,
+            "token": self.freesound_key,
+        }
+        url = f"{FREESOUND_BASE}/search/"
         try:
-            if on:
-                self.worker.music_mode_event.set()
-                await self.capability_worker.send_data_over_websocket("music-mode", {"mode": "on"})
-            else:
-                await self.capability_worker.send_data_over_websocket("music-mode", {"mode": "off"})
-                self.worker.music_mode_event.clear()
+            async with httpx.AsyncClient(timeout=5) as client:
+                resp = await client.get(url, params=params)
+                if resp.status_code == 401:
+                    await self.capability_worker.speak(
+                        "Your Freesound key isn't working. Check it in Settings."
+                    )
+                    return "FINISHED"
+                if resp.status_code != 200:
+                    self._err(f"[Ambient] search HTTP {resp.status_code}")
+                    return "FINISHED"
+                results = resp.json().get("results", []) or []
+                results = [r for r in results if r.get("previews", {}).get("preview-hq-mp3")]
         except Exception as e:
-            self.worker.editor_logging_handler.warning(f"Music mode toggle failed: {e}")
+            self._err(f"[Ambient] search error: {e}")
+            return "FINISHED"
 
-    async def safe_exit(self, message: Optional[str] = None) -> None:
-        await self.set_music_mode(False)
-        if message:
-            await self.speak(message)
-        self.capability_worker.resume_normal_flow()
+        if not results:
+            self._err(f"[Ambient] no playable results for category='{category}'")
+            return "FINISHED"
 
-    async def speak_sound_menu(self) -> None:
-        popular_names = ", ".join(SOUNDS[k]["name"] for k in POPULAR_MENU)
-        await self.speak(
-            "Noise machine ready. Popular sounds are: "
-            f"{popular_names}. What would you like to hear?"
-        )
+        sound = random.choice(results[:5])
+        stream_url = sound.get("previews", {}).get("preview-hq-mp3")
+        if not stream_url:
+            self._err(f"[Ambient] picked sound has no preview URL (id={sound.get('id')})")
+            return "FINISHED"
 
-    async def speak_full_menu(self) -> None:
-        first = ["Rain", "Heavy rain", "Ocean waves", "River stream", "White noise", "Pink noise", "Brown noise"]
-        second = ["Forest birds", "Crickets", "Campfire", "Wind", "Thunder", "Cafe", "Fan", "Waterfall"]
-        await self.speak("Here’s the full list: " + ". ".join(first) + ".")
-        await self.nap(0.35)
-        await self.speak(". ".join(second) + ". Which one sounds good?")
+        # Stream the audio chunk by chunk. Announcement was already spoken
+        # in run() before this call, so go straight into streaming.
+        try:
+            async with httpx.AsyncClient(timeout=None) as client:
+                async with client.stream(
+                    "GET", stream_url, follow_redirects=True
+                ) as stream_resp:
+                    if stream_resp.status_code != 200:
+                        self._err(f"[Ambient] stream HTTP {stream_resp.status_code}")
+                        return "FINISHED"
+                    await self.capability_worker.stream_init()
+                    try:
+                        async for chunk in stream_resp.aiter_bytes(chunk_size=25 * 1024):
+                            if not chunk:
+                                continue
+                            if self.worker.music_mode_stop_event.is_set():
+                                return "STOPPED"
+                            while self.worker.music_mode_pause_event.is_set():
+                                if self.worker.music_mode_stop_event.is_set():
+                                    return "STOPPED"
+                                await self.worker.session_tasks.sleep(0.1)
+                            await self.capability_worker.send_audio_data_in_stream(chunk)
+                    finally:
+                        await self.capability_worker.stream_end()
+        except Exception as e:
+            self._err(f"[Ambient] stream error: {e}")
+            return "FINISHED"
 
-    async def ask_for_duration_minutes(self) -> int:
-        await self.speak("How long should I play it? You can say 30 minutes or 1 hour.")
-        ans = await self.listen()
-        if _contains_exit(ans):
-            await self.safe_exit("Okay.")
-            raise RuntimeError("user_exit")
+        return "FINISHED"
 
-        mins = _extract_duration_minutes(ans)
-        if mins is None:
-            mins = DEFAULT_DURATION_MINUTES
-            await self.speak(f"Alright. I’ll play it for {_format_duration(mins)}. Say stop anytime.")
-        return _clamp_minutes(int(mins))
+    # ---- Main session loop ------------------------------------------
 
-    async def choose_sound(self, trigger_text: str) -> Optional[str]:
-        # If trigger is just "noise machine"/generic, do NOT auto-pick a sound.
-        if trigger_text and not _is_generic_trigger(trigger_text):
-            key, conf = _match_sound(trigger_text)
-            if key and conf >= 0.60:
-                return key
+    async def run(self):
+        try:
+            self.freesound_key = (
+                self.capability_worker.get_api_keys("freesound_api_key") or ""
+            )
+        except Exception as e:
+            self._err(f"[Ambient] failed to load API key: {e}")
+            self.freesound_key = ""
 
-        await self.speak_sound_menu()
-        retries = 0
+        # Enter music mode for the whole session.
+        try:
+            self.worker.music_mode_event.set()
+            await self.capability_worker.send_data_over_websocket(
+                "music-mode", {"mode": "on"}
+            )
+        except Exception as e:
+            self._err(f"[Ambient] music mode on failed: {e}")
 
-        while retries < 3:
-            ans = await self.listen()
-            if _contains_exit(ans):
-                await self.safe_exit("Okay.")
-                return None
-            if not ans:
-                retries += 1
-                await self.speak("What sound would you like?")
-                continue
-            if _is_repeat(ans):
-                await self.speak(self.last_spoken or "Nothing to repeat yet.")
-                continue
-            if _wants_more(ans):
-                await self.speak_full_menu()
-                ans = await self.listen()
-                if _contains_exit(ans):
-                    await self.safe_exit("Okay.")
-                    return None
-
-            key, conf = _match_sound(ans)
-            if key and conf >= 0.55:
-                return key
-
-            if key and 0.40 <= conf < 0.55:
-                await self.speak(f"Did you mean {SOUNDS[key]['name']}?")
-                confirm = await self.listen()
-                if _contains_exit(confirm):
-                    await self.safe_exit("Okay.")
-                    return None
-                c = _clean(confirm)
-                if "yes" in c or "yeah" in c or "yep" in c or "correct" in c:
-                    return key
-
-            retries += 1
-            await self.speak("Try saying rain, ocean waves, white noise, campfire, wind, thunder, fan, or waterfall.")
-
-        await self.safe_exit("No problem. Try again anytime.")
-        return None
-
-    async def _listen_for_stop(self) -> None:
-        while True:
-            msg = await self.listen()
-            if msg and _contains_exit(msg):
-                self.stop_requested = True
+        try:
+            if not self.freesound_key:
+                await self.capability_worker.speak(
+                    "Ambient Sounds needs a Freesound API key. "
+                    "Add freesound_api_key in OpenHome Settings."
+                )
                 return
 
-    async def play_for_duration(self, sound_file: str, duration_minutes: int) -> bool:
-        total_seconds = int(duration_minutes) * 60
-        start = time.time()
-        self.stop_requested = False
+            try:
+                msg = await self.capability_worker.wait_for_complete_transcription()
+            except Exception as e:
+                self._err(f"[Ambient] transcription failed: {e}")
+                msg = ""
+            msg = msg if isinstance(msg, str) else ""
 
-        stop_task = self.worker.session_tasks.create(self._listen_for_stop())
-
-        await self.set_music_mode(True)
-        try:
             while True:
-                if self.stop_requested:
-                    return True
-                if time.time() - start >= total_seconds:
-                    return False
+                intent = self._route_intent(msg)
 
-                clip_start = time.time()
-                try:
-                    await self.capability_worker.play_from_audio_file(sound_file)
-                except Exception as e:
-                    self.worker.editor_logging_handler.warning(f"Playback failed: {e}")
-                    await self.speak("Sorry, I couldn’t play that sound. Please make sure the mp3 is uploaded.")
-                    return True
+                if intent == "EXIT":
+                    await self.capability_worker.speak(random.choice(GOODBYE_REPLIES))
+                    return
 
-                clip_elapsed = time.time() - clip_start
+                if intent == "NEEDS_INPUT":
+                    await self.capability_worker.speak(random.choice(INTRO_PROMPTS))
+                    msg = await self.capability_worker.user_response()
+                    continue
 
-                # If a recent transcription contains an exit word, stop cleanly.
-                try:
-                    latest_any = self.capability_worker.get_latest_transcription()
-                    if latest_any and _contains_exit(str(latest_any)):
-                        return True
-                except Exception:
-                    pass
+                if intent == "NOT_AMBIENT":
+                    await self.capability_worker.speak(random.choice(NOT_AMBIENT_REPLIES))
+                    msg = await self.capability_worker.user_response()
+                    continue
 
-                # If the clip ends far earlier than expected (brief: ~30–60s), treat it as an interrupt
-                # and stop instead of restarting the loop.
-                if clip_elapsed < MIN_EXPECTED_CLIP_SECONDS:
-                    try:
-                        latest = self.capability_worker.get_latest_transcription()
-                        if latest and _contains_exit(str(latest)):
-                            return True
-                    except Exception:
-                        pass
-                    return True
+                # Category path: single long announcement covers the
+                # search/stream-open silence, then play_music streams.
+                label = CATEGORIES[intent]["label"]
+                await self.capability_worker.speak(
+                    random.choice(PLAY_ANNOUNCEMENTS).format(
+                        label=label, stop_hint=random.choice(STOP_HINTS)
+                    )
+                )
+                await self.play_music(intent)
 
-                await self.nap(INTER_LOOP_GAP_SECONDS)
+                await self.capability_worker.speak(random.choice(CONTINUE_PROMPTS))
 
+                msg = await self.capability_worker.user_response()
+
+        except Exception as e:
+            self._err(f"[Ambient] run error: {e}")
         finally:
             try:
-                stop_task.cancel()
+                await self.capability_worker.send_data_over_websocket(
+                    "music-mode", {"mode": "off"}
+                )
+            except Exception as e:
+                self._err(f"[Ambient] music mode off failed: {e}")
+            try:
+                await self.worker.session_tasks.sleep(1.0)
             except Exception:
                 pass
-            await self.set_music_mode(False)
+            self.capability_worker.resume_normal_flow()
 
-    async def run(self) -> None:
-        try:
-            trigger_text = str(self.capability_worker.get_trigger_context() or "")
-        except Exception:
-            trigger_text = ""
-
-        if trigger_text and _contains_exit(trigger_text):
-            await self.safe_exit("Okay.")
-            return
-
-        sound_key = await self.choose_sound(trigger_text)
-        if not sound_key:
-            return
-
-        sound_name = SOUNDS[sound_key]["name"]
-        sound_file = SOUNDS[sound_key]["file"]
-
-        duration_minutes: Optional[int] = None
-        if trigger_text and _user_mentioned_duration(trigger_text):
-            duration_minutes = _extract_duration_minutes(trigger_text)
-
-        if duration_minutes is None:
-            try:
-                duration_minutes = await self.ask_for_duration_minutes()
-            except RuntimeError:
-                return
-
-        duration_minutes = _clamp_minutes(int(duration_minutes))
-
-        await self.speak(f"Playing {sound_name} for {_format_duration(duration_minutes)}. Say stop anytime.")
-        stopped = await self.play_for_duration(sound_file, duration_minutes)
-
-        if stopped:
-            await self.safe_exit("Okay, stopped.")
-        else:
-            await self.safe_exit("All done.")
+    # ---- Entry point ------------------------------------------------
 
     def call(self, worker: AgentWorker):
         self.worker = worker
