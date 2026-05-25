@@ -1,6 +1,6 @@
 # OpenHome · Ability Templates
 
-> **Six core templates. Three ability types. Unlimited possibilities.**
+> **Seven core templates. Three ability types. Unlimited possibilities.**
 
 This directory contains the official starter templates for building OpenHome abilities. Each folder is a minimal, working boilerplate that demonstrates a core architectural pattern. They are **not** polished user experiences — they are the scaffolding you build on top of.
 
@@ -56,6 +56,7 @@ templates/
 ├── Local/                 ← LLM as translator; execute on local machine.
 ├── OpenClaw/              ← Escape the sandbox via OpenClaw.
 ├── PhilipsHueLightControl/← Local + persistent BLE daemon. Real hardware example.
+├── devkit_led_lights_control/ ← Local + onboard NeoPixel LED ring control.
 │
 ├── Background/            ← Standalone background daemon.
 ├── Alarm/                 ← Combined Skill + Daemon (main.py + background.py).
@@ -89,9 +90,9 @@ Extends `basic-template` with an outbound HTTP request to an external REST API. 
 
 ---
 
-### 🔵 The Six Core Templates
+### 🔵 The Seven Core Templates
 
-These six templates cover a deliberate progression from simplest to most complex. Each teaches a distinct architectural pattern.
+These seven templates cover a deliberate progression from simplest to most complex. Each teaches a distinct architectural pattern.
 
 ---
 
@@ -160,6 +161,19 @@ Control a Philips Hue bulb directly over Bluetooth — no Hue Bridge, no interne
 > ⚠️ This is a **Local** ability — it cannot be tested in the Live Editor. It must run on a connected DevKit device with a working Bluetooth stack and a Hue bulb in range.
 
 **Build on top:** other BLE devices (LIFX, Govee), multi-bulb scenes, presence-based auto-on daemon, sunset-fade routines, smart-plug control.
+
+---
+
+#### [`devkit_led_lights_control`](./templates/devkit_led_lights_control) — Voice-Controlled NeoPixel Ring
+**Type:** Local · **Pattern:** On-device hardware control · **Complexity:** Advanced
+
+Control the DevKit's onboard NeoPixel LED ring with your voice — no extra hardware. Say "make it red", "do a candle flicker", "rainbow for 30 seconds", or "switch to music mode", and the ring responds immediately. Twenty-plus built-in effects (solid, rainbow, breathe, chase, fire, sparkle, comet, gradient, strobe, wave, police, candle, music-reactive) are routed by an LLM that understands casual phrasing. Effects run continuously by default until the user changes them or exits.
+
+**Key SDK methods:** `send_devkit_capability_action()`, `send_devkit_action()`, `text_to_text_response()`, `user_response()`, `speak()`, `resume_normal_flow()`
+
+> ⚠️ This is a **Local** ability — it cannot be tested in the Live Editor. It must run on a connected DevKit device with the onboard NeoPixel ring.
+
+**Build on top:** notification ring (flash on events), build/oncall status indicator, Pomodoro phase colours, sleep-wake sunrise routines, music visualisers with custom palettes.
 
 ---
 
@@ -234,6 +248,7 @@ self.capability_worker.write_file("state.json", json.dumps(data))
 | `Local` | Skill | `text_to_text_response()`, `exec_local_command()` |
 | `OpenClaw` | Skill | `exec_local_command()`, `speak()` |
 | `PhilipsHueLightControl` | Local | `send_devkit_capability_action()`, `text_to_text_response()`, `speak()` |
+| `devkit_led_lights_control` | Local | `send_devkit_capability_action()`, `send_devkit_action()`, `text_to_text_response()` |
 | `Background` | Background Daemon | `get_full_message_history()`, `session_tasks.sleep()` |
 | `Alarm` | Skill + Daemon | `send_interrupt_signal()`, `play_from_audio_file()`, `session_tasks.sleep()` |
 | `loop-template` | Skill (long-running) | `start_audio_recording()`, `get_audio_recording()`, `text_to_text_response()` |
