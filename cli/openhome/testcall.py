@@ -7,7 +7,7 @@ import pyaudio
 import os
 import numpy as np
 
-OPENHOME_API_KEY = "8ce689a8699cfec6bf9730c3b8dbf493c88d16f24498794e3ad63faf4931e367"
+OPENHOME_API_KEY = "xxxxxxxxx"
 # 0 = default agent; set to a specific personality/agent id (e.g. 238371) to target it.
 PERSONALITY_ID = 0
 # The server gates the voice-stream on a browser-like User-Agent — a default
