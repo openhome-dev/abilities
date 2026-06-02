@@ -45,6 +45,48 @@ def user_dir() -> Path:
     return _REPO_ROOT / "user"
 
 
+def community_dir() -> Path:
+    """The repo's ``community/`` folder — where contributed abilities live for PRs."""
+    return _REPO_ROOT / "community"
+
+
+# Files that are personal/build junk and must not be contributed to community/.
+_PROMOTE_IGNORE = (".openhome.json", "__pycache__", "*.pyc", "*.pyo", ".DS_Store", "*.zip")
+
+
+def promote_to_community(name: str, *, overwrite: bool = False) -> Path:
+    """Copy an ability from ``user/<name>`` into ``community/<name>`` for a PR.
+
+    Strips the personal ``.openhome.json`` manifest and build junk. Leaves the
+    original ``user/`` copy untouched. Returns the new ``community/`` path.
+    """
+    src = user_dir() / name
+    if not src.is_dir():
+        raise OpenHomeError(
+            f"No ability '{name}' found in user/. Looked in {src}"
+        )
+    if not (src / "main.py").is_file():
+        raise OpenHomeError(f"{src} has no main.py — is this an ability folder?")
+
+    if re.search(r"[_ ]", name):
+        suggested = re.sub(r"[_ ]+", "-", name)
+        raise OpenHomeError(
+            f"Community folder names use only hyphens — rename '{name}' to "
+            f"'{suggested}' first (e.g. `openhome sync` after renaming, or rename "
+            f"the user/ folder)."
+        )
+
+    dest = community_dir() / name
+    if dest.exists():
+        if not overwrite:
+            raise OpenHomeError(f"community/{name} already exists (use --overwrite).")
+        shutil.rmtree(dest)
+
+    community_dir().mkdir(parents=True, exist_ok=True)
+    shutil.copytree(src, dest, ignore=shutil.ignore_patterns(*_PROMOTE_IGNORE))
+    return dest
+
+
 def list_templates() -> list[Template]:
     """All available starting points: ``templates/*`` plus ``official/*`` examples."""
     found: list[Template] = []

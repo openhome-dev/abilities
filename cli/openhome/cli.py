@@ -173,6 +173,34 @@ def cmd_create(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_push_to_community(args: argparse.Namespace) -> int:
+    import subprocess
+    import sys as _sys
+    from .templates import promote_to_community, repo_root
+
+    dest = promote_to_community(args.name, overwrite=args.overwrite)
+    rel = dest.relative_to(repo_root())
+    print(f"✓ Copied {args.name} → {rel}  (manifest + junk stripped)")
+
+    # Best-effort validation using the repo's validator.
+    validator = repo_root() / "validate_ability.py"
+    if validator.is_file():
+        print(f"\nValidating {rel} …")
+        res = subprocess.run(
+            [_sys.executable, str(validator), str(rel)], cwd=repo_root()
+        )
+        if res.returncode != 0:
+            print("\n⚠️  Validation reported issues — fix them before opening a PR.")
+
+    print(
+        "\nNext steps to contribute:\n"
+        f"  git checkout -b add-{args.name}\n"
+        f"  git add {rel} && git commit -m 'Add {args.name} ability'\n"
+        "  git push and open a PR to `dev` (see CONTRIBUTING.md)"
+    )
+    return 0
+
+
 def cmd_sync(args: argparse.Namespace) -> int:
     client = OpenHomeClient()
     report = client.sync(dest=args.dest, force=args.force, prune=args.prune)
@@ -424,6 +452,15 @@ def build_parser() -> argparse.ArgumentParser:
         "--no-push", action="store_true", help="only scaffold locally, don't push"
     )
     p_create.set_defaults(func=cmd_create)
+
+    p_community = sub.add_parser(
+        "push_to_community",
+        aliases=["push-to-community"],
+        help="Copy a user/ ability into community/ for a contribution PR",
+    )
+    p_community.add_argument("name", help="ability folder name in user/")
+    p_community.add_argument("--overwrite", action="store_true")
+    p_community.set_defaults(func=cmd_push_to_community)
 
     p_sync = sub.add_parser(
         "sync", help="Pull your account's abilities into the user/ workspace"

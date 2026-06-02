@@ -13,11 +13,17 @@ It is a thin CLI over a reusable Python library (`openhome`).
 
 ## Install
 
+Run these from the **abilities repo root**:
+
 ```bash
-cd cli
-pip install -e .
-cp .env.example .env   # then fill in OPENHOME_API_KEY
+python3 -m venv cli/.venv && source cli/.venv/bin/activate
+pip install -e cli
+cp .env.example .env          # at the repo ROOT — then fill in OPENHOME_API_KEY
 ```
+
+The `openhome` command then works from **any directory** (the repo root is the
+natural place to run it). `.env` is discovered from the repo root automatically,
+so you don't need to `cd cli`. New/synced abilities land in `user/` at the root.
 
 For the **voice call** (`openhome call`) you also need the `mpv` player and PortAudio:
 
@@ -34,16 +40,19 @@ Put your API key in `.env` (or run `openhome login`):
 
 ```
 OPENHOME_API_KEY=...        # from app.openhome.com → Settings → API Keys
-OPENHOME_JWT=...            # (optional, for now) browser access_token
+OPENHOME_JWT=...            # optional — only for a real browser session
 ```
 
-Most endpoints use the **API key**. The save/upload, list, and delete capability
-endpoints currently require a **JWT** (the browser `access_token` —
-`copy(localStorage.getItem('access_token'))` in the console on app.openhome.com).
+**The API key alone is enough for everything** — create, push, list, sync, delete,
+and the voice call. The client sends it the way each endpoint expects:
 
-The client picks the credential automatically: JWT-gated calls use `OPENHOME_JWT`
-if set, otherwise they fall back to sending the API key — so once the backend
-accepts the API key on those routes, **nothing in the client changes**.
+- `/api/sdk/*` (agents, verify) → api_key in the JSON body
+- everything else → **`X-API-KEY: <api_key>`** header
+
+`OPENHOME_JWT` is optional: if set, the capability endpoints use it as a
+`Bearer` token (a browser session); if empty, they use `X-API-KEY`. Either works.
+The api_key is **never** sent as a `Bearer` token (the server runs `Bearer` through
+SimpleJWT and would reject it).
 
 ## CLI — full command reference
 
@@ -106,6 +115,17 @@ openhome delete myskill        # remove from the account AND delete the local us
 openhome delete myskill --keep-local   # remove from the account only
 ```
 
+### Contribute an ability to the community
+```bash
+openhome push_to_community myskill            # copy user/myskill → community/myskill
+openhome push_to_community myskill --overwrite # replace an existing community/ copy
+```
+Copies your finished ability from `user/` into the repo's `community/` folder
+(stripping the personal `.openhome.json` manifest + build junk), runs the repo
+validator, and prints the git/PR steps. Community folder names must use hyphens
+(not underscores/spaces). This is separate from your account — it stages the
+ability for a pull request; it does not touch app.openhome.com.
+
 ### Direction at a glance
 | Direction | Command |
 |---|---|
@@ -114,6 +134,7 @@ openhome delete myskill --keep-local   # remove from the account only
 | local → account (edit, same id) | `push` (draft) · `push --commit -m "…"` (version) |
 | voice | `call` (real voice, mic+speaker) · `call --say "…"` (one-shot text) · `chat` (interactive text) |
 | remove | `delete` (account + local folder) · `delete --keep-local` |
+| contribute | `push_to_community <name>` (user/ → community/ for a PR) |
 
 ### The `user/` workspace
 
@@ -173,8 +194,9 @@ print(oh.call(agents[0].id, "what's the weather in Tokyo"))
 ## API contract
 
 See [`openhome/endpoints.py`](openhome/endpoints.py) for the endpoint registry and
-[`openhome/transport.py`](openhome/transport.py) for the auth-mode handling. Endpoints
-that currently require a JWT (and are candidates for accepting the API key):
+[`openhome/transport.py`](openhome/transport.py) for the auth-mode handling. These
+capability/release endpoints accept **`X-API-KEY: <api_key>`** (or a `Bearer` JWT
+for a browser session):
 
 | Action | Method + Path |
 |--------|---------------|
@@ -185,9 +207,9 @@ that currently require a JWT (and are candidates for accepting the API key):
 | Installed detail (effective triggers + releases) | `GET /api/capabilities/get/installed-capability/by-capability/{capability_id}/` |
 | Delete ability(ies) | `POST /api/capabilities/delete-capability/` (JSON `{"capability_ids": [...]}`, batch) |
 
-Already API-key based: `verify_apikey`, `get_personalities`,
-`edit-installed-capability` (X-API-KEY), `edit-personality` (X-API-KEY), and the
-voice `voice-stream` WebSocket.
+Also api-key based: `verify_apikey` & `get_personalities` (api_key in body),
+`edit-installed-capability` & `edit-personality` (X-API-KEY), and the voice
+`voice-stream` WebSocket (api_key in the URL).
 
 > Note: the download endpoint returns a **flat** zip (files at the root). The
 > installed-detail endpoint also exposes per-version `zip_file` media paths and

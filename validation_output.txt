@@ -1,0 +1,3 @@
+
+📋 Validating: community/demo-community
+  ✅ All checks passed!

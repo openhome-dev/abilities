@@ -22,6 +22,10 @@ DEFAULT_API_BASE = "https://app.openhome.com"
 CONFIG_DIR = Path.home() / ".openhome"
 CONFIG_FILE = CONFIG_DIR / "config.json"
 
+# The abilities repo root (…/abilities), so a `.env` there is found no matter
+# which directory you run `openhome` from. config.py lives at cli/openhome/config.py.
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+
 ENV_API_KEY = "OPENHOME_API_KEY"
 ENV_JWT = "OPENHOME_JWT"
 ENV_API_BASE = "OPENHOME_API_BASE"
@@ -39,8 +43,11 @@ def _load_dotenv(start: Path | None = None) -> None:
         return
 
     here = (start or Path.cwd()).resolve()
-    for directory in [here, *here.parents]:
-        candidate = directory / ".env"
+    # Search order: the cwd and its parents (project-local .env), then the repo
+    # root, then cli/ (backward compat). First one found wins.
+    candidates = [d / ".env" for d in [here, *here.parents]]
+    candidates += [_REPO_ROOT / ".env", _REPO_ROOT / "cli" / ".env"]
+    for candidate in candidates:
         if candidate.is_file():
             _parse_env_file(candidate)
             return

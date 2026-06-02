@@ -2,9 +2,9 @@
 
 The key responsibility is :meth:`Transport.request`'s ``auth`` argument, which maps
 an endpoint's auth mode to the right credential. For ``"jwt"`` endpoints it uses the
-configured JWT when present, otherwise falls back to sending the API key as a Bearer
-token — so the moment the backend learns to accept the API key on those routes, the
-client needs no change.
+configured JWT as a Bearer token when present (a browser session), otherwise it
+authenticates with the api_key via ``X-API-KEY`` — the api_key is never sent as a
+Bearer token (the server would reject it via SimpleJWT).
 """
 
 from __future__ import annotations
@@ -59,15 +59,18 @@ class Transport:
             return {"X-API-KEY": cfg.api_key}
 
         if auth == "jwt":
-            # Prefer the JWT; fall back to the API key as a Bearer token so this
-            # works automatically once the backend accepts the key on these routes.
-            token = cfg.jwt or cfg.api_key
-            if not token:
-                raise NotAuthenticatedError(
-                    "This action needs a session token or API key. "
-                    "Set OPENHOME_JWT (browser access_token) or OPENHOME_API_KEY."
-                )
-            return {"Authorization": f"Bearer {token}"}
+            # A browser session token goes as Bearer; otherwise authenticate with
+            # the api_key via X-API-KEY. The api_key must NOT be sent as a Bearer
+            # token — the server runs Bearer through SimpleJWT and rejects it
+            # ("token_not_valid"); these endpoints accept X-API-KEY instead.
+            if cfg.jwt:
+                return {"Authorization": f"Bearer {cfg.jwt}"}
+            if cfg.api_key:
+                return {"X-API-KEY": cfg.api_key}
+            raise NotAuthenticatedError(
+                "This action needs an API key (or a JWT session token). "
+                "Set OPENHOME_API_KEY."
+            )
 
         # apikey_body — credential travels in the JSON body, no auth header.
         return {}

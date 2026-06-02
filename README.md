@@ -96,6 +96,43 @@ class MyFirstCapability(MatchingCapability):
 
 ---
 
+## 🖥️ CLI — Build & Manage Abilities from Your Terminal
+
+Prefer not to zip-and-upload by hand? The [`openhome` CLI](cli/README.md) links this
+repo to your [app.openhome.com](https://app.openhome.com) account and does the whole
+loop — **create, push, voice-test, edit/commit, sync, delete** — without the dashboard.
+
+**Setup** (run from the repo root):
+```bash
+python3 -m venv cli/.venv && source cli/.venv/bin/activate
+pip install -e cli
+cp .env.example .env        # add OPENHOME_API_KEY (from Settings → API Keys)
+```
+The API key alone is enough (sent as `X-API-KEY`); run `openhome` from anywhere.
+
+**Core flow:**
+```bash
+openhome agents                                  # list your agents
+openhome create my-weather -t api-template       # scaffold into user/ + auto-push to your account
+#   …edit user/my-weather/main.py…
+openhome push user/my-weather --commit -m "v2"   # update in place (keeps the same ability), commit a version
+openhome call                                     # 🎙 real voice call (mic + speakers) to your default agent
+openhome sync                                     # pull your account's abilities back into user/
+openhome delete my-weather                        # remove from account + local folder
+```
+
+**Contribute to this repo** — promote a finished ability from your private `user/`
+workspace into `community/` and open a PR:
+```bash
+openhome push_to_community my-weather            # copies user/my-weather → community/my-weather, validates it
+```
+
+Your personal abilities live in `user/` (gitignored); `push_to_community` is the
+bridge from there into `community/` for a contribution. Full command reference and
+the API contract: **[cli/README.md](cli/README.md)**.
+
+---
+
 ## 🔷 Official Abilities
 
 Maintained by the OpenHome team. Tested, stable, and supported.
