@@ -16,6 +16,7 @@ from . import workspace as _workspace
 from .abilities import Ability, SaveResult
 from .agents import Agent
 from .config import Config
+from .errors import OpenHomeError
 from . import endpoints
 from .transport import Transport
 from .workspace import SyncReport
@@ -233,3 +234,9 @@ class OpenHomeClient:
     def voice_session(self, agent_id: str, **callbacks) -> _voice.VoiceSession:
         """Open an interactive voice session (caller drives send/receive)."""
         return _voice.VoiceSession(self.config, agent_id, **callbacks)
+
+    def voice_call(self, agent_id: str, **kwargs) -> None:
+        """Run a full mic-in / speaker-out voice call (blocks until hung up)."""
+        from . import audio as _audio
+
+        _audio.voice_call(self.config, agent_id, **kwargs)

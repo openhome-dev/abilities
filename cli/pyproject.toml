@@ -12,7 +12,10 @@ authors = [{ name = "OpenHome" }]
 license = { text = "MIT" }
 dependencies = [
     "requests>=2.31",
-    "websocket-client>=1.7",
+    "websocket-client>=1.7",  # text chat / one-shot trigger (threaded)
+    "websockets>=12",          # voice call (asyncio)
+    "pyaudio>=0.2.13",         # mic capture for voice call
+    "numpy>=1.24",             # VAD / noise gate for voice call
 ]
 
 [project.scripts]
@@ -20,6 +23,10 @@ openhome = "openhome.cli:main"
 
 [project.optional-dependencies]
 dotenv = ["python-dotenv>=1.0"]
+# Voice call also needs the `mpv` binary for playback (brew install mpv /
+# apt install mpv) and PortAudio for pyaudio (brew install portaudio /
+# apt install portaudio19-dev).
+voice = ["websockets>=12", "pyaudio>=0.2.13", "numpy>=1.24"]
 
 [tool.setuptools.packages.find]
 where = ["."]

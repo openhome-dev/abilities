@@ -20,10 +20,8 @@ VERIFY_API_KEY = "/api/sdk/verify_apikey/"
 ADD_CAPABILITY = "/api/capabilities/add-capability/"
 LIST_CAPABILITIES = "/api/capabilities/get-all-capabilities/"
 EDIT_PERSONALITY = "/api/personalities/edit-personality/"
-
-
-def delete_capability(capability_id: str | int) -> str:
-    return f"/api/capabilities/delete-capability/{capability_id}"
+# Batch delete: POST with JSON body {"capability_ids": [<id>, ...]} (JWT auth).
+DELETE_CAPABILITY = "/api/capabilities/delete-capability/"
 
 
 def uninstall_capability(capability_id: str | int) -> str:

@@ -38,6 +38,28 @@ def _split_csv(value: str | None) -> list[str]:
     return [w.strip() for w in value.split(",") if w.strip()]
 
 
+def _resolve_folder(arg: str) -> Path:
+    """Resolve an ability folder from a path *or* bare name, regardless of cwd.
+
+    Tries, in order: the path as given (relative to cwd), relative to the repo
+    root (so ``user/foo`` works from ``cli/``), and the ``user/`` workspace by
+    name (so ``foo`` → ``<repo>/user/foo``). Falls back to the original path so
+    the caller's error message stays meaningful.
+    """
+    from .templates import repo_root, user_dir
+
+    candidates = [
+        Path(arg),
+        repo_root() / arg,
+        user_dir() / arg,
+        user_dir() / Path(arg).name,
+    ]
+    for c in candidates:
+        if c.is_dir():
+            return c
+    return Path(arg)
+
+
 # ── commands ─────────────────────────────────────────────────────────────
 def cmd_login(args: argparse.Namespace) -> int:
     api_key = args.api_key or input("Paste your OpenHome API key: ").strip()
@@ -81,6 +103,22 @@ def cmd_templates(args: argparse.Namespace) -> int:
     return 0
 
 
+def _prompt(label: str, *, required: bool = False, default: str = "") -> str:
+    """Prompt the user for a value (returns default / "" in non-interactive mode)."""
+    if not sys.stdin.isatty():
+        return default
+    while True:
+        suffix = f" [{default}]" if default else ""
+        try:
+            val = input(f"{label}{suffix}: ").strip()
+        except EOFError:
+            return default
+        if val:
+            return val
+        if default or not required:
+            return default
+
+
 def cmd_create(args: argparse.Namespace) -> int:
     client = OpenHomeClient()
     dest = client.create_from_template(
@@ -90,7 +128,48 @@ def cmd_create(args: argparse.Namespace) -> int:
         overwrite=args.overwrite,
     )
     print(f"✓ Created ability at {dest}")
-    print(f"  Edit {dest / 'main.py'}, then: openhome push {dest}")
+
+    if args.no_push:
+        print(f"  Edit {dest / 'main.py'}, then: openhome push {dest}")
+        return 0
+
+    # Collect trigger words (flag, else prompt) — required to push.
+    triggers = _split_csv(args.triggers)
+    if not triggers:
+        triggers = _split_csv(
+            _prompt("Trigger words (comma-separated)", required=True)
+        )
+    if not triggers:
+        print(
+            f"  No trigger words given — not pushed. Add some, then: "
+            f"openhome push {dest} --triggers \"a, b\""
+        )
+        return 0
+
+    description = args.description or _prompt(
+        "Description", default=f"{args.name} ability"
+    )
+
+    # The account requires an alphanumeric ability name (folder names may have hyphens).
+    ability_name = args.name.replace("-", "")
+    if ability_name != args.name:
+        print(f"  note: using '{ability_name}' as the ability name (alphanumeric required)")
+
+    result = client.save_ability(
+        dest,
+        name=ability_name,
+        description=description,
+        category=args.category or "skill",
+        trigger_words=triggers,
+        personality_id=args.agent,
+    )
+    print(f"✓ Pushed '{ability_name}'")
+    if result.capability_id:
+        print(f"  capability_id: {result.capability_id}")
+    print(f"  triggers: {', '.join(triggers)}")
+    if args.agent:
+        print(f"  installed into agent {args.agent}'s call flow")
+    print(f"  edit {dest / 'main.py'} then `openhome push {dest}` to update in place")
     return 0
 
 
@@ -124,7 +203,7 @@ def cmd_push(args: argparse.Namespace) -> int:
     from .workspace import read_manifest
 
     client = OpenHomeClient()
-    folder = Path(args.folder)
+    folder = _resolve_folder(args.folder)
     manifest = read_manifest(folder)
     cap_id = manifest.get("capability_id")
 
@@ -198,8 +277,22 @@ def cmd_disable(args: argparse.Namespace) -> int:
 
 
 def cmd_delete(args: argparse.Namespace) -> int:
+    import shutil
+    from .templates import user_dir
+
     OpenHomeClient().delete_ability(args.id)
-    print(f"✓ Deleted {args.id}")
+    print(f"✓ Deleted {args.id} from your account")
+
+    if not args.keep_local:
+        folder = _resolve_folder(args.id)
+        udir = user_dir().resolve()
+        # Only ever remove a folder that lives directly inside user/.
+        if folder.is_dir() and folder.resolve().parent == udir:
+            try:
+                shutil.rmtree(folder)
+                print(f"  removed local folder {folder}")
+            except OSError as exc:
+                print(f"  (could not remove local folder: {exc})")
     return 0
 
 
@@ -209,9 +302,37 @@ def cmd_call(args: argparse.Namespace) -> int:
     if not agent_id:
         _err("No agent id. Pass AGENT_ID or set OPENHOME_AGENT_ID.")
         return 1
-    print(f"→ {args.phrase}")
-    reply = client.call(agent_id, args.phrase, timeout=args.timeout)
-    print(f"← {reply}" if reply else "← (no response within timeout)")
+
+    # One-shot text trigger when --say is given.
+    if args.say:
+        print(f"→ {args.say}")
+        reply = client.call(agent_id, args.say, timeout=args.timeout)
+        print(f"← {reply}" if reply else "← (no response within timeout)")
+        return 0
+
+    # Otherwise: a real voice call — mic in, speaker out.
+    print(f"📞 Calling agent {agent_id} … (Ctrl-C to hang up)")
+
+    def on_text(d: dict) -> None:
+        role = (d.get("role") or "").lower()
+        content = d.get("content") or ""
+        if not d.get("final") or not content:
+            return  # only print finalized turns, keep the console readable
+        if role == "assistant":
+            print(f"🔊 {content}")
+        elif role == "user":
+            print(f"🎙  {content}")
+
+    try:
+        client.voice_call(
+            agent_id,
+            on_text=on_text,
+            on_status=lambda s: print(f"  ({s})"),
+        )
+    except OpenHomeError as exc:
+        _err(str(exc))
+        return 1
+    print("\nCall ended.")
     return 0
 
 
@@ -292,6 +413,18 @@ def build_parser() -> argparse.ArgumentParser:
     p_create.add_argument("--template", "-t", default="basic-template")
     p_create.add_argument("--dest", help="parent dir (default: user/)")
     p_create.add_argument("--overwrite", action="store_true")
+    p_create.add_argument("--triggers", help="comma-separated trigger words (else prompted)")
+    p_create.add_argument("--description", "-d", help="marketplace description")
+    p_create.add_argument(
+        "--category",
+        "-c",
+        default="skill",
+        choices=["skill", "brain_skill", "background_daemon", "local"],
+    )
+    p_create.add_argument("--agent", help="agent/personality id to install into")
+    p_create.add_argument(
+        "--no-push", action="store_true", help="only scaffold locally, don't push"
+    )
     p_create.set_defaults(func=cmd_create)
 
     p_sync = sub.add_parser(
@@ -347,14 +480,19 @@ def build_parser() -> argparse.ArgumentParser:
     p_dis.add_argument("id")
     p_dis.set_defaults(func=cmd_disable)
 
-    p_del = sub.add_parser("delete", help="Delete an ability")
-    p_del.add_argument("id")
+    p_del = sub.add_parser("delete", help="Delete an ability (account + local folder)")
+    p_del.add_argument("id", help="ability id or name")
+    p_del.add_argument(
+        "--keep-local", action="store_true", help="don't remove the local user/ folder"
+    )
     p_del.set_defaults(func=cmd_delete)
 
-    p_call = sub.add_parser("call", help="Send one phrase to an agent (voice stream)")
+    p_call = sub.add_parser(
+        "call", help="Voice call an agent (mic + speakers); --say for one-shot text"
+    )
     p_call.add_argument("agent", nargs="?", help="agent id (or OPENHOME_AGENT_ID)")
-    p_call.add_argument("phrase", help="what to say")
-    p_call.add_argument("--timeout", type=float, default=30.0)
+    p_call.add_argument("--say", help="one-shot: send this text and print the reply (no audio)")
+    p_call.add_argument("--timeout", type=float, default=30.0, help="--say reply timeout")
     p_call.set_defaults(func=cmd_call)
 
     p_chat = sub.add_parser("chat", help="Interactive voice session with an agent")

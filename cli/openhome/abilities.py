@@ -303,15 +303,18 @@ def assign_to_agent(
 
 # ── delete ──────────────────────────────────────────────────────────────
 def delete_ability(transport: Transport, id_or_name: str) -> dict:
-    """Delete a user-created ability, falling back to uninstall for system ones."""
+    """Delete a single ability by id or name."""
     ability = find_ability(transport, id_or_name)
-    try:
-        return transport.request(
-            "DELETE", endpoints.delete_capability(ability.id), auth="jwt"
-        )
-    except OpenHomeError as exc:
-        if "Invalid user Ability" in str(exc):
-            return transport.request(
-                "DELETE", endpoints.uninstall_capability(ability.id), auth="jwt"
-            )
-        raise
+    return delete_capabilities(transport, [ability.id])
+
+
+def delete_capabilities(transport: Transport, capability_ids: list[str | int]) -> dict:
+    """Batch-delete abilities: ``POST /delete-capability/`` with
+    ``{"capability_ids": [...]}``. Ids are sent as integers."""
+    ids = [int(cid) for cid in capability_ids]
+    return transport.request(
+        "POST",
+        endpoints.DELETE_CAPABILITY,
+        auth="jwt",
+        json={"capability_ids": ids},
+    )

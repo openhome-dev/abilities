@@ -36,24 +36,68 @@ The client picks the credential automatically: JWT-gated calls use `OPENHOME_JWT
 if set, otherwise they fall back to sending the API key — so once the backend
 accepts the API key on those routes, **nothing in the client changes**.
 
-## CLI
+## CLI — full command reference
 
+### Setup / account
 ```bash
-openhome login                                  # verify + save credentials
-openhome agents                                 # list your agents
-openhome templates                              # list templates
-openhome sync                                   # pull your account's abilities → user/
-openhome create my-weather -t api-template      # scaffold locally → user/my-weather
-# …edit user/my-weather/main.py…
-openhome push user/my-weather \
-    --description "Current weather by city" \
-    --triggers "what's the weather, weather" \
-    --agent <AGENT_ID>                          # save + install into that agent
-openhome set-triggers my-weather "weather, forecast"
-openhome list
-openhome call <AGENT_ID> "what's the weather in Tokyo"   # direct voice trigger
-openhome chat <AGENT_ID>                        # interactive session
+openhome login --api-key <KEY> --jwt <JWT>   # verify + save credentials to ~/.openhome
+openhome agents                              # list your agents (id + name)
+openhome templates                           # list templates you can scaffold from
+openhome list                                # list abilities on your account
 ```
+
+### Create a new ability (auto-pushes to your account)
+```bash
+# interactive — prompts for trigger words + description:
+openhome create myskill -t basic-template
+
+# non-interactive:
+openhome create myskill -t basic-template \
+    --triggers "run my skill, my skill" \
+    --description "what it does" \
+    --agent <AGENT_ID>      # optional: install into an agent (omit = global)
+
+openhome create myskill -t basic-template --no-push   # scaffold only, don't push
+```
+Scaffolds `user/myskill/`, then saves it to your account. `--name` is derived
+alphanumeric (hyphens stripped — the backend requires it).
+
+### Edit, then push (updates in place — same id, never delete+recreate)
+```bash
+# …edit user/myskill/main.py…
+openhome push user/myskill                       # save a DRAFT update
+openhome push user/myskill --commit -m "v2 fix"  # COMMIT a version (v1 → v2)
+```
+
+### Trigger words / enable / disable
+```bash
+openhome set-triggers myskill "weather, forecast"
+openhome enable myskill
+openhome disable myskill
+```
+
+### Test by voice (no dashboard)
+```bash
+openhome call <AGENT_ID> "run my skill"   # one-shot: waits for greeting, fires trigger, prints reply
+openhome chat <AGENT_ID>                  # interactive: wait for greeting, type trigger, /quit to exit
+```
+
+### Sync (account → local) and delete
+```bash
+openhome sync            # download code + effective triggers into user/ (keeps local edits)
+openhome sync --force    # overwrite local code with the account version
+openhome sync --prune    # also delete local folders for abilities removed on the account
+openhome delete myskill  # remove from the account
+```
+
+### Direction at a glance
+| Direction | Command |
+|---|---|
+| account → local | `sync` · `sync --force` · `sync --prune` |
+| local → account (new) | `create` (auto-push) · `push` (first time) |
+| local → account (edit, same id) | `push` (draft) · `push --commit -m "…"` (version) |
+| voice | `call` (one-shot) · `chat` (interactive) |
+| remove | `delete` |
 
 ### The `user/` workspace
 
@@ -123,8 +167,7 @@ that currently require a JWT (and are candidates for accepting the API key):
 | List user abilities | `GET /api/capabilities/get-all-capabilities/` |
 | Download ability source (zip) | `GET /api/capabilities/get/template-file/{capability_id}/` |
 | Installed detail (effective triggers + releases) | `GET /api/capabilities/get/installed-capability/by-capability/{capability_id}/` |
-| Delete ability | `DELETE /api/capabilities/delete-capability/{id}` |
-| Uninstall ability | `DELETE /api/capabilities/uninstall-capability/{id}/` |
+| Delete ability(ies) | `POST /api/capabilities/delete-capability/` (JSON `{"capability_ids": [...]}`, batch) |
 
 Already API-key based: `verify_apikey`, `get_personalities`,
 `edit-installed-capability` (X-API-KEY), `edit-personality` (X-API-KEY), and the
@@ -132,5 +175,11 @@ voice `voice-stream` WebSocket.
 
 > Note: the download endpoint returns a **flat** zip (files at the root). The
 > installed-detail endpoint also exposes per-version `zip_file` media paths and
-> `is_committed` / `commit_message` — the basis for a future in-place *commit*
-> (versioned update) flow.
+> `is_committed` / `commit_message` — the basis for the in-place *commit* flow.
+
+## Known limitations
+
+- Templates must follow the backend's import policy (e.g. no `import os` outside the
+  allowed block) or the upload validator rejects them.
+- Updating **code** keeps the same `capability_id`; there is no separate "update
+  metadata only" beyond `set-triggers` / `enable` / `disable`.

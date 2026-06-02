@@ -75,9 +75,14 @@ class VoiceSession:
         on_event: Callable[[str, object], None] | None = None,
         on_error: Callable[[Exception], None] | None = None,
         on_close: Callable[[int], None] | None = None,
+        auto_handshake: bool = True,
     ):
         self._config = config
         self._agent_id = agent_id
+        # When False, the audio lifecycle replies (bot-speaking / bot-speak-end /
+        # ack) are NOT sent automatically — the caller drives them (needed for the
+        # real audio call, where bot-speak-end must wait for playback to finish).
+        self._auto_handshake = auto_handshake
         self._on_connect = on_connect
         self._on_message = on_message
         self._on_event = on_event
@@ -88,6 +93,7 @@ class VoiceSession:
         self._thread: threading.Thread | None = None
         self._ping_stop = threading.Event()
         self._closed = threading.Event()
+        self._send_lock = threading.Lock()
 
     # ── lifecycle ───────────────────────────────────────────────────────
     def connect(self) -> "VoiceSession":
@@ -114,7 +120,8 @@ class VoiceSession:
 
     def send(self, msg_type: str, data: object) -> None:
         if self._app and self._app.sock and self._app.sock.connected:
-            self._app.send(json.dumps({"type": msg_type, "data": data}))
+            with self._send_lock:
+                self._app.send(json.dumps({"type": msg_type, "data": data}))
 
     def say(self, text: str) -> None:
         """Send user speech (transcribed text) to the agent."""
@@ -158,13 +165,13 @@ class VoiceSession:
                         final=bool(data.get("final")),
                     )
                 )
-        elif msg_type == "text":
-            # Audio lifecycle handshake — required by the protocol.
+        elif msg_type == "text" and self._auto_handshake:
+            # Audio lifecycle handshake — required by the protocol (text-only mode).
             if data == "audio-init":
                 self.send("text", "bot-speaking")
             elif data == "audio-end":
                 self.send("text", "bot-speak-end")
-        elif msg_type == "audio":
+        elif msg_type == "audio" and self._auto_handshake:
             # Acknowledge audio receipt even in text-only mode.
             self.send("ack", "audio-received")
         elif msg_type == "error-event":
