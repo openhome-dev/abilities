@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "openhome-client"
+version = "0.1.0"
+description = "Python client + CLI to link this abilities repo with an OpenHome account (app.openhome.com)."
+readme = "README.md"
+requires-python = ">=3.10"
+authors = [{ name = "OpenHome" }]
+license = { text = "MIT" }
+dependencies = [
+    "requests>=2.31",
+    "websocket-client>=1.7",
+]
+
+[project.scripts]
+openhome = "openhome.cli:main"
+
+[project.optional-dependencies]
+dotenv = ["python-dotenv>=1.0"]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["openhome*"]
