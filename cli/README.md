@@ -102,9 +102,15 @@ openhome call --say "run my skill"  # one-shot TEXT trigger to default agent, pr
 openhome call 238371 --say "hi"     # one-shot text to a specific agent
 openhome chat 238371                # interactive TEXT chat (type, /quit to exit)
 ```
-The real voice call streams your mic to the agent and plays its reply through `mpv`,
-with voice-activity detection and barge-in (talk over it to interrupt). Speak after the
-greeting; Ctrl-C hangs up. Agent resolution: arg → `OPENHOME_AGENT_ID` → `0`.
+The real voice call streams your mic to the agent and plays its reply through `mpv`.
+Speak after the greeting; Ctrl-C hangs up. Agent resolution: arg → `OPENHOME_AGENT_ID` → `0`.
+
+It runs **half-duplex** — the mic is muted while the bot is speaking, because a
+laptop has no hardware echo cancellation (an open mic would capture the speaker
+audio and either falsely "interrupt" the bot or get its words transcribed back as
+your input). `bot-speak-end` is sent only once mpv's IPC reports playback has
+actually drained, so the mic re-opens at the right moment. (Hardware with echo
+cancellation — e.g. a DevKit — can run full-duplex with barge-in.)
 
 ### Sync (account → local) and delete
 ```bash

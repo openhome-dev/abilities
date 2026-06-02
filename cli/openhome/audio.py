@@ -1,16 +1,21 @@
 """Real voice call — mic in, speaker out — over the OpenHome voice stream.
 
-This is a parameterized port of the proven reference client. Transport notes
-learned the hard way:
+Parameterized port of the proven reference clients. Transport facts learned the
+hard way:
 
 * Connect with the **api_key in the URL** (``/voice-stream/<api_key>/<agent_id>``);
   the dashboard's ``web/0`` path is browser-only (needs session cookies).
-* The server **requires a browser-like ``User-Agent``** on the handshake — a
-  default Python UA is rejected with 1008 (policy violation).
+* The server **requires a browser-like ``User-Agent``** on the handshake, or it
+  closes with 1008 (policy violation).
 * The agent streams **MP3**, so audio frames are piped straight into ``mpv``.
 
-Mic capture + VAD + barge-in (interrupt) mirror the reference. Requires
-``websockets``, ``pyaudio``, ``numpy`` and the ``mpv`` binary.
+`bot-speak-end` timing: rather than closing mpv's stdin and waiting for the process
+to exit (which respawns mpv every turn and can mis-time the signal), we keep **one
+persistent mpv** and poll its **IPC socket** (`--input-ipc-server`) for
+``playback-time``. We send ``bot-speak-end`` only once that time stops advancing —
+i.e. playback has actually drained. (Learned from the DevKit reference client.)
+
+Requires ``websockets``, ``pyaudio``, ``numpy`` and the ``mpv`` binary.
 """
 
 from __future__ import annotations
@@ -18,6 +23,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import json
+import os
 import shutil
 import subprocess
 
@@ -38,6 +44,10 @@ _BROWSER_UA = (
 _RATE = 16000
 _CHANNELS = 1
 _FRAMES_PER_BUFFER = 3200
+# Playback is "drained" once playback-time hasn't advanced for this many polls.
+_DRAIN_STABLE_POLLS = 4
+_DRAIN_POLL_INTERVAL = 0.1
+_DRAIN_MAX_POLLS = 600  # ~60s safety cap
 
 
 def _require_deps() -> None:
@@ -59,25 +69,19 @@ class _VoiceCall:
     def __init__(self, config: Config, agent_id, on_text=None, on_status=None):
         if not config.api_key:
             raise NotAuthenticatedError("Voice calls need an API key. Set OPENHOME_API_KEY.")
-        self.api_key = config.api_key
-        self.agent_id = agent_id
-        self.url = (
-            f"{config.ws_base}/websocket/voice-stream/{self.api_key}/{self.agent_id}"
-        )
+        self.url = f"{config.ws_base}/websocket/voice-stream/{config.api_key}/{agent_id}"
         self._on_text = on_text
         self._note = on_status or (lambda _m: None)
 
-        self.format = _pyaudio.paInt16
-        self.channels = _CHANNELS
-        self.rate = _RATE
         self.frames_per_buffer = _FRAMES_PER_BUFFER
-
         self.websocket = None
-        self.should_send_audio = True
         self.is_speaking = False
-        self.mpv = None
+        self.is_interrupted = False
 
-        # noise-reduction / VAD state
+        self.mpv = None
+        self.sock_path = f"/tmp/openhome-mpv-{os.getpid()}.sock"
+
+        # VAD / noise-gate state
         self.alpha = 0.95
         self.prev_noise_power = None
         self.energy_history: list[float] = []
@@ -86,24 +90,125 @@ class _VoiceCall:
 
         self.pa = _pyaudio.PyAudio()
         self.stream = self.pa.open(
-            format=self.format,
-            channels=self.channels,
-            rate=self.rate,
-            input=True,
-            frames_per_buffer=self.frames_per_buffer,
+            format=_pyaudio.paInt16, channels=_CHANNELS, rate=_RATE,
+            input=True, frames_per_buffer=self.frames_per_buffer,
         )
+
+    # ── mpv playback (persistent + IPC) ──────────────────────────────────
+    async def _ensure_mpv(self) -> None:
+        if self.mpv and self.mpv.returncode is None:
+            return
+        self.mpv = await asyncio.create_subprocess_exec(
+            "mpv", "--no-cache", "--no-terminal",
+            f"--input-ipc-server={self.sock_path}",
+            "--demuxer-lavf-format=mp3", "--", "fd://0",
+            stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        )
+
+    async def _kill_mpv(self) -> None:
+        if self.mpv:
+            try:
+                self.mpv.kill()
+                await self.mpv.wait()
+            except (ProcessLookupError, OSError):
+                pass
+            self.mpv = None
+
+    async def _read_ipc_reply(self, reader):
+        """Read mpv IPC lines, skipping async event lines, return the reply's
+        ``data`` (or None)."""
+        for _ in range(10):
+            try:
+                line = await asyncio.wait_for(reader.readline(), timeout=1.0)
+            except (asyncio.TimeoutError, TimeoutError):
+                return None
+            if not line:
+                return None
+            try:
+                resp = json.loads(line.decode())
+            except ValueError:
+                continue
+            if "event" in resp:  # async event, not our reply
+                continue
+            return resp.get("data")
+        return None
+
+    async def _connect_ipc(self):
+        """Open the mpv IPC socket, retrying while mpv finishes starting up."""
+        for _ in range(20):  # ~2s
+            try:
+                return await asyncio.open_unix_connection(self.sock_path)
+            except (FileNotFoundError, ConnectionRefusedError, OSError):
+                await asyncio.sleep(0.1)
+        return None
+
+    async def _await_playback_drained(self) -> None:
+        """Block until playback has started AND then stopped advancing.
+
+        Correctness depends on two guards learned from the echo bug:
+        * **started** — never conclude "drained" until playback-time has actually
+          advanced past 0 (otherwise initial buffering looks like silence and we'd
+          open the mic while the bot is still about to speak).
+        * **only count real, unchanged readings** as stable — a failed/`None` read
+          is a transient miss, not progress and not a stall.
+        """
+        conn = await self._connect_ipc()
+        if conn is None:
+            await asyncio.sleep(1.0)  # no IPC — conservative fallback
+            return
+        reader, writer = conn
+        last, stable, started = None, 0, False
+        try:
+            for _ in range(_DRAIN_MAX_POLLS):
+                if not self.mpv or self.is_interrupted:
+                    return
+                writer.write(b'{"command":["get_property","playback-time"]}\n')
+                await writer.drain()
+                pt = await self._read_ipc_reply(reader)
+                if isinstance(pt, (int, float)):
+                    if pt > 0:
+                        started = True
+                    if last is not None and abs(pt - last) < 1e-3:
+                        stable += 1
+                    else:
+                        stable = 0
+                    last = pt
+                # else: transient read miss — leave counters untouched
+                if started and stable >= _DRAIN_STABLE_POLLS:
+                    return
+                await asyncio.sleep(_DRAIN_POLL_INTERVAL)
+        finally:
+            writer.close()
+            try:
+                await writer.wait_closed()
+            except Exception:  # noqa: BLE001
+                pass
+
+    async def _finish_speaking(self) -> None:
+        """On audio-end: wait for real playback drain, then signal bot-speak-end."""
+        await self._await_playback_drained()
+        if self.is_interrupted:
+            return
+        self.is_speaking = False
+        await self._send_text("bot-speak-end")
+        self._note("your turn — speak")
+
+    # ── ws helpers ────────────────────────────────────────────────────────
+    async def _send_text(self, value: str) -> None:
+        try:
+            await self.websocket.send(json.dumps({"type": "text", "data": value}))
+        except _websockets.exceptions.ConnectionClosed:
+            pass
 
     # ── mic processing (VAD + noise gate) ────────────────────────────────
     def _process(self, audio_data: bytes) -> bytes:
         arr = _np.frombuffer(audio_data, dtype=_np.int16).astype(_np.float32) / 32768.0
         rms = float(_np.sqrt(_np.mean(arr**2)))
-
         self.energy_history.append(rms)
         if len(self.energy_history) > 30:
             self.energy_history.pop(0)
         base = float(_np.mean(self.energy_history))
         threshold = base * (1.8 if self.is_speaking else 1.2)
-
         if not self.last_voice_activity:
             significant = rms > threshold * 1.2
         else:
@@ -115,12 +220,10 @@ class _VoiceCall:
             self.voice_holdoff_counter += 1
             if self.voice_holdoff_counter > 10:
                 self.last_voice_activity = False
-
         if self.is_speaking and rms < threshold * 2.0:
             return b"\x00" * len(audio_data)
         if not self.last_voice_activity:
             return b"\x00" * len(audio_data)
-
         if self.prev_noise_power is None:
             self.prev_noise_power = rms**2
         noise_power = self.alpha * self.prev_noise_power + (1 - self.alpha) * rms**2
@@ -130,22 +233,24 @@ class _VoiceCall:
             gain *= 0.3
         return (arr * gain * 32768).astype(_np.int16).tobytes()
 
-    # ── send loop ─────────────────────────────────────────────────────────
     async def _send_loop(self) -> None:
         buf: list[bytes] = []
         while True:
             try:
-                if not self.should_send_audio:
-                    await asyncio.sleep(0.01)
-                    continue
+                # Keep draining the mic device so it never overflows…
                 data = self.stream.read(self.frames_per_buffer, exception_on_overflow=False)
+                # …but half-duplex: don't capture while the bot is speaking, or the
+                # speaker audio echoes back into the mic and triggers a false barge-in
+                # (laptops have no hardware echo cancellation).
+                if self.is_speaking:
+                    buf.clear()
+                    await asyncio.sleep(0.005)
+                    continue
                 buf.append(self._process(data))
                 if len(buf) < 5:
+                    await asyncio.sleep(0.001)
                     continue
-                has_audio = any(_np.frombuffer(f, dtype=_np.int16).any() for f in buf)
-                if has_audio:
-                    if self.is_speaking:  # barge-in
-                        await self._interrupt()
+                if any(_np.frombuffer(f, dtype=_np.int16).any() for f in buf):
                     for f in buf:
                         await self.websocket.send(
                             json.dumps({"type": "audio", "data": base64.b64encode(f).decode()})
@@ -155,17 +260,7 @@ class _VoiceCall:
                 break
             except Exception as exc:  # noqa: BLE001
                 self._note(f"send error: {exc}")
-            await asyncio.sleep(0.01)
-
-    async def _interrupt(self) -> None:
-        if self.mpv and self.mpv.stdin:
-            try:
-                self.mpv.stdin.write(b"q\n")
-                await self.mpv.stdin.drain()
-            except (BrokenPipeError, ConnectionError):
-                pass
-        await self.websocket.send(json.dumps({"type": "text", "data": "interrupt-event"}))
-        self.is_speaking = False
+            await asyncio.sleep(0.001)
 
     # ── receive loop ──────────────────────────────────────────────────────
     async def _recv_loop(self) -> None:
@@ -174,10 +269,8 @@ class _VoiceCall:
                 msg = json.loads(await self.websocket.recv())
             except _websockets.exceptions.ConnectionClosed:
                 break
-            except Exception as exc:  # noqa: BLE001
-                self._note(f"recv error: {exc}")
+            except Exception:  # noqa: BLE001
                 continue
-
             t = msg.get("type")
             if t == "message":
                 if self._on_text:
@@ -189,35 +282,28 @@ class _VoiceCall:
 
     async def _handle_text(self, data) -> None:
         if data == "audio-init":
+            self.is_interrupted = False
+            await self._ensure_mpv()
             self.is_speaking = True
-            self.mpv = await asyncio.create_subprocess_exec(
-                "mpv", "--no-cache", "--no-terminal", "--", "fd://0",
-                stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-            )
-            await self.websocket.send(json.dumps({"type": "text", "data": "bot-speaking"}))
+            await self._send_text("bot-speaking")
         elif data == "interrupt":
-            if self.mpv and self.mpv.stdin:
-                self.mpv.stdin.write(b"q\n")
-                await self.mpv.stdin.drain()
+            await self._kill_mpv()
             self.is_speaking = False
         elif data == "audio-end":
-            if self.mpv and self.mpv.stdin:
-                try:
-                    self.mpv.stdin.close()
-                except BrokenPipeError:
-                    pass
-                await self.mpv.communicate()
-                self.mpv = None
-            self.is_speaking = False
-            await self.websocket.send(json.dumps({"type": "text", "data": "bot-speak-end"}))
+            asyncio.create_task(self._finish_speaking())
 
     async def _handle_audio(self, b64) -> None:
-        await self.websocket.send(json.dumps({"type": "ack", "data": "audio-received"}))
-        if self.mpv and self.mpv.stdin and self.is_speaking:
+        try:
+            await self.websocket.send(json.dumps({"type": "ack", "data": "audio-received"}))
+        except _websockets.exceptions.ConnectionClosed:
+            return
+        if self.is_interrupted or not self.is_speaking:
+            return
+        if self.mpv and self.mpv.stdin and self.mpv.returncode is None:
             try:
                 self.mpv.stdin.write(base64.b64decode(b64))
                 await self.mpv.stdin.drain()
-            except (BrokenPipeError, ConnectionError):
+            except (BrokenPipeError, ConnectionError, ValueError):
                 pass
 
     async def run(self) -> None:
@@ -228,7 +314,8 @@ class _VoiceCall:
             self._note("connected — speak now (Ctrl-C to hang up)")
             await asyncio.gather(self._send_loop(), self._recv_loop())
 
-    def close(self) -> None:
+    async def aclose(self) -> None:
+        await self._kill_mpv()
         try:
             if self.stream:
                 self.stream.stop_stream()
@@ -237,15 +324,25 @@ class _VoiceCall:
                 self.pa.terminate()
         except Exception:  # noqa: BLE001
             pass
+        try:
+            if os.path.exists(self.sock_path):
+                os.unlink(self.sock_path)
+        except OSError:
+            pass
 
 
 def voice_call(config: Config, agent_id="0", *, on_text=None, on_status=None) -> None:
     """Run an interactive mic-in / speaker-out voice call (blocks until hung up)."""
     _require_deps()
     call = _VoiceCall(config, agent_id, on_text=on_text, on_status=on_status)
+
+    async def _main():
+        try:
+            await call.run()
+        finally:
+            await call.aclose()
+
     try:
-        asyncio.run(call.run())
+        asyncio.run(_main())
     except KeyboardInterrupt:
         pass
-    finally:
-        call.close()
