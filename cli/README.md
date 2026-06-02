@@ -19,6 +19,15 @@ pip install -e .
 cp .env.example .env   # then fill in OPENHOME_API_KEY
 ```
 
+For the **voice call** (`openhome call`) you also need the `mpv` player and PortAudio:
+
+```bash
+# macOS
+brew install mpv portaudio
+# Linux
+sudo apt install mpv portaudio19-dev
+```
+
 ## Authentication
 
 Put your API key in `.env` (or run `openhome login`):
@@ -76,18 +85,25 @@ openhome enable myskill
 openhome disable myskill
 ```
 
-### Test by voice (no dashboard)
+### Voice (no dashboard)
 ```bash
-openhome call <AGENT_ID> "run my skill"   # one-shot: waits for greeting, fires trigger, prints reply
-openhome chat <AGENT_ID>                  # interactive: wait for greeting, type trigger, /quit to exit
+openhome call                       # 🎙 real voice call to the DEFAULT agent (0) — mic in, speaker out
+openhome call 238371                # voice call a specific agent
+openhome call --say "run my skill"  # one-shot TEXT trigger to default agent, prints the reply
+openhome call 238371 --say "hi"     # one-shot text to a specific agent
+openhome chat 238371                # interactive TEXT chat (type, /quit to exit)
 ```
+The real voice call streams your mic to the agent and plays its reply through `mpv`,
+with voice-activity detection and barge-in (talk over it to interrupt). Speak after the
+greeting; Ctrl-C hangs up. Agent resolution: arg → `OPENHOME_AGENT_ID` → `0`.
 
 ### Sync (account → local) and delete
 ```bash
-openhome sync            # download code + effective triggers into user/ (keeps local edits)
-openhome sync --force    # overwrite local code with the account version
-openhome sync --prune    # also delete local folders for abilities removed on the account
-openhome delete myskill  # remove from the account
+openhome sync                  # download code + effective triggers into user/ (keeps local edits)
+openhome sync --force          # overwrite local code with the account version
+openhome sync --prune          # also delete local folders for abilities removed on the account
+openhome delete myskill        # remove from the account AND delete the local user/ folder
+openhome delete myskill --keep-local   # remove from the account only
 ```
 
 ### Direction at a glance
@@ -96,8 +112,8 @@ openhome delete myskill  # remove from the account
 | account → local | `sync` · `sync --force` · `sync --prune` |
 | local → account (new) | `create` (auto-push) · `push` (first time) |
 | local → account (edit, same id) | `push` (draft) · `push --commit -m "…"` (version) |
-| voice | `call` (one-shot) · `chat` (interactive) |
-| remove | `delete` |
+| voice | `call` (real voice, mic+speaker) · `call --say "…"` (one-shot text) · `chat` (interactive text) |
+| remove | `delete` (account + local folder) · `delete --keep-local` |
 
 ### The `user/` workspace
 
@@ -177,9 +193,24 @@ voice `voice-stream` WebSocket.
 > installed-detail endpoint also exposes per-version `zip_file` media paths and
 > `is_committed` / `commit_message` — the basis for the in-place *commit* flow.
 
+### Voice WebSocket (`openhome call`)
+
+`wss://app.openhome.com/websocket/voice-stream/<api_key>/<agent_id>`
+
+- **Use the api-key-in-URL path**, not the dashboard's `web/0` path — the latter is
+  browser-only (authenticates via session cookies) and rejects scripts with `1008`.
+- A **browser-like `User-Agent`** header is **required** on the handshake, or the
+  server closes with `1008 (policy violation)`.
+- Client → server: `{"type":"audio","data":<b64 16-bit PCM 16kHz>}`, `ack`/`audio-received`,
+  `bot-speaking` / `bot-speak-end`, `interrupt-event`, `ping`.
+- Server → client: `{"type":"message","data":{role,content,live,final}}`, `text`
+  (`audio-init` / `audio-end` / `interrupt`), and `{"type":"audio",...}` — the audio is
+  **MP3** (piped into `mpv`), despite PCM being the *input* format.
+
 ## Known limitations
 
 - Templates must follow the backend's import policy (e.g. no `import os` outside the
   allowed block) or the upload validator rejects them.
 - Updating **code** keeps the same `capability_id`; there is no separate "update
   metadata only" beyond `set-triggers` / `enable` / `disable`.
+- `openhome call` (real voice) needs `mpv` + PortAudio installed (see Install).
