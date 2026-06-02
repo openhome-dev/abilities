@@ -298,10 +298,8 @@ def cmd_delete(args: argparse.Namespace) -> int:
 
 def cmd_call(args: argparse.Namespace) -> int:
     client = OpenHomeClient()
-    agent_id = args.agent or client.config.agent_id
-    if not agent_id:
-        _err("No agent id. Pass AGENT_ID or set OPENHOME_AGENT_ID.")
-        return 1
+    # Default to agent "0" (the account's default agent) when none is given.
+    agent_id = args.agent or client.config.agent_id or "0"
 
     # One-shot text trigger when --say is given.
     if args.say:
@@ -490,7 +488,9 @@ def build_parser() -> argparse.ArgumentParser:
     p_call = sub.add_parser(
         "call", help="Voice call an agent (mic + speakers); --say for one-shot text"
     )
-    p_call.add_argument("agent", nargs="?", help="agent id (or OPENHOME_AGENT_ID)")
+    p_call.add_argument(
+        "agent", nargs="?", help="agent id (default: 0 = default agent; or OPENHOME_AGENT_ID)"
+    )
     p_call.add_argument("--say", help="one-shot: send this text and print the reply (no audio)")
     p_call.add_argument("--timeout", type=float, default=30.0, help="--say reply timeout")
     p_call.set_defaults(func=cmd_call)
