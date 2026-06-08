@@ -277,7 +277,6 @@ class ClinicalTrialFinderCapability(MatchingCapability):
                 if not condition:
                     condition = reply.strip()
 
-
             self._last_condition = condition
             self._last_location = location
 
