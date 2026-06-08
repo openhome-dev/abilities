@@ -268,12 +268,15 @@ class ClinicalTrialFinderCapability(MatchingCapability):
                 location = data["preferred_location"]
 
             if not condition:
-                reply = await self.capability_worker.user_response()
+                reply = await self.capability_worker.run_io_loop(
+                    "What condition or disease are you searching for?"
+                )
                 if not reply or any(w in reply.lower() for w in EXIT_WORDS):
                     return
                 condition = self._extract_condition(reply)
                 if not condition:
                     condition = reply.strip()
+
 
             self._last_condition = condition
             self._last_location = location
