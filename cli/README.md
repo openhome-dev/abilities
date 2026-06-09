@@ -110,7 +110,12 @@ laptop has no hardware echo cancellation (an open mic would capture the speaker
 audio and either falsely "interrupt" the bot or get its words transcribed back as
 your input). `bot-speak-end` is sent only once mpv's IPC reports playback has
 actually drained, so the mic re-opens at the right moment. (Hardware with echo
-cancellation — e.g. a DevKit — can run full-duplex with barge-in.)
+cancellation — e.g. a DevKit — can run full-duplex with mic barge-in.)
+
+**Interrupt with SPACE:** press the spacebar while the bot is talking to cut it off
+— this stops mpv instantly, sends `interrupt-event` + `bot-speak-end`, and discards
+any remaining audio chunks until the next response begins. Server logs stream live,
+colored by level (`coloredlogs`).
 
 ### Sync (account → local) and delete
 ```bash

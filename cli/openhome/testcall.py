@@ -252,12 +252,21 @@ class VoiceStreamer:
                     await self.handle_audio_message(data)
                 elif data["type"] == "message":
                     await self.handle_chat_message(data["data"])
+                elif data["type"] == "log":
+                    self.handle_log_message(data["data"])
 
             except websockets.exceptions.ConnectionClosedError:
                 print("[!] Connection is closed")
                 break
             except Exception as e:
                 print("[!] Error in receive_data:", e)
+
+    def handle_log_message(self, data):
+        """Process 'log' type messages from server (server-side TTS/STT events)."""
+        if isinstance(data, dict):
+            print("[LOG %s] %s" % (data.get("l", "info").upper(), data.get("m", "")))
+        else:
+            print("[LOG] %s" % data)
 
     async def handle_chat_message(self, data):
         """Process 'chat' type messages from server."""

@@ -16,6 +16,7 @@ dependencies = [
     "websockets>=12",          # voice call (asyncio)
     "pyaudio>=0.2.13",         # mic capture for voice call
     "numpy>=1.24",             # VAD / noise gate for voice call
+    "coloredlogs>=15",         # level-colored server logs in `openhome call`
 ]
 
 [project.scripts]

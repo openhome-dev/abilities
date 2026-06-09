@@ -26,9 +26,16 @@ import json
 import os
 import shutil
 import subprocess
+import sys
 
 from .config import Config
 from .errors import NotAuthenticatedError, OpenHomeError
+
+try:  # POSIX-only single-keypress support (mac/linux)
+    import termios
+    import tty
+except ImportError:  # pragma: no cover - Windows
+    termios = tty = None
 
 try:
     import numpy as _np
@@ -44,10 +51,10 @@ _BROWSER_UA = (
 _RATE = 16000
 _CHANNELS = 1
 _FRAMES_PER_BUFFER = 3200
-# Playback is "drained" once playback-time hasn't advanced for this many polls.
-_DRAIN_STABLE_POLLS = 4
-_DRAIN_POLL_INTERVAL = 0.1
-_DRAIN_MAX_POLLS = 600  # ~60s safety cap
+# End-of-playback detection: poll mpv's core-idle this often for a snappy turn flip.
+_DRAIN_POLL_INTERVAL = 0.03          # 30 ms
+_DRAIN_IDLE_FALLBACK = 25            # ~0.75 s with no observed playback → assume done
+_DRAIN_MAX_POLLS = 2000              # safety cap (~60 s)
 
 
 def _require_deps() -> None:
@@ -66,11 +73,12 @@ def _require_deps() -> None:
 
 
 class _VoiceCall:
-    def __init__(self, config: Config, agent_id, on_text=None, on_status=None):
+    def __init__(self, config: Config, agent_id, on_text=None, on_status=None, on_log=None):
         if not config.api_key:
             raise NotAuthenticatedError("Voice calls need an API key. Set OPENHOME_API_KEY.")
         self.url = f"{config.ws_base}/websocket/voice-stream/{config.api_key}/{agent_id}"
         self._on_text = on_text
+        self._on_log = on_log
         self._note = on_status or (lambda _m: None)
 
         self.frames_per_buffer = _FRAMES_PER_BUFFER
@@ -80,6 +88,10 @@ class _VoiceCall:
 
         self.mpv = None
         self.sock_path = f"/tmp/openhome-mpv-{os.getpid()}.sock"
+        # Bumped on every audio-init and on interrupt; a drain task only sends
+        # bot-speak-end if its turn is still current (prevents a stale audio-end
+        # from cutting off the next utterance after an interrupt).
+        self._turn = 0
 
         # VAD / noise-gate state
         self.alpha = 0.95
@@ -101,7 +113,9 @@ class _VoiceCall:
         self.mpv = await asyncio.create_subprocess_exec(
             "mpv", "--no-cache", "--no-terminal",
             f"--input-ipc-server={self.sock_path}",
-            "--demuxer-lavf-format=mp3", "--", "fd://0",
+            "--demuxer-lavf-format=mp3",
+            "--audio-buffer=0.1",   # smaller device buffer → shorter tail after core-idle
+            "--", "fd://0",
             stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
         )
 
@@ -142,40 +156,41 @@ class _VoiceCall:
                 await asyncio.sleep(0.1)
         return None
 
-    async def _await_playback_drained(self) -> None:
-        """Block until playback has started AND then stopped advancing.
+    async def _ipc_get(self, reader, writer, prop):
+        writer.write(json.dumps({"command": ["get_property", prop]}).encode() + b"\n")
+        await writer.drain()
+        return await self._read_ipc_reply(reader)
 
-        Correctness depends on two guards learned from the echo bug:
-        * **started** — never conclude "drained" until playback-time has actually
-          advanced past 0 (otherwise initial buffering looks like silence and we'd
-          open the mic while the bot is still about to speak).
-        * **only count real, unchanged readings** as stable — a failed/`None` read
-          is a transient miss, not progress and not a stall.
+    async def _await_playback_drained(self) -> None:
+        """Block until mpv's buffer has drained, then return — as soon as possible.
+
+        Polls ``core-idle`` (true the instant the core has nothing left to play):
+        once we've seen it actively playing (``core-idle`` False) and it then flips
+        True, playback is done. This fires right when the audio ends, instead of
+        waiting for playback-time to sit still. A fallback returns if we never see
+        it start (very short clip already finished).
         """
         conn = await self._connect_ipc()
         if conn is None:
-            await asyncio.sleep(1.0)  # no IPC — conservative fallback
+            await asyncio.sleep(0.6)  # no IPC — conservative fallback
             return
         reader, writer = conn
-        last, stable, started = None, 0, False
+        seen_playing = False
+        idle_polls = 0
         try:
             for _ in range(_DRAIN_MAX_POLLS):
                 if not self.mpv or self.is_interrupted:
                     return
-                writer.write(b'{"command":["get_property","playback-time"]}\n')
-                await writer.drain()
-                pt = await self._read_ipc_reply(reader)
-                if isinstance(pt, (int, float)):
-                    if pt > 0:
-                        started = True
-                    if last is not None and abs(pt - last) < 1e-3:
-                        stable += 1
-                    else:
-                        stable = 0
-                    last = pt
-                # else: transient read miss — leave counters untouched
-                if started and stable >= _DRAIN_STABLE_POLLS:
-                    return
+                idle = await self._ipc_get(reader, writer, "core-idle")
+                if idle is False:
+                    seen_playing = True
+                    idle_polls = 0
+                else:  # True or None (read miss)
+                    idle_polls += 1
+                    if seen_playing and idle is True:
+                        return  # was playing, now drained → done
+                    if idle_polls > _DRAIN_IDLE_FALLBACK:
+                        return  # never observed playback → assume already done
                 await asyncio.sleep(_DRAIN_POLL_INTERVAL)
         finally:
             writer.close()
@@ -184,12 +199,33 @@ class _VoiceCall:
             except Exception:  # noqa: BLE001
                 pass
 
-    async def _finish_speaking(self) -> None:
-        """On audio-end: wait for real playback drain, then signal bot-speak-end."""
+    def _play_ping(self) -> None:
+        """Play a short 'your turn' beep on the default output (blocking, ~130ms)."""
+        try:
+            sr, dur, freq = 16000, 0.13, 880.0
+            n = int(sr * dur)
+            t = _np.linspace(0, dur, n, False)
+            env = _np.ones(n)
+            fade = max(1, int(sr * 0.012))
+            env[:fade] = _np.linspace(0, 1, fade)
+            env[-fade * 2:] = _np.linspace(1, 0, fade * 2)
+            pcm = (0.25 * _np.sin(2 * _np.pi * freq * t) * env * 32767).astype(_np.int16)
+            out = self.pa.open(format=_pyaudio.paInt16, channels=1, rate=sr, output=True)
+            out.write(pcm.tobytes())
+            out.stop_stream()
+            out.close()
+        except Exception:  # noqa: BLE001
+            pass
+
+    async def _finish_speaking(self, turn: int) -> None:
+        """On audio-end: wait for real playback drain, then signal bot-speak-end —
+        unless this turn was interrupted or superseded by a newer one."""
         await self._await_playback_drained()
-        if self.is_interrupted:
+        if self.is_interrupted or self._turn != turn:
             return
         self.is_speaking = False
+        # Fire the "your turn" ping in parallel — never block the turn flip.
+        asyncio.get_event_loop().run_in_executor(None, self._play_ping)
         await self._send_text("bot-speak-end")
         self._note("your turn — speak")
 
@@ -275,6 +311,9 @@ class _VoiceCall:
             if t == "message":
                 if self._on_text:
                     self._on_text(msg.get("data", {}))
+            elif t == "log":
+                if self._on_log:
+                    self._on_log(msg.get("data", {}))
             elif t == "text":
                 await self._handle_text(msg.get("data"))
             elif t == "audio":
@@ -283,6 +322,7 @@ class _VoiceCall:
     async def _handle_text(self, data) -> None:
         if data == "audio-init":
             self.is_interrupted = False
+            self._turn += 1
             await self._ensure_mpv()
             self.is_speaking = True
             await self._send_text("bot-speaking")
@@ -290,7 +330,7 @@ class _VoiceCall:
             await self._kill_mpv()
             self.is_speaking = False
         elif data == "audio-end":
-            asyncio.create_task(self._finish_speaking())
+            asyncio.create_task(self._finish_speaking(self._turn))
 
     async def _handle_audio(self, b64) -> None:
         try:
@@ -306,13 +346,61 @@ class _VoiceCall:
             except (BrokenPipeError, ConnectionError, ValueError):
                 pass
 
+    async def _user_interrupt(self) -> None:
+        """Spacebar interrupt: stop playback now, tell the server, discard the rest."""
+        if self.is_interrupted or not self.is_speaking:
+            return
+        self.is_interrupted = True          # gate: drop audio until next audio-init
+        self._turn += 1                     # invalidate any pending drain task
+        await self._kill_mpv()              # stop the speaker at this exact moment
+        await self._send_text("interrupt-event")
+        await self._send_text("bot-speak-end")
+        self.is_speaking = False
+        self._note("interrupted — your turn")
+
+    async def _keyboard_loop(self) -> None:
+        """Watch for the SPACE key (raw, no Enter) and interrupt the bot."""
+        if termios is None or not sys.stdin.isatty():
+            return  # no controlling terminal (piped/Windows) — keyboard disabled
+        fd = sys.stdin.fileno()
+        old_attrs = termios.tcgetattr(fd)
+        loop = asyncio.get_event_loop()
+        keys: "asyncio.Queue[str]" = asyncio.Queue()
+
+        def _on_readable() -> None:
+            try:
+                ch = os.read(fd, 1).decode(errors="ignore")
+            except OSError:
+                ch = ""
+            if ch:
+                keys.put_nowait(ch)
+
+        try:
+            tty.setcbreak(fd)  # char-at-a-time, no echo; keeps Ctrl-C working
+            loop.add_reader(fd, _on_readable)
+            while True:
+                ch = await keys.get()
+                if ch == " ":
+                    await self._user_interrupt()
+        finally:
+            loop.remove_reader(fd)
+            termios.tcsetattr(fd, termios.TCSADRAIN, old_attrs)
+
     async def run(self) -> None:
         async with _websockets.connect(
             self.url, additional_headers={"User-Agent": _BROWSER_UA}
         ) as ws:
             self.websocket = ws
-            self._note("connected — speak now (Ctrl-C to hang up)")
-            await asyncio.gather(self._send_loop(), self._recv_loop())
+            self._note("connected — speak after the greeting; SPACE interrupts, Ctrl-C hangs up")
+            kb = asyncio.create_task(self._keyboard_loop())
+            try:
+                await asyncio.gather(self._send_loop(), self._recv_loop())
+            finally:
+                kb.cancel()
+                try:
+                    await kb
+                except asyncio.CancelledError:
+                    pass
 
     async def aclose(self) -> None:
         await self._kill_mpv()
@@ -331,10 +419,10 @@ class _VoiceCall:
             pass
 
 
-def voice_call(config: Config, agent_id="0", *, on_text=None, on_status=None) -> None:
+def voice_call(config: Config, agent_id="0", *, on_text=None, on_status=None, on_log=None) -> None:
     """Run an interactive mic-in / speaker-out voice call (blocks until hung up)."""
     _require_deps()
-    call = _VoiceCall(config, agent_id, on_text=on_text, on_status=on_status)
+    call = _VoiceCall(config, agent_id, on_text=on_text, on_status=on_status, on_log=on_log)
 
     async def _main():
         try:

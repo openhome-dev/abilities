@@ -324,6 +324,63 @@ def cmd_delete(args: argparse.Namespace) -> int:
     return 0
 
 
+def _build_call_logger():
+    """Return an ``on_log(data)`` that renders server logs with level-based colors.
+
+    Uses ``coloredlogs`` when available (consistent per-level styling), and falls
+    back to manual ANSI otherwise. The server's ``data`` is ``{"l": level, "m": msg}``.
+    """
+    import logging
+
+    _LEVELS = {
+        "debug": logging.DEBUG,
+        "info": logging.INFO,
+        "warning": logging.WARNING,
+        "warn": logging.WARNING,
+        "error": logging.ERROR,
+        "critical": logging.CRITICAL,
+    }
+
+    logger = logging.getLogger("openhome.call")
+    logger.setLevel(logging.DEBUG)
+    logger.propagate = False
+
+    if not logger.handlers:
+        try:
+            import coloredlogs
+
+            coloredlogs.install(
+                level="DEBUG",
+                logger=logger,
+                fmt="%(levelname)-8s %(message)s",
+            )
+        except ImportError:
+            # Fallback: manual ANSI, colored by level.
+            colors = {
+                logging.DEBUG: "\033[36m", logging.INFO: "\033[32m",
+                logging.WARNING: "\033[33m", logging.ERROR: "\033[31m",
+                logging.CRITICAL: "\033[31m",
+            }
+
+            class _AnsiFormatter(logging.Formatter):
+                def format(self, record):
+                    c = colors.get(record.levelno, "")
+                    return f"{c}{record.levelname:<8}\033[0m {record.getMessage()}"
+
+            h = logging.StreamHandler()
+            h.setFormatter(_AnsiFormatter())
+            logger.addHandler(h)
+
+    def on_log(d: dict) -> None:
+        if not isinstance(d, dict):
+            logger.info(str(d))
+            return
+        level = _LEVELS.get((d.get("l") or "info").lower(), logging.INFO)
+        logger.log(level, d.get("m", ""))
+
+    return on_log
+
+
 def cmd_call(args: argparse.Namespace) -> int:
     client = OpenHomeClient()
     # Default to agent "0" (the account's default agent) when none is given.
@@ -337,23 +394,23 @@ def cmd_call(args: argparse.Namespace) -> int:
         return 0
 
     # Otherwise: a real voice call — mic in, speaker out.
-    print(f"📞 Calling agent {agent_id} … (Ctrl-C to hang up)")
+    print(f"📞 Calling agent {agent_id} …  (SPACE = interrupt, Ctrl-C = hang up)")
+
+    on_log = _build_call_logger()
+    dim, reset = "\033[2m", "\033[0m"
 
     def on_text(d: dict) -> None:
-        role = (d.get("role") or "").lower()
-        content = d.get("content") or ""
-        if not d.get("final") or not content:
-            return  # only print finalized turns, keep the console readable
-        if role == "assistant":
-            print(f"🔊 {content}")
-        elif role == "user":
-            print(f"🎙  {content}")
+        # The assistant's text already appears in the TTT debug log, so only echo
+        # the user's transcribed turns here (not in the logs).
+        if (d.get("role") or "").lower() == "user" and d.get("final") and d.get("content"):
+            print(f"🎙  {d['content']}")
 
     try:
         client.voice_call(
             agent_id,
             on_text=on_text,
-            on_status=lambda s: print(f"  ({s})"),
+            on_log=on_log,
+            on_status=lambda s: print(f"{dim}  ({s}){reset}"),
         )
     except OpenHomeError as exc:
         _err(str(exc))
