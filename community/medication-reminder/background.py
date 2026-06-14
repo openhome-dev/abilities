@@ -1,4 +1,3 @@
-import requests
 from datetime import datetime, timedelta
 
 from src.agent.capability import MatchingCapability
