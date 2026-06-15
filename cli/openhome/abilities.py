@@ -57,6 +57,31 @@ class Ability:
 
 
 @dataclass
+class InstalledAbility:
+    """An installed capability (from get-installed-capabilities)."""
+
+    id: str
+    name: str
+    category: str | None = None
+    trigger_words: list[str] = field(default_factory=list)
+    enabled: bool = False
+    system_capability: bool = False
+    agent_capability: bool = False
+
+    @classmethod
+    def from_api(cls, data: dict) -> "InstalledAbility":
+        return cls(
+            id=str(data.get("id")),
+            name=data.get("name", ""),
+            category=data.get("category"),
+            trigger_words=list(data.get("trigger_words") or []),
+            enabled=bool(data.get("enabled")),
+            system_capability=bool(data.get("system_capability")),
+            agent_capability=bool(data.get("agent_capability")),
+        )
+
+
+@dataclass
 class SaveResult:
     """Result of saving/uploading an ability."""
 
@@ -181,6 +206,45 @@ def find_ability(transport: Transport, id_or_name: str) -> Ability:
     raise OpenHomeError(f'Ability "{id_or_name}" not found on this account.')
 
 
+# ── installed view (enable / disable / set-triggers) ──────────────────────
+def list_installed(transport: Transport) -> list[InstalledAbility]:
+    """List installed capabilities (the runtime view)."""
+    result = transport.request(
+        "GET", endpoints.LIST_INSTALLED_CAPABILITIES, auth="jwt"
+    )
+    rows = result if isinstance(result, list) else result.get("capabilities", [])
+    return [InstalledAbility.from_api(row) for row in rows]
+
+
+def find_installed(transport: Transport, id_or_name: str) -> InstalledAbility:
+    """Resolve an installed ability by installed id, name, or capability id.
+
+    ``openhome list`` shows the capability id, but the edit endpoint needs the
+    installed id; the two are bridged by name via get-all-capabilities.
+    """
+    installed = list_installed(transport)
+
+    for ia in installed:
+        if ia.id == str(id_or_name) or ia.name == id_or_name:
+            return ia
+
+    name: str | None = None
+    for a in list_abilities(transport):
+        if a.id == str(id_or_name) or a.name == id_or_name:
+            name = a.name
+            break
+    if name is not None:
+        for ia in installed:
+            if ia.name == name:
+                return ia
+        raise OpenHomeError(
+            f'"{name}" exists on your account but is not installed, '
+            "so it can't be enabled, disabled, or have triggers changed."
+        )
+
+    raise OpenHomeError(f'Ability "{id_or_name}" not found.')
+
+
 def download_ability_zip(transport: Transport, capability_id: str | int) -> bytes:
     """Download an ability's current source as raw zip bytes."""
     return transport.request(
@@ -240,23 +304,25 @@ def get_installed_detail(transport: Transport, capability_id: str | int) -> dict
 # ── edit installed (triggers / enable-disable) ────────────────────────────
 def edit_installed(
     transport: Transport,
-    capability_id: str,
+    ability: InstalledAbility,
     *,
-    name: str,
-    category: str,
-    trigger_words: list[str],
-    enabled: bool = True,
+    enabled: bool | None = None,
+    trigger_words: list[str] | None = None,
 ) -> dict:
     """PUT the full installed-capability object (the API replaces, not patches)."""
     return transport.request(
         "PUT",
-        endpoints.edit_installed_capability(capability_id),
+        endpoints.edit_installed_capability(ability.id),
         auth="xapikey",
         json={
-            "enabled": enabled,
-            "name": name,
-            "category": category or "skill",
-            "trigger_words": trigger_words,
+            "enabled": ability.enabled if enabled is None else enabled,
+            "name": ability.name,
+            "category": ability.category or "skill",
+            "trigger_words": (
+                ability.trigger_words if trigger_words is None else trigger_words
+            ),
+            "system_capability": ability.system_capability,
+            "agent_capability": ability.agent_capability,
         },
     )
 
@@ -265,27 +331,13 @@ def set_trigger_words(
     transport: Transport, id_or_name: str, trigger_words: list[str]
 ) -> dict:
     """Update an installed ability's trigger words (dashboard "edit triggers")."""
-    ability = find_ability(transport, id_or_name)
-    return edit_installed(
-        transport,
-        ability.id,
-        name=ability.name,
-        category=ability.category or "skill",
-        trigger_words=trigger_words,
-        enabled=ability.is_installed,
-    )
+    ability = find_installed(transport, id_or_name)
+    return edit_installed(transport, ability, trigger_words=trigger_words)
 
 
 def set_enabled(transport: Transport, id_or_name: str, enabled: bool) -> dict:
-    ability = find_ability(transport, id_or_name)
-    return edit_installed(
-        transport,
-        ability.id,
-        name=ability.name,
-        category=ability.category or "skill",
-        trigger_words=ability.trigger_words,
-        enabled=enabled,
-    )
+    ability = find_installed(transport, id_or_name)
+    return edit_installed(transport, ability, enabled=enabled)
 
 
 # ── assign to agent ─────────────────────────────────────────────────────

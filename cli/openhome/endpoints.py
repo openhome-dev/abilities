@@ -15,10 +15,11 @@ from __future__ import annotations
 #                   when no jwt is configured (forward-compatible with the
 #                   planned backend change to accept the api key here too)
 GET_PERSONALITIES = "/api/sdk/get_personalities"
-VERIFY_API_KEY = "/api/sdk/verify_apikey/"
+VERIFY_API_KEY = "/api/sdk/verify_apikey"
 
 ADD_CAPABILITY = "/api/capabilities/add-capability/"
 LIST_CAPABILITIES = "/api/capabilities/get-all-capabilities/"
+LIST_INSTALLED_CAPABILITIES = "/api/capabilities/get-installed-capabilities/"
 EDIT_PERSONALITY = "/api/personalities/edit-personality/"
 # Batch delete: POST with JSON body {"capability_ids": [<id>, ...]} (JWT auth).
 DELETE_CAPABILITY = "/api/capabilities/delete-capability/"
