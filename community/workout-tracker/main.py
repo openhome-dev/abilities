@@ -2,6 +2,7 @@ import json
 import random
 import re
 from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 
 from src.agent.capability import MatchingCapability
 from src.agent.capability_worker import CapabilityWorker
@@ -78,9 +79,6 @@ class WorkoutTrackerCapability(MatchingCapability):
     def call(self, worker: AgentWorker):
         self.worker = worker
         self.capability_worker = CapabilityWorker(self.worker)
-        self.workouts = []
-        self.prefs = {"goal_per_week": 4, "name": ""}
-        self.idle_count = 0
         self.worker.session_tasks.create(self.run())
 
     # -------------------------------------------------------------------------
@@ -88,6 +86,10 @@ class WorkoutTrackerCapability(MatchingCapability):
     # -------------------------------------------------------------------------
 
     async def run(self):
+        self.workouts = []
+        self.prefs = {"goal_per_week": 4, "name": ""}
+        self.idle_count = 0
+        self._tz = None
         try:
             await self._boot()
 
@@ -342,9 +344,10 @@ class WorkoutTrackerCapability(MatchingCapability):
         amount = str(parsed.get("amount", "")).strip()
         unit = parsed.get("unit", "").strip()
 
+        now = self._now()
         entry = {
-            "date": datetime.now().strftime("%Y-%m-%d"),
-            "time": datetime.now().strftime("%H:%M"),
+            "date": now.strftime("%Y-%m-%d"),
+            "time": now.strftime("%H:%M"),
             "exercise": exercise,
             "amount": amount,
             "unit": unit,
@@ -443,7 +446,7 @@ class WorkoutTrackerCapability(MatchingCapability):
             # Format date for speech
             try:
                 dt = datetime.strptime(date, "%Y-%m-%d")
-                today = datetime.now().date()
+                today = self._now().date()
                 if dt.date() == today:
                     date_str = "Today"
                 elif dt.date() == today - timedelta(days=1):
@@ -503,6 +506,37 @@ class WorkoutTrackerCapability(MatchingCapability):
     # Helpers
     # -------------------------------------------------------------------------
 
+    def _now(self):
+        """Current time in the user's timezone, falling back to server time.
+
+        Resolves the timezone once per session and logs what was captured.
+        """
+        if self._tz is None:
+            try:
+                self._tz = self.capability_worker.get_timezone() or ""
+                if self._tz:
+                    self.worker.editor_logging_handler.info(
+                        f"[WorkoutTracker] Captured user timezone: {self._tz} "
+                        f"(local time {datetime.now(ZoneInfo(self._tz)).strftime('%Y-%m-%d %H:%M %Z')})"
+                    )
+                else:
+                    self.worker.editor_logging_handler.info(
+                        "[WorkoutTracker] No user timezone available; using server time."
+                    )
+            except Exception as e:
+                self._tz = ""
+                self.worker.editor_logging_handler.error(
+                    f"[WorkoutTracker] Timezone lookup failed, using server time: {e}"
+                )
+        if self._tz:
+            try:
+                return datetime.now(ZoneInfo(self._tz))
+            except Exception as e:
+                self.worker.editor_logging_handler.error(
+                    f"[WorkoutTracker] Invalid timezone '{self._tz}', using server time: {e}"
+                )
+        return datetime.now()
+
     def _is_decline(self, text):
         """True if a short utterance is a decline ("no", "skip", "no thanks")."""
         normalized = text.lower().strip().strip(".!?,")
@@ -518,11 +552,12 @@ class WorkoutTrackerCapability(MatchingCapability):
             return 0
 
         dates = sorted(set(w["date"] for w in self.workouts), reverse=True)
-        today = datetime.now().strftime("%Y-%m-%d")
+        now = self._now()
+        today = now.strftime("%Y-%m-%d")
 
         # If no workout today, check if yesterday counts
         if dates[0] != today:
-            yesterday = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
+            yesterday = (now - timedelta(days=1)).strftime("%Y-%m-%d")
             if dates[0] != yesterday:
                 return 0
 
@@ -549,7 +584,7 @@ class WorkoutTrackerCapability(MatchingCapability):
 
     def _count_this_month(self):
         """Count workouts logged in the current month."""
-        this_month = datetime.now().strftime("%Y-%m")
+        this_month = self._now().strftime("%Y-%m")
         return len([w for w in self.workouts if w["date"].startswith(this_month)])
 
     def _get_week_exercises(self):
@@ -564,7 +599,7 @@ class WorkoutTrackerCapability(MatchingCapability):
         """Check if a date string falls in the current ISO week."""
         try:
             dt = datetime.strptime(date_str, "%Y-%m-%d")
-            now = datetime.now()
+            now = self._now()
             return dt.isocalendar()[:2] == now.isocalendar()[:2]
         except Exception:
             return False
