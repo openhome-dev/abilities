@@ -65,9 +65,8 @@ REPEAT_PHRASES = {
 }
 
 DEFINITION_PROMPT = (
-    'Give a short, clear definition of the word "{word}" and use it in a '
-    "simple example sentence. Format for voice readback — keep it to 2 sentences max. "
-    "Return ONLY the definition and example."
+    'Give a short, clear definition of the word "{word}" in ONE sentence. '
+    "Format for voice readback. Return ONLY the definition, nothing else."
 )
 
 EXTRACT_SPELLING_PROMPT = (
@@ -79,7 +78,7 @@ EXTRACT_SPELLING_PROMPT = (
 )
 
 
-class SpellingBeeCoachCapability(MatchingCapability):
+class SpellingbeecoachCapability(MatchingCapability):
     model_config = {"extra": "allow", "arbitrary_types_allowed": True}
 
     worker: AgentWorker = None
@@ -91,10 +90,6 @@ class SpellingBeeCoachCapability(MatchingCapability):
     def call(self, worker: AgentWorker):
         self.worker = worker
         self.capability_worker = CapabilityWorker(self.worker)
-        self.progress = {"total_correct": 0, "total_attempted": 0, "mastered": [], "weak": []}
-        self.session_correct = 0
-        self.session_total = 0
-        self.current_difficulty = "medium"
         self.worker.session_tasks.create(self.run())
 
     # -------------------------------------------------------------------------
@@ -102,6 +97,10 @@ class SpellingBeeCoachCapability(MatchingCapability):
     # -------------------------------------------------------------------------
 
     async def run(self):
+        self.progress = {"total_correct": 0, "total_attempted": 0, "mastered": [], "weak": []}
+        self.session_correct = 0
+        self.session_total = 0
+        self.current_difficulty = "medium"
         try:
             await self._boot()
 
@@ -349,21 +348,20 @@ class SpellingBeeCoachCapability(MatchingCapability):
     # -------------------------------------------------------------------------
 
     async def _present_word(self, word):
-        """Say the word and give its definition."""
-        await self.capability_worker.speak(f"Your word is: {word}.")
-
-        # Get definition from LLM
+        """Say the word with its explanation, then prompt the user to spell it."""
+        # Fetch the definition first so word and explanation flow back-to-back.
         try:
             definition = self.capability_worker.text_to_text_response(
                 DEFINITION_PROMPT.format(word=word)
             )
-            await self.capability_worker.speak(definition)
         except Exception:
-            pass
+            definition = ""
 
-        await self.capability_worker.speak(
-            f"Spell {word}. Say the letters out loud."
-        )
+        intro = f"Your word is: {word}."
+        if definition:
+            intro = f"{intro} {definition}"
+        await self.capability_worker.speak(intro)
+        await self.capability_worker.speak("Now, spell it. Say the letters out loud.")
 
     async def _check_spelling(self, correct_word, user_input):
         """Check if the user spelled the word correctly using LLM extraction."""
