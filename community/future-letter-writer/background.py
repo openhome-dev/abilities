@@ -1,6 +1,7 @@
 import json
 from datetime import datetime
 from time import time
+from zoneinfo import ZoneInfo
 
 from src.agent.capability import MatchingCapability
 from src.agent.capability_worker import CapabilityWorker
@@ -20,7 +21,7 @@ LETTERS_FILE = "future_letters_data.json"
 POLL_INTERVAL = 60.0
 
 
-class FutureLetterWriterBackground(MatchingCapability):
+class FutureLettersCapabilityBackground(MatchingCapability):
     model_config = {"extra": "allow", "arbitrary_types_allowed": True}
 
     worker: AgentWorker = None
@@ -29,6 +30,37 @@ class FutureLetterWriterBackground(MatchingCapability):
 
     # Do not change following tag of register capability
     # {{register capability}}
+
+    def _now(self):
+        """Current time in the user's timezone, falling back to server time.
+
+        Resolves the timezone once and logs what was captured.
+        """
+        if self._tz is None:
+            try:
+                self._tz = self.capability_worker.get_timezone() or ""
+                if self._tz:
+                    self.worker.editor_logging_handler.info(
+                        f"[FutureLetterWriter] Captured user timezone: {self._tz} "
+                        f"(local time {datetime.now(ZoneInfo(self._tz)).strftime('%Y-%m-%d %H:%M %Z')})"
+                    )
+                else:
+                    self.worker.editor_logging_handler.info(
+                        "[FutureLetterWriter] No user timezone available; using server time."
+                    )
+            except Exception as e:
+                self._tz = ""
+                self.worker.editor_logging_handler.error(
+                    f"[FutureLetterWriter] Timezone lookup failed, using server time: {e}"
+                )
+        if self._tz:
+            try:
+                return datetime.now(ZoneInfo(self._tz))
+            except Exception as e:
+                self.worker.editor_logging_handler.error(
+                    f"[FutureLetterWriter] Invalid timezone '{self._tz}', using server time: {e}"
+                )
+        return datetime.now()
 
     async def background_loop(self):
         self.worker.editor_logging_handler.info(
@@ -51,7 +83,7 @@ class FutureLetterWriterBackground(MatchingCapability):
                 raw = await self.capability_worker.read_file(LETTERS_FILE, False)
                 letters = json.loads(raw)
 
-                today = datetime.now().strftime("%Y-%m-%d")
+                now_str = self._now().strftime("%Y-%m-%d %H:%M")
                 newly_delivered = set()
 
                 for letter in letters:
@@ -69,12 +101,13 @@ class FutureLetterWriterBackground(MatchingCapability):
                     if letter_id in delivered_ids:
                         continue
 
-                    deliver_date = letter.get("deliver_date", "")
-                    if not deliver_date:
+                    deliver_at = letter.get("deliver_at", "")
+                    if not deliver_at:
                         continue
 
-                    # Check if delivery date has arrived
-                    if deliver_date <= today:
+                    # Check if delivery time has arrived (fixed-width
+                    # "YYYY-MM-DD HH:MM" strings compare chronologically).
+                    if deliver_at <= now_str:
                         self.worker.editor_logging_handler.info(
                             f"[FutureLetterWriter] Delivering letter {letter_id}"
                         )
@@ -121,7 +154,7 @@ class FutureLetterWriterBackground(MatchingCapability):
                         for letter in letters:
                             if letter.get("id") in newly_delivered:
                                 letter["status"] = "delivered"
-                                letter["delivered_date"] = today
+                                letter["delivered_at"] = now_str
                         if exists:
                             await self.capability_worker.delete_file(
                                 LETTERS_FILE, False
@@ -145,4 +178,5 @@ class FutureLetterWriterBackground(MatchingCapability):
         self.worker = worker
         self.background_daemon_mode = background_daemon_mode
         self.capability_worker = CapabilityWorker(self.worker)
+        self._tz = None
         self.worker.session_tasks.create(self.background_loop())
