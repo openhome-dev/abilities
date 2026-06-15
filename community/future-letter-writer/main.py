@@ -2,6 +2,7 @@ import json
 import random
 import re
 from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 
 from src.agent.capability import MatchingCapability
 from src.agent.capability_worker import CapabilityWorker
@@ -30,18 +31,21 @@ LIST_KEYWORDS = {"list", "show", "how many", "pending", "check", "what letters"}
 DELETE_KEYWORDS = {"delete", "remove", "cancel letter"}
 
 PARSE_DATE_PROMPT = (
-    "The user wants to set a delivery date for a letter to their future self.\n"
+    "The user wants to schedule delivery of a letter to their future self.\n"
     "They said: '{raw}'\n"
-    "Today's date is {today}.\n"
-    "Parse their response into a delivery date. Handle natural language like:\n"
-    "- 'in a month' → one month from today\n"
-    "- 'next year' → one year from today\n"
-    "- 'in 6 months' → six months from today\n"
-    "- 'on my birthday December 15' → next December 15\n"
-    "- 'January 2027' → January 1, 2027\n"
-    "- 'in a week' → 7 days from today\n"
-    "Return ONLY a JSON object: {{\"date\": \"YYYY-MM-DD\", \"human\": \"readable description\"}}\n"
-    "If you cannot parse a date, return: {{\"date\": \"\", \"human\": \"\"}}"
+    "The current date and time is {now} (timezone {tz}).\n"
+    "Parse their response into a delivery date AND time. Handle natural language like:\n"
+    "- 'in 10 minutes' → 10 minutes from now\n"
+    "- 'in 2 hours' → two hours from now\n"
+    "- 'tonight at 8pm' → today at 20:00\n"
+    "- 'tomorrow morning' → tomorrow at 09:00\n"
+    "- 'in a week' → 7 days from now, same time\n"
+    "- 'in 6 months' / 'next year' → that far out, same time of day\n"
+    "- 'on my birthday December 15' → next December 15 at 09:00\n"
+    "Compute everything relative to the current date and time given above. "
+    "If no time of day is specified, default to 09:00. Use 24-hour time.\n"
+    "Return ONLY a JSON object: {{\"datetime\": \"YYYY-MM-DD HH:MM\", \"human\": \"readable description\"}}\n"
+    "If you cannot parse it, return: {{\"datetime\": \"\", \"human\": \"\"}}"
 )
 
 CLEAN_LETTER_PROMPT = (
@@ -70,7 +74,7 @@ PROMPTS = [
 ]
 
 
-class FutureLetterWriterCapability(MatchingCapability):
+class FutureLettersCapability(MatchingCapability):
     model_config = {"extra": "allow", "arbitrary_types_allowed": True}
 
     worker: AgentWorker = None
@@ -82,7 +86,6 @@ class FutureLetterWriterCapability(MatchingCapability):
     def call(self, worker: AgentWorker):
         self.worker = worker
         self.capability_worker = CapabilityWorker(self.worker)
-        self.letters = []
         self.worker.session_tasks.create(self.run())
 
     # -------------------------------------------------------------------------
@@ -90,16 +93,26 @@ class FutureLetterWriterCapability(MatchingCapability):
     # -------------------------------------------------------------------------
 
     async def run(self):
+        self.letters = []
+        self._tz = None
         try:
             await self._boot()
 
             turn = 0
+            idle = 0
             while turn < MAX_TURNS:
                 turn += 1
                 user_input = await self.capability_worker.user_response()
 
                 if not user_input or not user_input.strip():
+                    idle += 1
+                    if idle >= 2:
+                        break
+                    await self.capability_worker.speak(
+                        "I'm still here. Say 'write a letter', 'check my letters', or done."
+                    )
                     continue
+                idle = 0
 
                 intent = self._classify_intent(user_input)
 
@@ -107,8 +120,14 @@ class FutureLetterWriterCapability(MatchingCapability):
                     await self._handle_record()
                 elif intent == "list":
                     await self._handle_list()
+                    await self.capability_worker.speak(
+                        "Write a letter, check your letters, or say done."
+                    )
                 elif intent == "delete":
                     await self._handle_delete()
+                    await self.capability_worker.speak(
+                        "Write a letter, check your letters, or say done."
+                    )
                 elif intent == "exit":
                     break
                 else:
@@ -156,7 +175,7 @@ class FutureLetterWriterCapability(MatchingCapability):
                 pending = [letter for letter in self.letters if letter.get("status") == "pending"]
 
                 if pending:
-                    nearest = min(pending, key=lambda letter: letter.get("deliver_date", ""))
+                    nearest = min(pending, key=lambda letter: letter.get("deliver_at", ""))
                     await self.capability_worker.speak(
                         f"Welcome back to Future Letters. "
                         f"You have {len(pending)} letter{'s' if len(pending) != 1 else ''} "
@@ -200,6 +219,41 @@ class FutureLetterWriterCapability(MatchingCapability):
             self.worker.editor_logging_handler.error(
                 f"[FutureLetterWriter] Save error: {e}"
             )
+
+    # -------------------------------------------------------------------------
+    # Helpers
+    # -------------------------------------------------------------------------
+
+    def _now(self):
+        """Current time in the user's timezone, falling back to server time.
+
+        Resolves the timezone once per session and logs what was captured.
+        """
+        if self._tz is None:
+            try:
+                self._tz = self.capability_worker.get_timezone() or ""
+                if self._tz:
+                    self.worker.editor_logging_handler.info(
+                        f"[FutureLetterWriter] Captured user timezone: {self._tz} "
+                        f"(local time {datetime.now(ZoneInfo(self._tz)).strftime('%Y-%m-%d %H:%M %Z')})"
+                    )
+                else:
+                    self.worker.editor_logging_handler.info(
+                        "[FutureLetterWriter] No user timezone available; using server time."
+                    )
+            except Exception as e:
+                self._tz = ""
+                self.worker.editor_logging_handler.error(
+                    f"[FutureLetterWriter] Timezone lookup failed, using server time: {e}"
+                )
+        if self._tz:
+            try:
+                return datetime.now(ZoneInfo(self._tz))
+            except Exception as e:
+                self.worker.editor_logging_handler.error(
+                    f"[FutureLetterWriter] Invalid timezone '{self._tz}', using server time: {e}"
+                )
+        return datetime.now()
 
     # -------------------------------------------------------------------------
     # Intent Detection
@@ -306,35 +360,67 @@ class FutureLetterWriterCapability(MatchingCapability):
             await self.capability_worker.speak(
                 "I didn't catch a date. I'll set it for one month from now."
             )
-            deliver_date = (datetime.now() + timedelta(days=30)).strftime("%Y-%m-%d")
+            deliver_at = (self._now() + timedelta(days=30)).strftime("%Y-%m-%d %H:%M")
             deliver_human = "about a month from now"
+            self.worker.editor_logging_handler.info(
+                f"[FutureLetterWriter] No delivery time from user; defaulting to {deliver_at}."
+            )
         elif self._is_exit_command(date_input):
             return
         else:
-            # Parse date via LLM
+            # Parse delivery datetime via LLM
             try:
-                today = datetime.now().strftime("%Y-%m-%d")
+                now_dt = self._now()
+                now_str = now_dt.strftime("%Y-%m-%d %H:%M")
                 raw = self.capability_worker.text_to_text_response(
-                    PARSE_DATE_PROMPT.format(raw=date_input, today=today)
+                    PARSE_DATE_PROMPT.format(
+                        raw=date_input, now=now_str, tz=self._tz or "local time"
+                    )
                 )
                 clean = raw.replace("```json", "").replace("```", "").strip()
                 parsed = json.loads(clean)
-                deliver_date = parsed.get("date", "")
                 deliver_human = parsed.get("human", "")
 
-                if not deliver_date:
-                    deliver_date = (datetime.now() + timedelta(days=30)).strftime("%Y-%m-%d")
+                # Validate: must be a real, zero-padded, future "YYYY-MM-DD HH:MM".
+                # The daemon compares datetimes as strings, so a malformed or past
+                # value would break delivery or fire immediately.
+                valid_at = ""
+                raw_at = parsed.get("datetime", "")
+                if raw_at:
+                    try:
+                        dt = datetime.strptime(raw_at, "%Y-%m-%d %H:%M")
+                        if dt > now_dt.replace(tzinfo=None):
+                            valid_at = dt.strftime("%Y-%m-%d %H:%M")  # normalize
+                    except ValueError:
+                        valid_at = ""
+
+                if valid_at:
+                    deliver_at = valid_at
+                    self.worker.editor_logging_handler.info(
+                        f"[FutureLetterWriter] Parsed delivery time from '{date_input}' "
+                        f"(now {now_str}) -> {deliver_at} ({deliver_human})."
+                    )
+                else:
+                    deliver_at = (self._now() + timedelta(days=30)).strftime("%Y-%m-%d %H:%M")
                     deliver_human = "about a month from now"
-            except Exception:
-                deliver_date = (datetime.now() + timedelta(days=30)).strftime("%Y-%m-%d")
+                    self.worker.editor_logging_handler.info(
+                        f"[FutureLetterWriter] Unusable datetime '{raw_at}' "
+                        f"from '{date_input}'; defaulting to {deliver_at}."
+                    )
+            except Exception as e:
+                deliver_at = (self._now() + timedelta(days=30)).strftime("%Y-%m-%d %H:%M")
                 deliver_human = "about a month from now"
+                self.worker.editor_logging_handler.error(
+                    f"[FutureLetterWriter] Datetime parse error for '{date_input}', "
+                    f"defaulting to {deliver_at}: {e}"
+                )
 
         # Save the letter
         letter = {
-            "id": f"letter_{int(datetime.now().timestamp())}",
-            "created": datetime.now().strftime("%Y-%m-%d %H:%M"),
+            "id": f"letter_{int(self._now().timestamp())}",
+            "created": self._now().strftime("%Y-%m-%d %H:%M"),
             "message": cleaned,
-            "deliver_date": deliver_date,
+            "deliver_at": deliver_at,
             "deliver_human": deliver_human,
             "status": "pending",
         }
