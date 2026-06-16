@@ -1,5 +1,6 @@
 import json
 from datetime import datetime
+from zoneinfo import ZoneInfo
 
 from src.agent.capability import MatchingCapability
 from src.agent.capability_worker import CapabilityWorker
@@ -21,7 +22,7 @@ RECAP_PROMPT = (
 )
 
 
-class CelebrationEngineCapability(MatchingCapability):
+class CelebrationengineCapability(MatchingCapability):
     model_config = {"extra": "allow", "arbitrary_types_allowed": True}
 
     worker: AgentWorker = None
@@ -35,7 +36,39 @@ class CelebrationEngineCapability(MatchingCapability):
         self.capability_worker = CapabilityWorker(self.worker)
         self.worker.session_tasks.create(self.run())
 
+    def _now(self):
+        """Current time in the user's timezone, falling back to server time.
+
+        Resolves the timezone once per session and logs what was captured.
+        """
+        if self._tz is None:
+            try:
+                self._tz = self.capability_worker.get_timezone() or ""
+                if self._tz:
+                    self.worker.editor_logging_handler.info(
+                        f"[CelebrationEngine] Captured user timezone: {self._tz} "
+                        f"(local time {datetime.now(ZoneInfo(self._tz)).strftime('%Y-%m-%d %H:%M %Z')})"
+                    )
+                else:
+                    self.worker.editor_logging_handler.info(
+                        "[CelebrationEngine] No user timezone available; using server time."
+                    )
+            except Exception as e:
+                self._tz = ""
+                self.worker.editor_logging_handler.error(
+                    f"[CelebrationEngine] Timezone lookup failed, using server time: {e}"
+                )
+        if self._tz:
+            try:
+                return datetime.now(ZoneInfo(self._tz))
+            except Exception as e:
+                self.worker.editor_logging_handler.error(
+                    f"[CelebrationEngine] Invalid timezone '{self._tz}', using server time: {e}"
+                )
+        return datetime.now()
+
     async def run(self):
+        self._tz = None
         try:
             exists = await self.capability_worker.check_if_file_exists(
                 WINS_FILE, False
@@ -60,7 +93,7 @@ class CelebrationEngineCapability(MatchingCapability):
 
             # Show recent wins
             recent = wins[-10:]
-            today = datetime.now().strftime("%Y-%m-%d")
+            today = self._now().strftime("%Y-%m-%d")
             today_wins = [w for w in recent if w.get("date") == today]
             total = len(wins)
 
