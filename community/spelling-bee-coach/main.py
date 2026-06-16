@@ -17,6 +17,9 @@ PROGRESS_FILE = "spelling_bee_progress.json"
 
 MAX_TURNS = 30
 
+# Speak a brief score update every N words (statement only, never a question).
+SCORE_UPDATE_EVERY = 10
+
 EXIT_WORDS = {
     "stop", "exit", "quit", "done", "bye", "goodbye",
     "leave", "cancel", "nothing else", "no thanks",
@@ -58,6 +61,10 @@ GENERATE_WORD_PROMPT = (
 # Correct answers in a row required to retire a word as "mastered"
 MASTERY_STREAK = 3
 
+# Cap on how many "weak" words to keep, so the stored list can't grow forever.
+# Keeps the most recent misses for spaced repetition.
+MAX_WEAK_WORDS = 100
+
 # Exact (normalized) utterances that mean "say the word again"
 REPEAT_PHRASES = {
     "repeat", "again", "what", "repeat that", "say it again",
@@ -69,12 +76,18 @@ DEFINITION_PROMPT = (
     "Format for voice readback. Return ONLY the definition, nothing else."
 )
 
-EXTRACT_SPELLING_PROMPT = (
-    "The user tried to spell a word by voice. Their response was: '{raw}'\n"
-    "Extract ONLY the letters they spelled, as a single lowercase word with no "
-    "spaces or punctuation. Handle phonetic letter names (e.g., 'ay' = 'a', "
-    "'bee' = 'b', 'see' = 'c', 'double-u' = 'w', 'ex' = 'x', 'why' = 'y', 'zee/zed' = 'z'). "
-    "Return ONLY the spelled word, nothing else."
+INTERPRET_SPELLING_PROMPT = (
+    'The user is in a spelling quiz. The current word is "{word}".\n'
+    "Their spoken response was: '{raw}'\n"
+    "Classify their intent and return ONLY JSON:\n"
+    '{{"intent": "spell|stop|repeat|skip", "letters": "<letters if spelling, else empty>"}}\n'
+    "- spell: they tried to spell the word (letter names, or said the word itself). "
+    "Extract the letters as a single lowercase word, handling phonetic letter names "
+    "('ay'=a, 'bee'=b, 'see'=c, 'double-u'=w, 'ex'=x, 'why'=y, 'zee/zed'=z).\n"
+    "- stop: they want to end the session (e.g. 'done', 'stop', 'no', 'nope', "
+    "'I don't want to continue', 'that's enough').\n"
+    "- repeat: they want to hear the word again.\n"
+    "- skip: they want to skip this word and move on."
 )
 
 
@@ -101,6 +114,7 @@ class SpellingbeecoachCapability(MatchingCapability):
         self.session_correct = 0
         self.session_total = 0
         self.current_difficulty = "medium"
+        self.session_missed = []
         try:
             await self._boot()
 
@@ -128,38 +142,55 @@ class SpellingbeecoachCapability(MatchingCapability):
             )
 
             round_num = 0
+            idle = 0
             while round_num < MAX_TURNS:
                 round_num += 1
 
                 # Pick a word (prioritize weak words for spaced repetition)
                 word = self._pick_word()
-
-                # Give the word with definition
                 await self._present_word(word)
 
-                # Get spelling attempt
                 user_input = await self.capability_worker.user_response()
 
+                # No response — nudge, then bail after two silent turns.
                 if not user_input or not user_input.strip():
+                    idle += 1
+                    if idle >= 2:
+                        break
                     await self.capability_worker.speak(
                         f"I didn't catch that. The word was {word}. "
-                        "Let's try another one."
+                        "Spell it, or say done to stop."
                     )
                     continue
+                idle = 0
 
-                if any(w in user_input.lower() for w in EXIT_WORDS):
+                # Fast-path explicit stop before any LLM work.
+                if self._is_stop(user_input):
                     break
 
-                # Check if they want the word repeated (exact short utterance,
-                # so spelling attempts containing these substrings don't match)
-                if user_input.lower().strip().strip(".!?,") in REPEAT_PHRASES:
-                    await self.capability_worker.speak(f"The word is: {word}.")
-                    user_input = await self.capability_worker.user_response()
-                    if not user_input or any(w in user_input.lower() for w in EXIT_WORDS):
-                        break
+                # Figure out what they meant: spell, stop, repeat, or skip.
+                intent, letters = self._interpret_response(word, user_input)
 
-                # Extract and check spelling
-                is_correct = await self._check_spelling(word, user_input)
+                if intent == "stop":
+                    break
+                if intent == "skip":
+                    await self.capability_worker.speak("No problem, let's move on.")
+                    continue
+                if intent == "repeat":
+                    await self.capability_worker.speak(
+                        f"The word is: {word}. Now spell it."
+                    )
+                    user_input = await self.capability_worker.user_response()
+                    if not user_input or self._is_stop(user_input):
+                        break
+                    intent, letters = self._interpret_response(word, user_input)
+                    if intent != "spell":
+                        continue
+
+                # Score the spelling.
+                cleaned = letters.strip().lower().replace(" ", "").replace("-", "")
+                direct = user_input.strip().lower().replace(" ", "").replace("-", "")
+                is_correct = cleaned == word.lower() or direct == word.lower()
 
                 self.session_total += 1
                 self.progress["total_attempted"] += 1
@@ -168,30 +199,28 @@ class SpellingbeecoachCapability(MatchingCapability):
                     self.session_correct += 1
                     self.progress["total_correct"] += 1
                     self._mark_correct(word)
-
                     praise = random.choice([
                         "Correct!", "Nailed it!", "Perfect!", "You got it!",
                         "Spot on!", "That's right!", "Well done!",
                     ])
-                    await self.capability_worker.speak(praise)
+                    await self.capability_worker.speak(f"{praise} Here's the next one.")
                 else:
                     self._mark_wrong(word)
+                    if word not in self.session_missed:
+                        self.session_missed.append(word)
                     spelled_out = ", ".join(list(word.upper()))
                     await self.capability_worker.speak(
-                        f"Not quite. The correct spelling is: {spelled_out}. "
-                        f"{word}. We'll practice that one again."
+                        f"Not quite — {word} is spelled {spelled_out}. Let's try another."
                     )
 
-                # Progress update every 5 words
-                if self.session_total > 0 and self.session_total % 5 == 0:
+                # Brief score update every SCORE_UPDATE_EVERY words — just a
+                # statement, no prompt. The user can stop any time by saying so.
+                if self.session_total > 0 and self.session_total % SCORE_UPDATE_EVERY == 0:
                     pct = round(self.session_correct / self.session_total * 100)
                     await self.capability_worker.speak(
-                        f"Score check: {self.session_correct} out of "
-                        f"{self.session_total}, that's {pct} percent. Keep going?"
+                        f"Nice — {self.session_correct} out of {self.session_total} so far, "
+                        f"{pct} percent."
                     )
-                    response = await self.capability_worker.user_response()
-                    if response and any(w in response.lower() for w in EXIT_WORDS):
-                        break
 
             await self._sign_off()
 
@@ -277,9 +306,11 @@ class SpellingbeecoachCapability(MatchingCapability):
         mastered = set(self.progress.get("mastered", []))
         word_list = DIFFICULTY_MAP.get(self.current_difficulty, WORDS_MEDIUM)
 
-        # 40% chance to revisit a weak word if any exist
-        if weak and random.random() < 0.4:
-            return random.choice(weak)
+        # 40% chance to revisit a weak word — but only ones from the chosen
+        # difficulty, so easy/medium never surfaces a word from the hard list.
+        weak_in_level = [w for w in weak if w in word_list]
+        if weak_in_level and random.random() < 0.4:
+            return random.choice(weak_in_level)
 
         # Filter out mastered words
         available = [w for w in word_list if w not in mastered]
@@ -336,6 +367,8 @@ class SpellingbeecoachCapability(MatchingCapability):
         streaks[word] = 0
         if word not in weak:
             weak.append(word)
+        # Keep only the most recent misses so the list stays bounded.
+        weak = weak[-MAX_WEAK_WORDS:]
         if word in mastered:
             mastered.remove(word)
 
@@ -363,24 +396,41 @@ class SpellingbeecoachCapability(MatchingCapability):
         await self.capability_worker.speak(intro)
         await self.capability_worker.speak("Now, spell it. Say the letters out loud.")
 
-    async def _check_spelling(self, correct_word, user_input):
-        """Check if the user spelled the word correctly using LLM extraction."""
-        # First try direct comparison (user might type/say the word itself)
-        cleaned_input = user_input.strip().lower().replace(" ", "").replace("-", "")
-        if cleaned_input == correct_word.lower():
+    def _is_stop(self, text):
+        """True for short, explicit stop/exit utterances (fast keyword path)."""
+        if not text:
+            return False
+        normalized = text.lower().strip().strip(".!?,")
+        if normalized in EXIT_WORDS:
             return True
+        words = [w.strip(".!?,") for w in normalized.split()]
+        if len(words) <= 4:
+            if any(w in EXIT_WORDS for w in words):
+                return True
+            if any(p in normalized for p in EXIT_WORDS if " " in p):
+                return True
+        return False
 
-        # Use LLM to extract spelled letters from voice input
+    def _interpret_response(self, word, raw):
+        """Classify a quiz response as spell/stop/repeat/skip, with letters
+        extracted for spelling attempts. Returns (intent, letters)."""
+        # Direct match — they said the word itself.
+        direct = raw.strip().lower().replace(" ", "").replace("-", "")
+        if direct == word.lower():
+            return "spell", word.lower()
+
         try:
-            extracted = self.capability_worker.text_to_text_response(
-                EXTRACT_SPELLING_PROMPT.format(raw=user_input)
+            out = self.capability_worker.text_to_text_response(
+                INTERPRET_SPELLING_PROMPT.format(word=word, raw=raw)
             )
-            extracted_clean = extracted.strip().lower().replace(" ", "").replace("-", "")
-            return extracted_clean == correct_word.lower()
+            data = json.loads(out.replace("```json", "").replace("```", "").strip())
+            intent = data.get("intent", "spell")
+            if intent not in ("spell", "stop", "repeat", "skip"):
+                intent = "spell"
+            return intent, str(data.get("letters", "") or "")
         except Exception:
-            # Fallback: simple letter extraction
-            letters = "".join(c for c in user_input.lower() if c.isalpha())
-            return letters == correct_word.lower()
+            # Fallback: treat as a spelling attempt, extract letters directly.
+            return "spell", "".join(c for c in raw.lower() if c.isalpha())
 
     # -------------------------------------------------------------------------
     # Sign-off
@@ -390,23 +440,33 @@ class SpellingbeecoachCapability(MatchingCapability):
         """Summarize session and save."""
         if self.session_total > 0:
             pct = round(self.session_correct / self.session_total * 100)
-            await self.capability_worker.speak(
-                f"Session over! You got {self.session_correct} out of "
-                f"{self.session_total} correct — {pct} percent."
-            )
-
-            weak = self.progress.get("weak", [])
-            if weak:
-                practice_words = ", ".join(weak[:3])
-                await self.capability_worker.speak(
-                    f"Words to practice: {practice_words}."
-                )
-
             mastered = len(self.progress.get("mastered", []))
-            await self.capability_worker.speak(
-                f"Total words mastered: {mastered}. Great job! See you next time."
+            result = (
+                f"Session over! You got {self.session_correct} out of "
+                f"{self.session_total} correct, {pct} percent, with "
+                f"{mastered} word{'s' if mastered != 1 else ''} mastered."
             )
+            # Only suggest words actually missed this session.
+            if self.session_missed:
+                result += f" Words to practice: {', '.join(self.session_missed[:3])}."
+            await self.capability_worker.speak(result)
         else:
             await self.capability_worker.speak(
                 "No worries, come back when you're ready to practice!"
             )
+
+        # Offer a one-time reset before leaving (only if there's progress).
+        if self.progress.get("total_attempted", 0) or self.progress.get("mastered"):
+            do_reset = await self.capability_worker.run_confirmation_loop(
+                "Before you go, want me to reset your progress?"
+            )
+            if do_reset:
+                self.progress = {
+                    "total_correct": 0, "total_attempted": 0,
+                    "mastered": [], "weak": [], "streaks": {},
+                }
+                await self._save_progress()
+                await self.capability_worker.speak("Done, progress reset. See you next time!")
+                return
+
+        await self.capability_worker.speak("See you next time!")
