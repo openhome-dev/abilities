@@ -1,6 +1,7 @@
 import json
 from datetime import datetime
 from time import time
+from zoneinfo import ZoneInfo
 
 from src.agent.capability import MatchingCapability
 from src.agent.capability_worker import CapabilityWorker
@@ -56,7 +57,7 @@ CELEBRATE_PROMPT = (
 )
 
 
-class CelebrationEngineBackground(MatchingCapability):
+class CelebrationengineCapabilityBackground(MatchingCapability):
     model_config = {"extra": "allow", "arbitrary_types_allowed": True}
 
     worker: AgentWorker = None
@@ -66,23 +67,56 @@ class CelebrationEngineBackground(MatchingCapability):
     # Do not change following tag of register capability
     # {{register capability}}
 
+    def _now(self):
+        """Current time in the user's timezone, falling back to server time.
+
+        Resolves the timezone once and logs what was captured.
+        """
+        if self._tz is None:
+            try:
+                self._tz = self.capability_worker.get_timezone() or ""
+                if self._tz:
+                    self.worker.editor_logging_handler.info(
+                        f"[CelebrationEngine] Captured user timezone: {self._tz} "
+                        f"(local time {datetime.now(ZoneInfo(self._tz)).strftime('%Y-%m-%d %H:%M %Z')})"
+                    )
+                else:
+                    self.worker.editor_logging_handler.info(
+                        "[CelebrationEngine] No user timezone available; using server time."
+                    )
+            except Exception as e:
+                self._tz = ""
+                self.worker.editor_logging_handler.error(
+                    f"[CelebrationEngine] Timezone lookup failed, using server time: {e}"
+                )
+        if self._tz:
+            try:
+                return datetime.now(ZoneInfo(self._tz))
+            except Exception as e:
+                self.worker.editor_logging_handler.error(
+                    f"[CelebrationEngine] Invalid timezone '{self._tz}', using server time: {e}"
+                )
+        return datetime.now()
+
     async def background_loop(self):
         self.worker.editor_logging_handler.info(
             "%s: Celebration Engine started" % time()
         )
 
         last_message_count = 0
-        messages_since_last_celebration = 0
+        # Start at the threshold so the first detected win celebrates promptly;
+        # the cooldown then applies to subsequent celebrations.
+        messages_since_last_celebration = MIN_MESSAGES_BETWEEN
         # User messages with a win signal waiting for analysis. Kept across
         # polls so a win during the celebration cooldown is deferred, not lost.
         pending_signal_messages = []
-        today = datetime.now().strftime("%Y-%m-%d")
+        today = self._now().strftime("%Y-%m-%d")
         today_wins = []
 
         while True:
             try:
                 # Reset the daily win list when the date rolls over
-                now_day = datetime.now().strftime("%Y-%m-%d")
+                now_day = self._now().strftime("%Y-%m-%d")
                 if now_day != today:
                     today = now_day
                     today_wins = []
@@ -176,9 +210,10 @@ class CelebrationEngineBackground(MatchingCapability):
                 messages_since_last_celebration = 0
 
                 # Log the win
+                now_win = self._now()
                 win_entry = {
-                    "time": datetime.now().strftime("%H:%M"),
-                    "date": datetime.now().strftime("%Y-%m-%d"),
+                    "time": now_win.strftime("%H:%M"),
+                    "date": now_win.strftime("%Y-%m-%d"),
                     "summary": summary,
                 }
                 today_wins.append(win_entry)
@@ -234,4 +269,5 @@ class CelebrationEngineBackground(MatchingCapability):
         self.worker = worker
         self.background_daemon_mode = background_daemon_mode
         self.capability_worker = CapabilityWorker(self.worker)
+        self._tz = None
         self.worker.session_tasks.create(self.background_loop())
