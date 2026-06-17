@@ -7,7 +7,7 @@ INTRO_PROMPT = "Hi! I'm your daily life advisor. Please tell me about a problem 
 FEEDBACK_PROMPT = " Are you satisfied with the advice?"
 FINAL_PROMPT = "Thank you for using the daily life advisor. Goodbye!"
 
-class QjbvjkbCapability(MatchingCapability):
+class BasicTemplateCapability(MatchingCapability):
     worker: AgentWorker = None
     capability_worker: CapabilityWorker = None
 
