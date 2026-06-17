@@ -1,56 +1,56 @@
+import json
 from src.agent.capability import MatchingCapability
 from src.main import AgentWorker
 from src.agent.capability_worker import CapabilityWorker
 
-INTRO_PROMPT = "Hi! How can I help you today?"
-FEEDBACK_PROMPT = " Are you satisfied with the response?"
-FINAL_PROMPT = "Thank you for using the advisor. Goodbye!"
+INTRO_PROMPT = "Hi! I'm your daily life advisor. Please tell me about a problem you're facing."
+FEEDBACK_PROMPT = " Are you satisfied with the advice?"
+FINAL_PROMPT = "Thank you for using the daily life advisor. Goodbye!"
 
-
-class BasicTemplateCapability(MatchingCapability):
+class QjbvjkbCapability(MatchingCapability):
     worker: AgentWorker = None
     capability_worker: CapabilityWorker = None
 
-    # {{register capability}}
+    #{{register capability}}
 
-    async def run(self):
+    async def give_advice(self):
         """
-        The main function for the basic template capability.
-        It greets the user, listens for their response, generates a reply, and asks for feedback.
+        The main function for giving advice to the user. 
+        It asks the user about their problem, provides a solution, and asks for feedback.
         """
 
-        # Introduce and ask for the user's input
+        # Introduce the advisor and ask for the user's problem
         """
-        - `speak` function is used to speak the text to the user. It takes the text as an argument.
-                Here, the advisor greets the user and asks how it can help.
+        - `speak` function is used to speak the text to the user. It takes the text as an argument. 
+                Here, the advisor introduces itself and asks the user about their problem.
         """
         await self.capability_worker.speak(INTRO_PROMPT)
 
         """
         - `user_response` function is used to get the user's response. It returns the user's response.
-                Here, the user's input is stored in the `user_input` variable.
+                Here, the user's problem is stored in the `user_problem` variable.
         """
-        user_input = await self.capability_worker.user_response()
+        user_problem = await self.capability_worker.user_response()
 
-        # Generate a response based on the user's input
-        response_prompt = f"Give a short, helpful response to: {user_input}"
+        # Generate a solution based on the problem
+        solution_prompt = f"The user has the following problem: {user_problem}. Provide a helpful solution in just 1 or 2 sentences."
         """
-        - `text_to_text_response` function is used to generate a response based on the user's input. It returns the generated response based on the input prompt.
-                Here, the response is stored in the `response` variable.
+        - `text_to_text_response` function is used to generate a solution based on the user's input. It returns the generated response based on the input prompt.
+                Here, the response is stored in the `solution` variable.
         """
-        response = self.capability_worker.text_to_text_response(response_prompt)
+        solution = self.capability_worker.text_to_text_response(solution_prompt)
 
-        # Speak the response and ask if the user is satisfied
-        response_with_feedback_ask = response + FEEDBACK_PROMPT
-
+        # Speak the solution and ask if the user is satisfied
+        solution_with_feedback_ask = solution + FEEDBACK_PROMPT
+        
         """
-        - `run_io_loop` function is used to speak the response and get the user's feedback. It returns the user's feedback.
+        - `run_io_loop` function is used to speak the solution and get the user's feedback. It returns the user's feedback.
                 It is a combination of `speak` and `user_response` functions.
                 Here, the user's feedback is stored in the `user_feedback` variable.
         """
-        await self.capability_worker.run_io_loop(response_with_feedback_ask)
+        user_feedback = await self.capability_worker.run_io_loop(solution_with_feedback_ask)
 
-        # Thank the user and exit
+        # Exit the capability if the user is not satisfied
         await self.capability_worker.speak(FINAL_PROMPT)
 
         # Resume the normal workflow
@@ -59,7 +59,7 @@ class BasicTemplateCapability(MatchingCapability):
     def call(self, worker: AgentWorker):
         # Initialize the worker and capability worker
         self.worker = worker
-        self.capability_worker = CapabilityWorker(self)
+        self.capability_worker = CapabilityWorker(self.worker)
 
-        # Start the template functionality
-        self.worker.session_tasks.create(self.run())
+        # Start the advisor functionality
+        self.worker.session_tasks.create(self.give_advice())
