@@ -157,16 +157,6 @@ class MyFirstCapability(MatchingCapability):
 
 📖 Full walkthrough: [docs/getting-started.md](docs/getting-started.md)
 
-### 📺 Watch it built end to end
-
-In this walkthrough, Chris Gonzalez builds an Ability from scratch in Python and tests it live in the Live Editor.
-
-<p align="center">
-  <a href="https://youtu.be/YF45cAbW4cQ"><img src="https://img.youtube.com/vi/YF45cAbW4cQ/maxresdefault.jpg" width="520" alt="Video walkthrough: building and testing an OpenHome Ability" /></a>
-  <br />
-  <sub>▶️ Build an Ability and test it in the Live Editor</sub>
-</p>
-
 ---
 
 <a id="templates"></a>
