@@ -30,7 +30,7 @@
 <p align="center">
   <a href="https://app.openhome.com"><img src="https://img.shields.io/badge/%F0%9F%8C%90%20OpenHome%20Web%20App-FF4F15?style=for-the-badge&labelColor=FF4F15" alt="OpenHome Web App"></a>
   <a href="https://docs.openhome.com"><img src="https://img.shields.io/badge/Official%20OpenHome%20Docs-060524?style=for-the-badge&logo=readthedocs&logoColor=white&labelColor=060524" alt="Official OpenHome Docs"></a>
-  <a href="https://docs.openhome.com/community/abilities"><img src="https://img.shields.io/badge/%F0%9F%9B%8D%EF%B8%8F%20Abilities%20Marketplace-715CFF?style=for-the-badge&labelColor=715CFF" alt="Abilities Marketplace"></a>
+  <a href="https://app.openhome.com"><img src="https://img.shields.io/badge/%F0%9F%9B%8D%EF%B8%8F%20Abilities%20Marketplace-715CFF?style=for-the-badge&labelColor=715CFF" alt="Abilities Marketplace"></a>
   <a href="https://discord.gg/openhome"><img src="https://img.shields.io/badge/Join%20our%20Discord-5865F2?style=for-the-badge&logo=discord&logoColor=white&labelColor=5865F2" alt="Join our Discord Community"></a>
 </p>
 
@@ -38,21 +38,21 @@
 
 <table align="center">
   <tr>
-    <td width="320" valign="top">
+    <td width="420" valign="top">
       ⭐ &nbsp;<a href="#official-abilities"><b>Official OpenHome Abilities</b></a><br />
       <sub>Team-maintained Abilities. Tested, stable, and supported.</sub>
     </td>
-    <td width="320" valign="top">
+    <td width="420" valign="top">
       🧰 &nbsp;<a href="#templates"><b>Abilities Starter Templates</b></a><br />
       <sub>Minimal, working scaffolds to copy and build on.</sub>
     </td>
   </tr>
   <tr>
-    <td width="320" valign="top">
+    <td width="420" valign="top">
       🌍 &nbsp;<a href="#community"><b>Community Contributed Abilities</b></a><br />
       <sub>Voice Abilities built and shared by the community.</sub>
     </td>
-    <td width="320" valign="top">
+    <td width="420" valign="top">
       🤝 &nbsp;<a href="#contributing"><b>Contribution Guide</b></a><br />
       <sub>Build your own Ability and open a pull request.</sub>
     </td>
@@ -65,7 +65,7 @@
 
 ## 🧩 What Are Abilities?
 
-An **Ability** is a Python plugin that extends your OpenHome Agent to do something the language model cannot do from a prompt alone, such as fetching data from the web, controlling a smart device, playing audio, remembering things across sessions, or running a multi-step voice workflow.
+An **Ability** is a plugin that extends your OpenHome Agent to do something the language model cannot do from a prompt alone, such as fetching data from the web, controlling a smart device, playing audio, remembering things across sessions, or running a multi-step voice workflow.
 
 > The test: if the LLM can already answer it in conversation, it is not adding value as an Ability.
 
@@ -97,7 +97,7 @@ New to OpenHome? Here is the vocabulary in one place.
 | Type | Triggered by | Lifecycle | Used for | Entry file(s) |
 |------|--------------|-----------|----------|---------------|
 | 🟦 **Skill** | A user trigger word | Runs once, then exits | Hotword-triggered tasks (the original pattern) | `main.py` |
-| 🟪 **Agent Controlled** | The Agent decides | Runs on demand | Data lookups, tool use, delegated actions | `main.py` (in active development) |
+| 🟪 **Agent Controlled** | The Agent decides | Runs on demand | Data lookups, tool use, delegated actions | `main.py` (In active development) |
 | 🟧 **Background Daemon** | Auto-starts when a session begins | Loops until the session ends | Monitoring, alarms, ambient intelligence | `background.py` |
 | 🟩 **Local** | A user trigger word | Runs on DevKit hardware | GPIO, sensors, and other on-device hardware | `main.py` + `devkit_functions.py` |
 
@@ -171,12 +171,22 @@ Do not start from a blank file. Each template is a minimal, working scaffold for
 | [Basic Template](templates/basic-template) | The minimal Speak, Listen, Respond, Exit loop | `main.py` |
 | [API Template](templates/api-template) | Fetch from an external API and speak the result | `main.py` |
 | [Loop Template](templates/loop-template) | Multi-turn conversation until an exit phrase | `main.py` |
-| [Wikipedia](templates/wikipedia) | Answer "what is" questions with a short Wikipedia summary, no key needed | `main.py` |
 | [Slack Assistant](templates/slack-assistant) | Slack by voice: channels, messages, DMs, and people search | `main.py` |
 | [Send Email](templates/send-email) | Send email with attachments via `send_email()` | `main.py` |
 | [Read Write File](templates/read-write-file) | Persist data across sessions with file storage | `main.py` |
 | [OpenClaw](templates/openclaw) | Drive a local computer through OpenClaw | `main.py` |
 | [OpenHome Local Link](templates/openhome-local-link) | Turn speech into shell commands on a local machine | `main.py` |
+| [Alarm](templates/alarm) | A Skill and a daemon working together via shared files | `main.py` + `background.py` |
+
+**🟪 Agent Controlled** (the Agent decides when to run it, still in development)
+| Template | Teaches | Entry |
+|----------|---------|-------|
+| [Wikipedia](templates/wikipedia) | Answer "what is" questions with a short Wikipedia summary, no key needed | `main.py` |
+
+**🟧 Background Daemon** (auto-runs and loops for the whole session)
+| Template | Teaches | Entry |
+|----------|---------|-------|
+| [Background Daemon](templates/background-daemon) | A continuous monitor loop | `background.py` |
 
 **🟩 Local** (runs on real DevKit hardware)
 | Template | Teaches | Entry |
@@ -185,14 +195,6 @@ Do not start from a blank file. Each template is a minimal, working scaffold for
 | [DevKit LED Lights Control](templates/devkit-led-lights-control) | Voice-control the DevKit's onboard NeoPixel ring | `main.py` + `devkit_functions.py` |
 | [Camera Feed](templates/camera-feed) | Look at the DevKit's live camera feed and answer questions about it | `main.py` + `devkit_functions.py` |
 | [DevKit Stats](templates/devkit-stats) | Report live DevKit telemetry by voice: CPU, memory, temperature, uptime | `main.py` + `devkit_functions.py` |
-
-**🟧 Background Daemon** (auto-runs and loops for the whole session)
-| Template | Teaches | Entry |
-|----------|---------|-------|
-| [Background Daemon](templates/background-daemon) | A continuous monitor loop | `background.py` |
-| [Alarm](templates/alarm) | A Skill and a daemon working together via shared files | `main.py` + `background.py` |
-
-> Agent Controlled Abilities are written like a Skill (`main.py`); the Agent decides when to run them, with no trigger word. See [Quick Reference](#quick-reference).
 
 > More detail on each template: [templates/README.md](templates/README.md)
 
@@ -223,7 +225,7 @@ Maintained by the OpenHome team. Tested, stable, and supported. Install any of t
 
 ## 🌍 Community Contributed Abilities
 
-Built by the community and featured on the [Marketplace](https://docs.openhome.com/community/abilities). Each Ability is reviewed for security and SDK compliance before it is merged.
+Built by the community and featured on the [Marketplace](https://app.openhome.com). Each Ability is reviewed for security and SDK compliance before it is merged.
 
 | Ability | What it does | Try saying | API key |
 |---------|--------------|------------|---------|
