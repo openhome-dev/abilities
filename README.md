@@ -383,8 +383,6 @@ When promoted, the Ability moves to `official/`, gets the official badge on the 
 - [What Makes a Good Ability](docs/What_Makes_a_Good_Ability.md)
 - [Designing OpenHome Abilities](docs/Designing_OpenHome_Abilities.md)
 - [Agent Memory and Context Injection](docs/Agent-Memory-and-Context-Injection.md)
-- [Agent-Controlled Abilities](docs/Agent_Controlled_Abilities.md)
-
 **Ship it**
 - [Publishing to Marketplace](docs/publishing-to-marketplace.md)
 - [Promotion Path](docs/promotion.md)
