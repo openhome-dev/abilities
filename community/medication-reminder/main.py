@@ -1,7 +1,10 @@
+import asyncio
 import json
+import re
 import uuid
 import requests
 from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 
 from src.agent.capability import MatchingCapability
 from src.agent.capability_worker import CapabilityWorker
@@ -9,6 +12,9 @@ from src.main import AgentWorker
 
 STORAGE_KEY = "medication_reminder_data"
 FDA_URL = "https://api.fda.gov/drug/label.json"
+FDA_TIMEOUT = 8
+
+HHMM_RE = re.compile(r"^([01]\d|2[0-3]):[0-5]\d$")
 
 HOTWORDS = {
     "medication", "medicine", "pill", "pills", "dose", "doses",
@@ -73,10 +79,10 @@ MED_NAME_PROMPT = (
     "If unclear and there is only one pending, pick it."
 )
 
-INFO_PROMPT = (
-    "In 2 spoken sentences, explain what {med_name} is commonly used for "
-    "and one important thing patients should know about taking it. "
-    "No markdown. Plain English. No medical disclaimers."
+FDA_SUMMARY_PROMPT = (
+    "Summarise this official FDA drug-label information in 2 spoken sentences. "
+    "Only state what is in the text — do not add facts. "
+    "Plain English, no markdown. Info: {info}"
 )
 
 REPORT_PROMPT = (
@@ -116,6 +122,13 @@ class MedicationReminderCapability(MatchingCapability):
         self.capability_worker = CapabilityWorker(self.worker)
         self.worker.session_tasks.create(self._run())
 
+    def _now(self) -> datetime:
+        """Naive wall-clock time in the user's timezone (falls back to server local)."""
+        try:
+            return datetime.now(ZoneInfo(self.capability_worker.get_timezone())).replace(tzinfo=None)
+        except Exception:
+            return datetime.now()
+
     # ------------------------------------------------------------------
     # Storage
     # ------------------------------------------------------------------
@@ -141,7 +154,7 @@ class MedicationReminderCapability(MatchingCapability):
                 self.worker.editor_logging_handler.error(f"[MedReminder] Save error: {e!r}")
 
     def _prune_log(self, data: dict) -> dict:
-        cutoff = (datetime.now() - timedelta(days=30)).strftime("%Y-%m-%d")
+        cutoff = (self._now() - timedelta(days=30)).strftime("%Y-%m-%d")
         data["dose_log"] = [
             e for e in data.get("dose_log", []) if e.get("date", "") >= cutoff
         ]
@@ -194,7 +207,7 @@ class MedicationReminderCapability(MatchingCapability):
             resp = requests.get(
                 FDA_URL,
                 params={"search": f'openfda.generic_name:"{med_name.lower()}"', "limit": 1},
-                timeout=8,
+                timeout=FDA_TIMEOUT,
             )
             if resp.status_code == 200:
                 results = resp.json().get("results", [])
@@ -230,13 +243,14 @@ class MedicationReminderCapability(MatchingCapability):
     # ------------------------------------------------------------------
 
     def _log_dose(self, data: dict, med_id: str, scheduled_time: str, status: str):
-        today = datetime.now().strftime("%Y-%m-%d")
+        now = self._now()
+        today = now.strftime("%Y-%m-%d")
         entry = {
             "med_id": med_id,
             "date": today,
             "scheduled_time": scheduled_time,
             "status": status,
-            "logged_at": datetime.now().strftime("%Y-%m-%dT%H:%M:%S"),
+            "logged_at": now.strftime("%Y-%m-%dT%H:%M:%S"),
         }
         data.setdefault("dose_log", []).append(entry)
         data["pending_alerts"] = [
@@ -251,7 +265,7 @@ class MedicationReminderCapability(MatchingCapability):
                     break
 
     def _todays_log(self, data: dict) -> list:
-        today = datetime.now().strftime("%Y-%m-%d")
+        today = self._now().strftime("%Y-%m-%d")
         return [e for e in data.get("dose_log", []) if e.get("date") == today]
 
     # ------------------------------------------------------------------
@@ -275,6 +289,7 @@ class MedicationReminderCapability(MatchingCapability):
 
             if not name:
                 continue
+            times = [t for t in times if isinstance(t, str) and HHMM_RE.match(t.strip())]
             if not times:
                 times = ["08:00"]
 
@@ -334,7 +349,7 @@ class MedicationReminderCapability(MatchingCapability):
                         m["supply_count"] = count
                         m["supply_start_count"] = count
                         m["supply_doses_per_day"] = len(m["times"])
-                        m["supply_start_date"] = datetime.now().strftime("%Y-%m-%d")
+                        m["supply_start_date"] = self._now().strftime("%Y-%m-%d")
                         await self.capability_worker.speak(
                             f"Got it — {count} {m['name']} on hand. "
                             f"I'll alert you when you're running low."
@@ -389,7 +404,7 @@ class MedicationReminderCapability(MatchingCapability):
             return
 
         minutes = self._snooze_minutes(text)
-        snooze_until = (datetime.now() + timedelta(minutes=minutes)).strftime("%Y-%m-%dT%H:%M:%S")
+        snooze_until = (self._now() + timedelta(minutes=minutes)).strftime("%Y-%m-%dT%H:%M:%S")
 
         for p in data.get("pending_alerts", []):
             if p["med_id"] == med["id"]:
@@ -431,7 +446,7 @@ class MedicationReminderCapability(MatchingCapability):
             return
 
         today_log = {(e["med_id"], e["scheduled_time"]): e["status"] for e in self._todays_log(data)}
-        now_hhmm = datetime.now().strftime("%H:%M")
+        now_hhmm = self._now().strftime("%H:%M")
 
         taken_parts = []
         due_parts = []
@@ -473,7 +488,7 @@ class MedicationReminderCapability(MatchingCapability):
             await self.capability_worker.speak("No medications are set up to report on.")
             return
 
-        cutoff = (datetime.now() - timedelta(days=7)).strftime("%Y-%m-%d")
+        cutoff = (self._now() - timedelta(days=7)).strftime("%Y-%m-%d")
         recent = [e for e in data.get("dose_log", []) if e.get("date", "") >= cutoff]
 
         total_taken = sum(1 for e in recent if e["status"] == "taken")
@@ -515,17 +530,17 @@ class MedicationReminderCapability(MatchingCapability):
         else:
             med_name = text.strip()
 
-        fda_info = self._fetch_drug_info(med_name)
+        fda_info = await asyncio.to_thread(self._fetch_drug_info, med_name)
         if fda_info:
             summary = self.capability_worker.text_to_text_response(
-                f"Summarise this drug information in 2 spoken sentences. "
-                f"Plain English, no markdown, no disclaimers. Info: {fda_info[:500]}"
+                FDA_SUMMARY_PROMPT.format(info=fda_info[:500])
             )
+            await self.capability_worker.speak(summary)
         else:
-            summary = self.capability_worker.text_to_text_response(
-                INFO_PROMPT.format(med_name=med_name)
+            await self.capability_worker.speak(
+                f"I couldn't find official information on {med_name}. "
+                f"Please check with your pharmacist or doctor for details about it."
             )
-        await self.capability_worker.speak(summary)
 
     async def _handle_refill(self, text: str, data: dict):
         med_names = [m["name"] for m in self._active_meds(data)]
@@ -552,7 +567,7 @@ class MedicationReminderCapability(MatchingCapability):
             med["supply_count"] = count
             med["supply_start_count"] = count
             med["supply_doses_per_day"] = len(med["times"]) or 1
-            med["supply_start_date"] = datetime.now().strftime("%Y-%m-%d")
+            med["supply_start_date"] = self._now().strftime("%Y-%m-%d")
             self._save_data(data)
             days = count // (med["supply_doses_per_day"] or 1)
             await self.capability_worker.speak(
@@ -593,7 +608,7 @@ class MedicationReminderCapability(MatchingCapability):
             return hhmm
 
     def _streak(self, data: dict, med_id: str) -> int:
-        today = datetime.now().date()
+        today = self._now().date()
         streak = 0
         for i in range(30):
             day = (today - timedelta(days=i)).strftime("%Y-%m-%d")
