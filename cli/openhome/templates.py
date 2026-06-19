@@ -21,7 +21,7 @@ _REPO_ROOT = Path(__file__).resolve().parents[2]
 TEMPLATES_DIR = _REPO_ROOT / "templates"
 OFFICIAL_DIR = _REPO_ROOT / "official"
 
-_NAME_RE = re.compile(r"^[a-z][a-z0-9-]*$")
+_NAME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9-]*$")
 
 
 @dataclass
