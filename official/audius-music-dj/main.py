@@ -1,5 +1,4 @@
 import logging
-import os
 import json
 import httpx
 import asyncio
