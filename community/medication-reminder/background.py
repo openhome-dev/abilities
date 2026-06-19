@@ -1,4 +1,5 @@
 from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 
 from src.agent.capability import MatchingCapability
 from src.agent.capability_worker import CapabilityWorker
@@ -68,11 +69,18 @@ class MedicationReminderBackground(MatchingCapability):
     # Helpers
     # ------------------------------------------------------------------
 
+    def _now(self) -> datetime:
+        """Naive wall-clock time in the user's timezone (falls back to server local)."""
+        try:
+            return datetime.now(ZoneInfo(self.capability_worker.get_timezone())).replace(tzinfo=None)
+        except Exception:
+            return datetime.now()
+
     def _active_meds(self, data: dict) -> list:
         return [m for m in data.get("medications", []) if m.get("active", True)]
 
     def _is_logged_today(self, data: dict, med_id: str, scheduled_time: str) -> bool:
-        today = datetime.now().strftime("%Y-%m-%d")
+        today = self._now().strftime("%Y-%m-%d")
         return any(
             e["med_id"] == med_id
             and e.get("date") == today
@@ -82,7 +90,7 @@ class MedicationReminderBackground(MatchingCapability):
         )
 
     def _get_pending(self, data: dict, med_id: str, scheduled_time: str) -> dict:
-        today = datetime.now().strftime("%Y-%m-%d")
+        today = self._now().strftime("%Y-%m-%d")
         for p in data.get("pending_alerts", []):
             if (p["med_id"] == med_id
                     and p.get("date") == today
@@ -91,7 +99,7 @@ class MedicationReminderBackground(MatchingCapability):
         return {}
 
     def _streak(self, data: dict, med_id: str) -> int:
-        today = datetime.now().date()
+        today = self._now().date()
         streak = 0
         for i in range(1, 30):
             day = (today - timedelta(days=i)).strftime("%Y-%m-%d")
@@ -121,13 +129,14 @@ class MedicationReminderBackground(MatchingCapability):
         return msg
 
     def _mark_missed(self, data: dict, med_id: str, scheduled_time: str):
-        today = datetime.now().strftime("%Y-%m-%d")
+        now = self._now()
+        today = now.strftime("%Y-%m-%d")
         data.setdefault("dose_log", []).append({
             "med_id": med_id,
             "date": today,
             "scheduled_time": scheduled_time,
             "status": "missed",
-            "logged_at": datetime.now().strftime("%Y-%m-%dT%H:%M:%S"),
+            "logged_at": now.strftime("%Y-%m-%dT%H:%M:%S"),
         })
         data["pending_alerts"] = [
             p for p in data.get("pending_alerts", [])
@@ -148,7 +157,7 @@ class MedicationReminderBackground(MatchingCapability):
 
         while True:
             try:
-                now = datetime.now()
+                now = self._now()
                 today = now.strftime("%Y-%m-%d")
                 current_hhmm = now.strftime("%H:%M")
                 data = self._load_data()
@@ -193,16 +202,15 @@ class MedicationReminderBackground(MatchingCapability):
                             f"[MedReminderBG] Reminder fired: {med['name']} at {sched_time}"
                         )
 
-                # 2. Re-alert for unacknowledged doses
+                # 2. Re-alert for unacknowledged doses, then mark missed
                 for p in list(data.get("pending_alerts", [])):
-                    if p.get("re_alerted"):
-                        continue
                     if p.get("snoozed_until"):
                         continue
                     alerted_at = _parse_dt(p.get("alerted_at", ""))
                     minutes_since = (now - alerted_at).total_seconds() / 60
 
                     if minutes_since >= MISSED_MINUTES:
+                        # Mark missed even if it was already re-alerted.
                         self._mark_missed(data, p["med_id"], p["scheduled_time"])
                         changed = True
                         med = next((m for m in meds if m["id"] == p["med_id"]), None)
@@ -210,7 +218,7 @@ class MedicationReminderBackground(MatchingCapability):
                             self.worker.editor_logging_handler.info(
                                 f"[MedReminderBG] Marked missed: {med['name']} at {p['scheduled_time']}"
                             )
-                    elif minutes_since >= RE_ALERT_MINUTES:
+                    elif minutes_since >= RE_ALERT_MINUTES and not p.get("re_alerted"):
                         p["re_alerted"] = True
                         changed = True
                         med = next((m for m in meds if m["id"] == p["med_id"]), None)
@@ -287,4 +295,7 @@ class MedicationReminderBackground(MatchingCapability):
         self.worker = worker
         self.capability_worker = CapabilityWorker(self.worker)
         self.background_daemon_mode = background_daemon_mode
+        # Per-instance refill-alert state (avoid sharing the class-level default).
+        self._refill_alerted_today = set()
+        self._last_refill_alert_date = ""
         self.worker.session_tasks.create(self.watch_loop())
