@@ -3,7 +3,7 @@ from src.agent.capability import MatchingCapability
 from src.main import AgentWorker
 from src.agent.capability_worker import CapabilityWorker
 
-class OpentestCapability(MatchingCapability):
+class OpenclawCapability(MatchingCapability):
     worker: AgentWorker = None
     capability_worker: CapabilityWorker = None
     
@@ -42,6 +42,6 @@ class OpentestCapability(MatchingCapability):
     def call(self, worker: AgentWorker):
         # Initialize the worker and capability worker
         self.worker = worker
-        self.capability_worker = CapabilityWorker(self)
+        self.capability_worker = CapabilityWorker(self.worker)
 
         self.worker.session_tasks.create(self.first_function())

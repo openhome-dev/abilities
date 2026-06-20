@@ -34,6 +34,10 @@ Thumbs.db
 # Zip files (users build these locally, don't commit)
 *.zip
 
+# Personal workspace — a user's own abilities synced/created via the CLI.
+# Private to each user; never committed.
+user/
+
 # Test / Coverage
 .coverage
 htmlcov/
@@ -41,3 +45,11 @@ htmlcov/
 
 # Bandit reports
 bandit-report.json
+
+# Temp / local dev files
+branch_structure.json
+temp_auto_push.bat
+temp_interactive_push.bat
+
+# Fonts (generated/local)
+public/fonts/
