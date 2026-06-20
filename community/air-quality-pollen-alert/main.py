@@ -81,7 +81,7 @@ FORECAST_PROMPT = (
 )
 
 AQI_LABELS = [
-    (50,  "good"),
+    (50, "good"),
     (100, "moderate"),
     (150, "elevated — concerning for sensitive groups"),
     (200, "poor"),
@@ -90,8 +90,8 @@ AQI_LABELS = [
 ]
 
 POLLEN_LABELS = [
-    (9,   "low"),
-    (49,  "moderate"),
+    (9, "low"),
+    (49, "moderate"),
     (199, "high"),
     (999, "very high"),
 ]
@@ -222,8 +222,8 @@ class AirQualityPollenAlertCapability(MatchingCapability):
                     return 0.0
 
             today_str = datetime.now().strftime("%Y-%m-%d")
-            tomorrow_str = (datetime.now().date().__str__()[:8] +
-                            str(int(datetime.now().strftime("%d")) + 1).zfill(2))
+            tomorrow_str = (datetime.now().date().__str__()[:8]
+                            + str(int(datetime.now().strftime("%d")) + 1).zfill(2))
 
             today_indices = [i for i, t in enumerate(times) if t.startswith(today_str)]
             tomorrow_indices = [i for i, t in enumerate(times) if t.startswith(tomorrow_str)]

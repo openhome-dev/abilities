@@ -15,7 +15,7 @@ DEFAULT_EVENING_TIME = "20:00"
 DEFAULT_AQI_THRESHOLD = 100
 
 AQI_LABELS = [
-    (50,  "good"),
+    (50, "good"),
     (100, "moderate"),
     (150, "elevated — concerning for sensitive groups"),
     (200, "poor"),
@@ -24,8 +24,8 @@ AQI_LABELS = [
 ]
 
 POLLEN_LABELS = [
-    (9,   "low"),
-    (49,  "moderate"),
+    (9, "low"),
+    (49, "moderate"),
     (199, "high"),
     (999, "very high"),
 ]
@@ -143,7 +143,7 @@ class AirQualityPollenAlertBackground(MatchingCapability):
 
             now_hh = datetime.now().strftime("%Y-%m-%dT%H")
             today_str = datetime.now().strftime("%Y-%m-%d")
-            tomorrow_date = datetime.now().date()
+            datetime.now().date()
             from datetime import timedelta
             tomorrow_str = (datetime.now().date() + timedelta(days=1)).strftime("%Y-%m-%d")
 
