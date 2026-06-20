@@ -208,7 +208,6 @@ class AirQualityPollenAlertCapability(MatchingCapability):
             weed_vals = hourly.get("ragweed_pollen", [])
 
             now_hh = datetime.now().strftime("%Y-%m-%dT%H")
-            tomorrow = (datetime.now().strftime("%Y-%m-%d")[:-2])
 
             current_idx = next(
                 (i for i, t in enumerate(times) if t.startswith(now_hh)), 0
