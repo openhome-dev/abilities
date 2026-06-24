@@ -51,8 +51,8 @@ def _trigger_problems(words: list[str]) -> list[str]:
             problems.append(f'"{w}" must contain letters')
         elif not _TRIGGER_OK.match(w):
             problems.append(f'"{w}" has an invalid character (only letters, numbers, spaces, \' and - allowed)')
-        elif len(w) < MIN_TRIGGER_LEN:
-            problems.append(f'"{w}" is too short (min {MIN_TRIGGER_LEN} characters)')
+        elif len(_HAS_LETTER.findall(w)) < MIN_TRIGGER_LEN:
+            problems.append(f'"{w}" must contain at least {MIN_TRIGGER_LEN} letters')
     return problems
 
 
