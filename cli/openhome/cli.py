@@ -20,6 +20,7 @@ The CLI only formats input/output; all real logic lives in the library.
 from __future__ import annotations
 
 import argparse
+import re
 import sys
 from pathlib import Path
 
@@ -36,6 +37,42 @@ def _split_csv(value: str | None) -> list[str]:
     if not value:
         return []
     return [w.strip() for w in value.split(",") if w.strip()]
+
+
+MIN_TRIGGER_LEN = 4
+_TRIGGER_OK = re.compile(r"^[A-Za-z0-9 '\-]+$")
+_HAS_LETTER = re.compile(r"[A-Za-z]")
+
+
+def _trigger_problems(words: list[str]) -> list[str]:
+    problems = []
+    for w in words:
+        if not _HAS_LETTER.search(w):
+            problems.append(f'"{w}" must contain letters')
+        elif not _TRIGGER_OK.match(w):
+            problems.append(f'"{w}" has an invalid character (only letters, numbers, spaces, \' and - allowed)')
+        elif len(w) < MIN_TRIGGER_LEN:
+            problems.append(f'"{w}" is too short (min {MIN_TRIGGER_LEN} characters)')
+    return problems
+
+
+def _check_triggers(words: list[str]) -> None:
+    problems = _trigger_problems(words)
+    if problems:
+        _err("invalid trigger words:\n  " + "\n  ".join(problems))
+        raise SystemExit(1)
+
+
+def _prompt_triggers() -> list[str]:
+    while True:
+        words = _split_csv(_prompt("Trigger words (comma-separated)", required=True))
+        if not words:
+            return []
+        problems = _trigger_problems(words)
+        if problems:
+            print("  invalid trigger words:\n  " + "\n  ".join(problems) + "\n  Please try again.")
+            continue
+        return words
 
 
 def _resolve_folder(arg: str) -> Path:
@@ -121,6 +158,13 @@ def _prompt(label: str, *, required: bool = False, default: str = "") -> str:
 
 def cmd_create(args: argparse.Namespace) -> int:
     client = OpenHomeClient()
+
+    # Validate any --triggers flag BEFORE scaffolding, so a bad flag exits
+    # before a folder is created (avoids "Destination already exists" on retry).
+    triggers = _split_csv(args.triggers)
+    if triggers:
+        _check_triggers(triggers)
+
     dest = client.create_from_template(
         args.name,
         args.template,
@@ -133,12 +177,10 @@ def cmd_create(args: argparse.Namespace) -> int:
         print(f"  Edit {dest / 'main.py'}, then: openhome push {dest}")
         return 0
 
-    # Collect trigger words (flag, else prompt) — required to push.
-    triggers = _split_csv(args.triggers)
+    # Trigger words required to push. Flag validated above; prompt if absent
+    # (the prompt re-asks until every word is valid).
     if not triggers:
-        triggers = _split_csv(
-            _prompt("Trigger words (comma-separated)", required=True)
-        )
+        triggers = _prompt_triggers()
     if not triggers:
         print(
             f"  No trigger words given — not pushed. Add some, then: "
@@ -252,6 +294,7 @@ def cmd_push(args: argparse.Namespace) -> int:
     # New ability → create.
     name = args.name or manifest.get("name") or folder.name
     triggers = _split_csv(args.triggers) or manifest.get("trigger_words") or []
+    _check_triggers(triggers)
     result = client.save_ability(
         folder,
         name=name,
@@ -287,6 +330,7 @@ def cmd_set_triggers(args: argparse.Namespace) -> int:
     if not words:
         _err("Provide at least one trigger word.")
         return 1
+    _check_triggers(words)
     client.set_trigger_words(args.id, words)
     print(f"✓ Updated trigger words for {args.id}: {', '.join(words)}")
     return 0
