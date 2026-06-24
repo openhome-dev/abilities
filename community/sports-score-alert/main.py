@@ -1,6 +1,5 @@
 import json
 import requests
-from datetime import datetime, timedelta, timezone
 
 from src.agent.capability import MatchingCapability
 from src.agent.capability_worker import CapabilityWorker
@@ -360,7 +359,7 @@ class SportsScoreAlertCapability(MatchingCapability):
                     for s in m.get("score", []):
                         score_parts.append(f"{s.get('inning','')}: {s.get('r',0)}/{s.get('w',0)} off {s.get('o',0)} overs")
                     score_str = " | ".join(score_parts) if score_parts else "no score yet"
-                    teams_str = " vs ".join(m.get("teams", ["Team A", "Team B"]))
+                    " vs ".join(m.get("teams", ["Team A", "Team B"]))
                     summary = self.capability_worker.text_to_text_response(
                         LIVE_SCORE_PROMPT.format(
                             sport="cricket",
