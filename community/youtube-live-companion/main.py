@@ -163,6 +163,7 @@ def get_speech_message(message_key):
 def format_speech_message(message_key, **values):
     return get_speech_message(message_key).format(**values)
 
+
 SETUP_WORDS = {
     "youtube live setup",
     "youtube setup",
@@ -249,7 +250,7 @@ class YoutubeLiveCompanionCapability(MatchingCapability):
     worker: AgentWorker = None
     capability_worker: CapabilityWorker = None
 
-    #{{register capability}}
+    # {{register capability}}
 
     async def run(self):
         try:

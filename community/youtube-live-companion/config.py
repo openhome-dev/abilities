@@ -112,7 +112,6 @@ LANGUAGE_ALIASES = {
 }
 
 
-
 MAIN_SPEECH_MESSAGES = {
     "ja": {
         "setup_error": "YouTube 配信アシスタントの設定中にエラーが発生しました。",

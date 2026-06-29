@@ -195,7 +195,7 @@ class YoutubeLiveCompanionBackground(MatchingCapability):
     _seen_message_ids = None
     _announced_connection = False
 
-    #{{register capability}}
+    # {{register capability}}
 
     async def watch_live_chat(self):
         self._message_buffer = []
@@ -295,7 +295,7 @@ class YoutubeLiveCompanionBackground(MatchingCapability):
         if now - self._last_spoken_at < float(config["summary_interval_seconds"]):
             return
 
-        messages = self._message_buffer[-int(config["max_messages_per_summary"]) :]
+        messages = self._message_buffer[-int(config["max_messages_per_summary"]):]
         prompt_lines = [
             f"- {message['author']}: {message['text']}" for message in messages
         ]
