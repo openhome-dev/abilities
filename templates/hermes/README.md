@@ -14,7 +14,7 @@ runs on your PC. It holds a WebSocket to OpenHome, forwards each question to
 Hermes, and returns the answer. It auto-detects how to reach Hermes and needs no
 separate API server in the common case.
 
-[![Download hermes_bridge.py](https://img.shields.io/badge/Download-hermes__bridge.py-2563EB?style=for-the-badge&logo=googledrive&logoColor=white)](https://drive.google.com/drive/folders/1n_T9wV5o9nig2Cvg4OpuU0s-DyaWKS4i)
+[![Download hermes_bridge.py](https://img.shields.io/badge/Download-hermes__bridge.py-2563EB?style=for-the-badge&logo=googledrive&logoColor=white)](https://drive.google.com/file/d/1pEwGb4jO9tkS1_7ZwZl62OJ4eUEizwzG/view)
 
 ---
 
