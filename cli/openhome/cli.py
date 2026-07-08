@@ -27,6 +27,8 @@ from pathlib import Path
 from .client import OpenHomeClient
 from .config import Config
 from .errors import NotAuthenticatedError, OpenHomeError, SessionExpiredError
+from . import local
+
 
 
 def _err(msg: str) -> None:
@@ -514,6 +516,24 @@ def cmd_chat(args: argparse.Namespace) -> int:
     print("\nDisconnected.")
     return 0
 
+def cmd_local(args: argparse.Namespace) -> int:
+    action = args.local_action
+    if action == "run":
+        return local.run_worker(
+            OpenHomeClient().config,
+            client_id=args.client_id, role=args.role,
+            timeout=args.timeout, once=args.once,
+        )
+    if action == "start":
+        return local.start(client_id=args.client_id, role=args.role, timeout=args.timeout)
+    if action == "stop":
+        return local.stop()
+    if action == "status":
+        return local.status()
+    if action == "logs":
+        return local.logs(follow=not args.no_follow, lines=args.lines)
+    _err(f"unknown local action: {action}")
+    return 1
 
 # ── parser ─────────────────────────────────────────────────────────────
 def build_parser() -> argparse.ArgumentParser:
@@ -636,6 +656,31 @@ def build_parser() -> argparse.ArgumentParser:
     p_chat = sub.add_parser("chat", help="Interactive voice session with an agent")
     p_chat.add_argument("agent", nargs="?", help="agent id (or OPENHOME_AGENT_ID)")
     p_chat.set_defaults(func=cmd_chat)
+    
+    p_local = sub.add_parser(
+        "local", help="Run a local bridge that executes requests from your agent"
+    )
+    local_sub = p_local.add_subparsers(dest="local_action", required=True)
+
+    p_l_start = local_sub.add_parser("start", help="Start the bridge in the background")
+    p_l_start.add_argument("--client-id", default="laptop", help="device id (default: laptop)")
+    p_l_start.add_argument("--role", default="agent")
+    p_l_start.add_argument("--timeout", type=float, default=30.0, help="per-request timeout (s)")
+
+    local_sub.add_parser("stop", help="Stop the background bridge")
+    local_sub.add_parser("status", help="Show whether the bridge is running")
+
+    p_l_logs = local_sub.add_parser("logs", help="Stream the bridge's logs (Ctrl-C to stop)")
+    p_l_logs.add_argument("--no-follow", action="store_true", help="print recent logs and exit")
+    p_l_logs.add_argument("-n", "--lines", type=int, default=50, help="history lines to show first")
+
+    p_l_run = local_sub.add_parser("run", help="Run the bridge in the foreground (debugging)")
+    p_l_run.add_argument("--client-id", default="laptop")
+    p_l_run.add_argument("--role", default="agent")
+    p_l_run.add_argument("--timeout", type=float, default=30.0)
+    p_l_run.add_argument("--once", action="store_true", help="don't reconnect on drop")
+
+    p_local.set_defaults(func=cmd_local)
 
     return parser
 

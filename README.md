@@ -176,6 +176,7 @@ Do not start from a blank file. Each template is a minimal, working scaffold for
 | [Read Write File](templates/read-write-file) | Persist data across sessions with file storage | `main.py` |
 | [OpenClaw](templates/openclaw) | Drive a local computer through OpenClaw | `main.py` |
 | [OpenHome Local Link](templates/openhome-local-link) | Turn speech into shell commands on a local machine | `main.py` |
+| [Smart Home](templates/smart-home) | Voice-control MQTT smart-home devices, an LLM picks the device and command | `main.py` |
 | [Alarm](templates/alarm) | A Skill and a daemon working together via shared files | `main.py` + `background.py` |
 
 **🟪 Agent Controlled** (the Agent decides when to run it, still in development)

@@ -8,6 +8,7 @@ and drive the same actions the dashboard live editor does — from code or the t
 3. **Auto-install** it into an agent's voice call flow (pass an agent id on save)
 4. **Set trigger words** (persisted in the OpenHome database)
 5. **Voice-to-voice call** an agent directly, no dashboard needed
+6. **Run a Local Link bridge** so an agent can execute requests on your own machine
 
 It is a thin CLI over a reusable Python library (`openhome`).
 
@@ -117,6 +118,44 @@ cancellation — e.g. a DevKit — can run full-duplex with mic barge-in.)
 any remaining audio chunks until the next response begins. Server logs stream live,
 colored by level (`coloredlogs`).
 
+### Local Link (run requests on your own machine)
+
+`openhome local` runs a small bridge on your computer that stays connected to your
+OpenHome agent. When the agent needs something done locally, it sends the request to
+the bridge, the bridge runs it, and the reply goes back to the agent — so a voice
+agent can reach your machine without the cloud sandbox. Each request is routed to
+whichever local agent is available:
+
+- **local-link** — a raw shell executor (first-class on macOS/Linux, best-effort on Windows). Always available.
+- **hermes** — used when Hermes is installed and configured.
+- **openclaw** — used when OpenClaw is installed and its gateway is running.
+
+The bridge detects which of these are ready and tells the agent. Anything installed
+but not yet usable comes back with a short hint on how to enable it (e.g. start the
+OpenClaw gateway).
+
+```bash
+openhome local start        # start the bridge in the background
+openhome local status       # is it running?
+openhome local logs         # stream requests and responses live (Ctrl-C to stop)
+openhome local stop         # stop it
+
+openhome local run          # run in the foreground for debugging (Ctrl-C to quit)
+```
+
+Options for `start` / `run`:
+
+| Flag | Default | Meaning |
+|---|---|---|
+| `--client-id` | `laptop` | a name for this device |
+| `--role` | `agent` | connection role |
+| `--timeout` | `30` | per-request timeout, in seconds |
+
+`openhome local logs` shows recent history and then live-tails; add `--no-follow` to
+print and exit, or `-n/--lines N` to change how much history it shows first. The
+background bridge reconnects on its own if the connection drops; `openhome local run
+--once` connects a single time without reconnecting (handy while debugging).
+
 ### Sync (account → local) and delete
 ```bash
 openhome sync                  # download code + effective triggers into user/ (keeps local edits)
@@ -146,6 +185,7 @@ ability for a pull request; it does not touch app.openhome.com.
 | voice | `call` (real voice, mic+speaker) · `call --say "…"` (one-shot text) · `chat` (interactive text) |
 | remove | `delete` (account + local folder) · `delete --keep-local` |
 | contribute | `push_to_community <name>` (user/ → community/ for a PR) |
+| local bridge | `local start` · `local status` · `local logs` · `local stop` (run agent requests on your machine) |
 
 ### The `user/` workspace
 
