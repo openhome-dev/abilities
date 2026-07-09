@@ -1,6 +1,6 @@
 # OpenHome · Ability Templates
 
-> **Five templates. Three ability types. Unlimited possibilities.**
+> **Seven core templates. Three ability types. Unlimited possibilities.**
 
 This directory contains the official starter templates for building OpenHome abilities. Each folder is a minimal, working boilerplate that demonstrates a core architectural pattern. They are **not** polished user experiences — they are the scaffolding you build on top of.
 
@@ -33,13 +33,13 @@ Every ability you build falls into one of three categories:
 |---|---|---|---|
 | **Skill** | User hotword or brain routing | Runs once, exits | `main.py` |
 | **Background Daemon** | Automatic on session start | Runs continuously in a loop | `background.py` |
-| **Local** | User or system | Runs on-device hardware | DevKit SDK |
+| **Local** | User | Runs on DevKit hardware | DevKit SDK |
 
 **Skill** is the workhorse. A user says a hotword (or the brain's routing LLM invokes it), the ability runs, does its thing, and hands control back via `resume_normal_flow()`.
 
 **Background Daemon** starts automatically when a user connects and runs in a `while True` loop for the entire session. No hotword needed. It can monitor conversations, poll APIs, watch for time-based events, and interrupt the main flow when something fires. Daemons can be standalone (`background.py` only) or combined with a Skill (`main.py` + `background.py`) coordinating through shared file storage.
 
-**Local** abilities run directly on Raspberry Pi hardware, bypassing the cloud sandbox entirely. They can use unrestricted Python packages, GPIO pins, and local models. *(Currently under active development.)*
+**Local** abilities are triggered by the user and run directly on DevKit hardware (e.g. Raspberry Pi), bypassing the cloud sandbox entirely. They can use unrestricted Python packages, GPIO pins, BLE, and local models. **Local abilities cannot be tested in the Live Editor** — they must be run on a connected DevKit device.
 
 ---
 
@@ -55,6 +55,9 @@ templates/
 ├── SendEmail/             ← Fire-and-forget SDK method call.
 ├── Local/                 ← LLM as translator; execute on local machine.
 ├── OpenClaw/              ← Escape the sandbox via OpenClaw.
+├── smart-home/            ← Voice-control MQTT devices; LLM picks the device + command.
+├── PhilipsHueLightControl/← Local + persistent BLE daemon. Real hardware example.
+├── devkit_led_lights_control/ ← Local + onboard NeoPixel LED ring control.
 │
 ├── Background/            ← Standalone background daemon.
 ├── Alarm/                 ← Combined Skill + Daemon (main.py + background.py).
@@ -88,9 +91,9 @@ Extends `basic-template` with an outbound HTTP request to an external REST API. 
 
 ---
 
-### 🔵 The Five Core Templates
+### 🔵 The Seven Core Templates
 
-These five templates cover a deliberate progression from simplest to most complex. Each teaches a distinct architectural pattern.
+These seven templates cover a deliberate progression from simplest to most complex. Each teaches a distinct architectural pattern.
 
 ---
 
@@ -146,6 +149,45 @@ self.capability_worker.resume_normal_flow()
 > No routing logic, error handling, or timeout handling is included. A real implementation would parse the response structure and handle unmatched skills gracefully.
 
 **Build on top:** smart home hub via HomeAssistant, code execution, app control (`"Open Spotify"`), multi-agent orchestration for complex workflows.
+
+---
+
+#### [`smart-home`](./templates/smart-home) — Voice-Controlled Smart Home
+**Type:** Skill · **Pattern:** LLM-as-orchestrator · **Complexity:** Medium
+
+Voice control for MQTT smart-home devices. You say `"turn on the bedroom light"`, `"set the lamp to 30 percent"`, or `"make it blue"`, and an LLM reads your configured device list, picks the device you mean, and decides the exact MQTT command to send — then publishes it via `send_devkit_mqtt_action`. There is **no per-device-type code**: the LLM is the orchestrator. Supporting a new device means adding it to the dashboard registry (name, topic, description, optional commands), not writing code. When the request is ambiguous or several devices match, the ability asks one clarifying question, then acts on the answer.
+
+**Key SDK methods:** `wait_for_complete_transcription()`, `text_to_text_response()`, `send_devkit_mqtt_action()`, `run_io_loop()`, `speak()`, `resume_normal_flow()`
+
+> Devices live in `self.worker.mqtt_devices`, configured in the **OpenHome DevKit → MQTT** section. The ability sends commands only — it can't read a device's current state — and handles one device per request (no group commands yet). Tune `ORCHESTRATOR_PROMPT` to change behaviour.
+
+**Build on top:** group commands (`"turn off all lights"`), scenes and routines, sensor-driven automations, presence-based auto-on daemons, multi-room control.
+
+---
+
+#### [`PhilipsHueLightControl`](./templates/PhilipsHueLightControl) — Voice-Controlled Hue Bulb
+**Type:** Local · **Pattern:** Persistent BLE connection · **Complexity:** Advanced
+
+Control a Philips Hue bulb directly over Bluetooth — no Hue Bridge, no internet. When triggered, the ability connects to the bulb and holds the connection open for the entire session, so every voice command is instant with no reconnect delay between commands. It reads what the specific bulb actually supports (on/off, brightness, colour temperature, colour) and only offers controls that work with that hardware — a basic white bulb is never offered colour commands. Natural-language phrasing like "cozy vibe", "not so harsh", or "crank it up" is understood, not just exact phrases.
+
+**Key SDK methods:** `send_devkit_capability_action()`, `text_to_text_response()`, `user_response()`, `speak()`, `resume_normal_flow()`
+
+> ⚠️ This is a **Local** ability — it cannot be tested in the Live Editor. It must run on a connected DevKit device with a working Bluetooth stack and a Hue bulb in range.
+
+**Build on top:** other BLE devices (LIFX, Govee), multi-bulb scenes, presence-based auto-on daemon, sunset-fade routines, smart-plug control.
+
+---
+
+#### [`devkit_led_lights_control`](./templates/devkit_led_lights_control) — Voice-Controlled NeoPixel Ring
+**Type:** Local · **Pattern:** On-device hardware control · **Complexity:** Advanced
+
+Control the DevKit's onboard NeoPixel LED ring with your voice — no extra hardware. Say "make it red", "do a candle flicker", "rainbow for 30 seconds", or "switch to music mode", and the ring responds immediately. Twenty-plus built-in effects (solid, rainbow, breathe, chase, fire, sparkle, comet, gradient, strobe, wave, police, candle, music-reactive) are routed by an LLM that understands casual phrasing. Effects run continuously by default until the user changes them or exits.
+
+**Key SDK methods:** `send_devkit_capability_action()`, `send_devkit_action()`, `text_to_text_response()`, `user_response()`, `speak()`, `resume_normal_flow()`
+
+> ⚠️ This is a **Local** ability — it cannot be tested in the Live Editor. It must run on a connected DevKit device with the onboard NeoPixel ring.
+
+**Build on top:** notification ring (flash on events), build/oncall status indicator, Pomodoro phase colours, sleep-wake sunrise routines, music visualisers with custom palettes.
 
 ---
 
@@ -219,6 +261,9 @@ self.capability_worker.write_file("state.json", json.dumps(data))
 | `SendEmail` | Skill | `send_email()`, `speak()`, `resume_normal_flow()` |
 | `Local` | Skill | `text_to_text_response()`, `exec_local_command()` |
 | `OpenClaw` | Skill | `exec_local_command()`, `speak()` |
+| `smart-home` | Skill | `text_to_text_response()`, `send_devkit_mqtt_action()`, `speak()` |
+| `PhilipsHueLightControl` | Local | `send_devkit_capability_action()`, `text_to_text_response()`, `speak()` |
+| `devkit_led_lights_control` | Local | `send_devkit_capability_action()`, `send_devkit_action()`, `text_to_text_response()` |
 | `Background` | Background Daemon | `get_full_message_history()`, `session_tasks.sleep()` |
 | `Alarm` | Skill + Daemon | `send_interrupt_signal()`, `play_from_audio_file()`, `session_tasks.sleep()` |
 | `loop-template` | Skill (long-running) | `start_audio_recording()`, `get_audio_recording()`, `text_to_text_response()` |
@@ -234,6 +279,6 @@ self.capability_worker.write_file("state.json", json.dumps(data))
 4. **Add guardrails** — error handling, confirmation steps, and safety checks appropriate for your use case.
 5. **Coordinating a Skill + Daemon?** Use the `ReadWriteFile` pattern to pass state between `main.py` and `background.py` via shared JSON files.
 
-For full SDK documentation, see the [OpenHome Developer Docs](./docs).
+For full SDK documentation, see the [OpenHome Developer Docs](https://docs.openhome.com).
 
 ---

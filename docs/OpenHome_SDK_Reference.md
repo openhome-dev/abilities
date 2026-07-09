@@ -1,4 +1,7 @@
-# OpenHome Ability SDK — Complete Reference
+---
+title: 'OpenHome Ability SDK — Complete Reference'
+description: 'Single source of truth for everything available inside an OpenHome Ability SDK.'
+---
 
 > **This is the single source of truth for everything available inside an Ability.**
 > If a method or property isn't listed here, it either doesn't exist or hasn't been documented yet.
@@ -35,24 +38,25 @@ Inside any Ability, you have access to two objects:
 5. [Audio Playback](#5-audio-playback)
 6. [Audio Recording](#6-audio-recording)
 7. [Audio Streaming](#7-audio-streaming)
-8. [File Storage (Persistent + Temporary)](#8-file-storage-persistent--temporary)
+8. [File Storage (User Data + Ability Directory)](#8-file-storage-user-data--ability-directory)
 9. [Ability Context Storage (Key-Value)](#9-ability-context-storage-key-value)
 10. [WebSocket Communication](#10-websocket-communication)
 11. [Flow Control](#11-flow-control)
 12. [Logging](#12-logging)
 13. [Session Tasks](#13-session-tasks)
 14. [User Connection Info](#14-user-connection-info)
-15. [Conversation Memory & History](#15-conversation-memory--history)
-16. [Music Mode](#16-music-mode)
-17. [Common Patterns](#17-common-patterns)
-18. [Appendix: What You CAN'T Do (Yet)](#18-appendix-what-you-cant-do-yet)
-19. [Appendix: Blocked Imports](#19-appendix-blocked-imports)
+15. [Custom API Keys](#15-custom-api-keys)
+16. [Conversation Memory & History](#16-conversation-memory--history)
+17. [Music Mode](#17-music-mode)
+18. [Common Patterns](#18-common-patterns)
+19. [Appendix: What You CAN'T Do (Yet)](#19-appendix-what-you-cant-do-yet)
+20. [Appendix: Blocked Imports](#20-appendix-blocked-imports)
 
 ---
 
 ## 1. Speaking / TTS
 
-### `speak(text)`
+### `speak(tokens, file_content=None)`
 Converts text to speech using the Agent's default voice. Streams audio to the user.
 
 ```python
@@ -65,7 +69,7 @@ await self.capability_worker.speak("Hello! How can I help?")
 
 ---
 
-### `text_to_speech(text, voice_id)`
+### `text_to_speech(prompt, voice_id)`
 Converts text to speech using a **specific Voice ID** (e.g., from ElevenLabs). Use when your Ability needs its own distinct voice.
 
 ```python
@@ -112,7 +116,7 @@ full_input = await self.capability_worker.wait_for_complete_transcription()
 
 When a trigger word starts an ability immediately, this method still returns the full spoken sentence, including both the trigger phrase and the actual request.
 
-Example trigger word: `remind`  
+Example trigger word: `remind`
 User says: `remind me to call Alex tomorrow at 6 PM`
 
 ```python
@@ -136,7 +140,7 @@ In this flow:
 
 ## 3. Combined Speak + Listen
 
-### `run_io_loop(text)`
+### `run_io_loop(tokens)`
 Speaks the text, then waits for the user's response. Returns the user's reply. A convenience wrapper around `speak()` + `user_response()`.
 
 ```python
@@ -150,7 +154,7 @@ answer = await self.capability_worker.run_io_loop("What's your favorite color?")
 
 ---
 
-### `run_confirmation_loop(text)`
+### `run_confirmation_loop(tokens)`
 Speaks the text (appends "Please respond with 'yes' or 'no'"), then loops until the user clearly says yes or no.
 
 ```python
@@ -326,63 +330,67 @@ async def stream_long_audio(self):
 
 ---
 
-## 8. File Storage (Persistent + Temporary)
+## 8. File Storage (User Data + Ability Directory)
 
-OpenHome provides a server-side file storage system that allows Abilities to persist data across sessions. For structured dictionary state, you can also use [Ability Context Storage (Key-Value)](#9-ability-context-storage-key-value).
+Use `in_ability_directory` to choose where the file operation runs:
 
-### How It Works
-
-| Flag | Scope | Persistence | Use Case |
-|------|-------|-------------|----------|
-| `temp=False` | **User-level, global** | Survives disconnects and new sessions forever | User preferences, saved data, history, onboarding state |
-| `temp=True` | **Session-level** | Deleted when session ends | Scratch data, cached API responses, temp processing |
-
-**Key concept: Storage is scoped at the user level globally — NOT per-ability.** Any Ability can read/write to the same files for a given user. This means an onboarding Ability can write `user_prefs.json` and a completely separate Smart Hub Ability can read it.
+- `in_ability_directory=False` (default): user data storage (shared across that user's abilities)
+- `in_ability_directory=True`: current Ability directory
 
 **Allowed file types:** `.txt`, `.csv`, `.json`, `.md`, `.log`, `.yaml`, `.yml`
 
-### `check_if_file_exists(filename, temp)`
+### `check_if_file_exists(file_name, in_ability_directory=False)`
 
 ```python
-exists = await self.capability_worker.check_if_file_exists("user_prefs.json", False)
+exists = await self.capability_worker.check_if_file_exists(
+    "user_prefs.json",
+    in_ability_directory=False
+)
 ```
 
 - **Async:** Yes (`await`)
 - **Returns:** `bool`
-- **Always call this before reading** — don't assume a file exists on first run
 
-### `write_file(filename, content, temp, mode="a+")`
+### `write_file(file_name, content=None, in_ability_directory=False, mode="a+")`
 
 ```python
-await self.capability_worker.write_file("user_prefs.json", '{"theme": "dark"}', False, mode="w")
+await self.capability_worker.write_file(
+    "user_prefs.json",
+    '{"theme": "dark"}',
+    False
+)
 ```
 
 - **Async:** Yes (`await`)
 - **Modes:** `mode="a+"` (default, append) or `mode="w"` (overwrite)
 - **Default behavior (`a+`):** Appends to existing file; creates file if it doesn't exist
-- This is fine for `.txt` and `.log` files (append new lines)
-- For JSON, prefer `mode="w"` or delete first, then write
 
-### `read_file(filename, temp)`
+### `read_file(file_name, in_ability_directory=False)`
 
 ```python
-data = await self.capability_worker.read_file("user_prefs.json", False)
+data = await self.capability_worker.read_file(
+    "user_prefs.json",
+    in_ability_directory=False
+)
 ```
 
 - **Async:** Yes (`await`)
-- **Returns:** `str` — full file contents
+- **Returns:** `str`
 
-### `delete_file(filename, temp)`
+### `delete_file(file_name, in_ability_directory=False)`
 
 ```python
-await self.capability_worker.delete_file("user_prefs.json", False)
+await self.capability_worker.delete_file(
+    "user_prefs.json",
+    in_ability_directory=False
+)
 ```
 
 - **Async:** Yes (`await`)
 
 ### `get_user_data_file_names()`
 
-Returns all filenames currently stored in user-level data storage (`temp=False` scope).
+Returns filenames in user data storage.
 
 ```python
 files = await self.capability_worker.get_user_data_file_names()
@@ -391,158 +399,26 @@ files = await self.capability_worker.get_user_data_file_names()
 - **Async:** Yes (`await`)
 - **Returns:** `list[str]`
 
----
+### ⚠️ The JSON Rule: Always Delete + Write, Never Append
 
-### ⚠️ The JSON Rule: Always Delete + Write
+Because `write_file` defaults to append mode (`a+`), writing JSON to an existing file can silently produce invalid JSON (`{"a":1}{"a":1,"b":2}`) — no error is thrown, but your file is broken and unreadable. There are two safe ways to overwrite:
 
-Because `write_file` defaults to **append mode** (`a+`), writing JSON to an existing file can produce invalid JSON (`{"a":1}{"a":1,"b":2}`). Always delete first, then write the complete object (or use `mode="w"`):
+- **Delete + Write** — explicitly delete the file first, then write the new content
+- **`mode="w"`** — passed as a parameter to `write_file`, it overwrites the file in place instead of appending
 
 ```python
-# ✅ CORRECT — delete + write
+# ✅ RECOMMENDED — delete + write (explicit, safe)
 async def save_json(self, filename, data):
     if await self.capability_worker.check_if_file_exists(filename, False):
         await self.capability_worker.delete_file(filename, False)
     await self.capability_worker.write_file(filename, json.dumps(data), False)
 
+# ✅ ALTERNATIVE — mode="w" (shorthand, but easy to forget)
+await self.capability_worker.write_file("prefs.json", json.dumps(data), False, mode="w")
+
 # ❌ WRONG — appending to JSON
 await self.capability_worker.write_file("prefs.json", json.dumps(new_data), False)
-# Result: {"old":"data"}{"new":"data"}  ← broken JSON
-```
-
----
-
-### ⚠️ The `.md` Context Injection Rule
-
-The memory background scans user-level persistent storage and injects every `.md` file into the live Agent prompt.
-
-- Use `.md` only for context you want the Agent to read.
-- Use `.json`/`.txt`/`.log` for storage that should not affect prompt behavior.
-- For replaceable context files, use delete-then-write (do not append stale states).
-- Do not write background-owned files: `user_profile.md`, `user_summary.md`.
-
-```python
-context = "## Emotional State\n- Current: focused (confidence: 0.81)\n"
-if await self.capability_worker.check_if_file_exists("audio_emotion.md", False):
-    await self.capability_worker.delete_file("audio_emotion.md", False)
-await self.capability_worker.write_file("audio_emotion.md", context, False)
-```
-
----
-
-### When to Use Each Storage Scope
-
-**Use `temp=False` (persistent) for:**
-- User preferences and settings
-- Onboarding data ("has this user done setup?")
-- Learned context (name, location, timezone)
-- Conversation summaries
-- Agent ambient context (`*.md` files injected by background)
-- Accumulated data (journals, logs, scores, history)
-- Any data that should survive a disconnect
-
-**Use `temp=True` (session-only) for:**
-- Cached API responses
-- Intermediate processing data
-- Temporary state that doesn't need to survive a disconnect
-
----
-
-### Cross-Ability Data Sharing
-
-Since storage is user-level (not per-ability), use consistent file names across abilities to share data:
-
-```python
-# Onboarding Ability saves user context:
-await self.capability_worker.write_file("user_context.json", json.dumps({
-    "name": "Chris",
-    "city": "Austin",
-    "timezone": "America/Chicago"
-}), False)
-
-# A completely separate Ability reads it later:
-if await self.capability_worker.check_if_file_exists("user_context.json", False):
-    raw = await self.capability_worker.read_file("user_context.json", False)
-    context = json.loads(raw)
-    name = context.get("name", "there")
-    await self.capability_worker.speak(f"Welcome back, {name}.")
-```
-
----
-
-### Complete Example: Persistent User Preferences
-
-```python
-PREFS_FILE = "user_prefs.json"
-
-async def load_or_create_prefs(self) -> dict:
-    """Load persistent user preferences, or create defaults if first run."""
-    if await self.capability_worker.check_if_file_exists(PREFS_FILE, False):
-        raw = await self.capability_worker.read_file(PREFS_FILE, False)
-        try:
-            return json.loads(raw)
-        except json.JSONDecodeError:
-            self.worker.editor_logging_handler.error("Corrupt prefs file, resetting.")
-            await self.capability_worker.delete_file(PREFS_FILE, False)
-    return {}
-
-async def save_prefs(self, prefs: dict):
-    """Save user preferences persistently."""
-    if await self.capability_worker.check_if_file_exists(PREFS_FILE, False):
-        await self.capability_worker.delete_file(PREFS_FILE, False)
-    await self.capability_worker.write_file(PREFS_FILE, json.dumps(prefs), False)
-```
-
-### Complete Example: First Run Detection
-
-```python
-async def boot(self):
-    prefs = await self.load_or_create_prefs()
-
-    if prefs.get("onboarded"):
-        name = prefs.get("user_name", "there")
-        await self.capability_worker.speak(f"Welcome back, {name}.")
-        await self.run_main_loop(prefs)
-    else:
-        prefs = await self.run_onboarding()
-        prefs["onboarded"] = True
-        await self.save_prefs(prefs)
-        await self.run_main_loop(prefs)
-
-    self.capability_worker.resume_normal_flow()
-```
-
-### Complete Example: Activity Logging (Append-Friendly)
-
-For `.txt` and `.log` files, appending works perfectly:
-
-```python
-from time import time
-
-async def log_activity(self, event: str):
-    """Append a timestamped event to a persistent activity log."""
-    entry = "\n%s: %s" % (time(), event)
-    await self.capability_worker.write_file("activity.log", entry, False)
-
-async def get_recent_activity(self) -> str:
-    """Read the full activity log."""
-    if await self.capability_worker.check_if_file_exists("activity.log", False):
-        return await self.capability_worker.read_file("activity.log", False)
-    return ""
-```
-
-### Complete Example: Session-Only Cache
-
-```python
-async def cache_api_response(self, key: str, data: str):
-    """Cache data for current session only — cleaned up on disconnect."""
-    await self.capability_worker.write_file(f"cache_{key}.json", data, True)
-
-async def get_cached(self, key: str) -> str | None:
-    """Read cached data from current session."""
-    fname = f"cache_{key}.json"
-    if await self.capability_worker.check_if_file_exists(fname, True):
-        return await self.capability_worker.read_file(fname, True)
-    return None
+# Result: {"old":"data"}{"new":"data"}  ← broken JSON, no error thrown
 ```
 
 ---
@@ -673,6 +549,23 @@ else:
     self.capability_worker.create_key("user_preferences", updated_value)
 ```
 
+### Choosing Between File Storage and Ability Context Storage
+
+Use **file storage** when you are producing **human-readable artifacts** (for example `notes.md`, `activity.log`, `report.txt`, `data.csv`, `user_prefs.json`) that a **user or developer might open in an editor** to read or export, and writes are **infrequent or append-only**.
+
+Use **ability context storage (key-value)** when you need **internal, structured JSON state** that your code reads and writes **frequently** (conversation state, carts, workflows, feature flags), especially when **multiple Abilities or processes might touch the same state**.
+
+### File Storage vs Ability Context Storage
+
+| Aspect | File Storage | Ability Context Storage (Key-Value) |
+|--------|--------------|--------------------------------------|
+| **Data shape** | Any allowed text format; you define the structure. | One JSON object (`dict`) stored under each key. |
+| **API style** | Async file ops: `read_file`, `write_file`, `delete_file`, etc. | Sync key ops: `create_key`, `update_key`, `delete_key`, `get_single_key`. |
+| **Best for** | Logs, notes, reports, markdown context, CSV/JSON exports. | Conversation/workflow state, carts, fast-changing preferences, feature flags. |
+| **Write pattern** | Infrequent writes or append-only logs. | Frequent small reads/writes during interactions. |
+| **Concurrency / corruption** | Be careful with JSON and multiple writers (delete-then-write or `mode="w"`). | Safer atomic key updates for concurrent access. |
+| **Rule of thumb** | Use when you want a file a human might open in an editor. | Use when you want live structured state your code updates often. |
+
 ---
 
 ## 10. WebSocket Communication
@@ -794,26 +687,38 @@ await self.worker.session_tasks.sleep(5.0)
 
 ### `get_timezone()`
 Returns the timezone for the active user/session when available.
-
 ```python
 timezone = self.capability_worker.get_timezone()
 ```
 
 - **Async:** No (synchronous)
-- **Returns:** Timezone string (for example `America/Chicago`) or empty/`None` when unavailable
+- **Returns:** Timezone string (e.g. `America/Chicago`) or empty/`None` when unavailable
 - **Use case:** Time-aware scheduling, local date/time formatting, reminders
 - **Common daemon use:** Alarm/reminder checks aligned to the user's local timezone
 
+### `get_token(platform)`
+Returns the linked account access token for the current user.
+```python
+token = self.capability_worker.get_token("google")
+self.worker.editor_logging_handler.info(token)
+```
+
+- **Async:** No (synchronous)
+- **Parameters:**
+  - `platform` (str): Platform name. Supported values: Google (`"google"`), Slack (`"slack"`), Discord (`"discord"`), Microsoft (`"microsoft"`), Tesla (`"tesla"`)
+- **Returns:** Access token string for that linked platform
+- **Use case:** Calling Google/Slack/Discord/Microsoft/Tesla APIs on behalf of the linked user account
+
 ### `user_socket.client.host`
 The user's public IP address at connection time.
-
 ```python
 user_ip = self.worker.user_socket.client.host
 self.worker.editor_logging_handler.info(f"User connected from: {user_ip}")
 ```
 
 - **Use case:** IP-based geolocation, timezone detection, personalization
-- **Tip:** Cloud/datacenter IPs won't give you useful location data. Check the ISP name for keywords like "amazon", "aws", "google cloud" before using for geolocation.
+- **Tip:** Cloud/datacenter IPs won't give useful location data. Check the ISP name
+  for keywords like `"amazon"`, `"aws"`, `"google cloud"` before using for geolocation.
 
 ### Example: IP Geolocation
 
@@ -849,7 +754,98 @@ def get_user_location(self):
 
 ---
 
-## 15. Conversation Memory & History
+## 15. Custom API Keys
+
+### Overview
+
+Custom API keys let your Ability connect to third-party services (e.g. OpenAI, ElevenLabs, Twilio) that aren't covered by built-in OpenHome integrations. Third-party API key values are stored securely and can be managed in **Settings → API Keys**.
+
+Always fetch them at runtime with `get_api_keys("key_name")` — never hardcode secrets in your Ability files.
+
+---
+
+### Setup Flow
+
+#### For Developers
+
+**Step 1 — Declare keys**
+
+You can declare a custom API key in either of two ways:
+
+- **While creating/editing the Ability:** Under **Ability Behavior → API Keys**, add each key by name and include a provider URL (required). The key *value* is not set here — values are always managed from **Settings → API Keys**.
+![Declaring API keys in the Ability editor](openhome_icons/sdk_images/add_api_keys.png)
+
+- **From Settings:** Go to **Settings → API Keys → Third-party Keys** and create the key directly, then link it to an Ability by creating or editing one in the Ability editor.
+![Pre-creating third-party API keys from Settings](openhome_icons/sdk_images/add_api_keys_from_settings.png)
+
+**Step 2 — Tag keys as required**
+
+After declaring a key, under **Ability Behavior → API Keys**, *tag* the API Keys to mark it as required. This tells the platform to prompt users for the value at install time.
+
+![Tagging a required API key in the Ability editor](openhome_icons/sdk_images/api_key_tags.png)
+
+> **Important:** Untagged keys will not trigger an install-time prompt for users.
+
+**Step 3 — Read values at runtime**
+
+```python
+openai_key = self.capability_worker.get_api_keys("openai_api_key")
+if not openai_key:
+    self.worker.editor_logging_handler.warning("Missing openai_api_key")
+```
+
+---
+
+#### For Users
+
+When installing an Ability from the marketplace, a pop-up lists all required keys with direct links to each provider — enter values immediately or skip and add them later from **Settings → API Keys**. The Ability will not work until all required keys have a value set.
+
+![Install-time prompt for required API keys](openhome_icons/sdk_images/custom_api_keys_on_user_install.png)
+
+---
+
+### Runtime Example
+
+```python
+async def call(self, worker):
+    self.worker = worker
+    self.capability_worker = CapabilityWorker(self)
+
+    required_keys = ["openai_api_key", "sendgrid_api_key"]
+    keys = {name: self.capability_worker.get_api_keys(name) for name in required_keys}
+    missing = [name for name, value in keys.items() if not value]
+
+    if missing:
+        await self.capability_worker.speak(
+            f"I'm missing required keys: {', '.join(missing)}. "
+            "Please set them in Settings under API Keys."
+        )
+        self.capability_worker.resume_normal_flow()
+        return
+
+    # Proceed with openai_key and sendgrid_key
+```
+
+---
+
+### `get_api_keys` vs `get_token`
+
+| | `get_api_keys("key_name")` | `get_token(platform)` |
+|---|---|---|
+| **Use case** | Any third-party API key or secret | OAuth token for a linked platform account |
+| **Set by** | User sets value in Settings or at install | OAuth flow when linking an account |
+| **Supported services** | Any (OpenAI, Twilio, SendGrid, etc.) | OpenHome built-in integrations only |
+| **Returns** | `str` or `None` | `str` |
+
+---
+
+> **Warning:** Never hardcode secrets in your Ability code — always use `get_api_keys("key_name")` at runtime. Avoid logging full key values.
+
+> **Tip:** Use lowercase snake_case for key names (e.g. `openai_api_key`, `twilio_auth_token`) and always include provider URLs so users can generate keys faster during install.
+
+---
+
+## 16. Conversation Memory & History
 
 ### `get_full_message_history()`
 Access the full conversation message history from the current session through `CapabilityWorker`.
@@ -862,6 +858,13 @@ self.worker.editor_logging_handler.info(f"Messages so far: {len(history)}")
 - **Returns:** The complete message history for the active session
 - **Use case:** Building context-aware abilities that know what was said before the ability was triggered
 - **Common daemon use:** Live conversation monitoring for note-taking, summarization, and event detection
+
+### `delete_conversation_history()`
+You can use `self.capability_worker.delete_conversation_history()` to delete your conversation history.
+
+```python
+self.capability_worker.delete_conversation_history()
+```
 
 ### `update_personality_agent_prompt(prompt_addition)`
 Append additional instructions/context to the active Agent personality prompt.
@@ -916,7 +919,7 @@ After an Ability finishes, you can carry context forward in a few ways. When `re
 
 ---
 
-## 16. Music Mode
+## 17. Music Mode
 
 When playing audio that's longer than a TTS utterance (music, sound effects, long recordings), you need to signal the system to stop listening and not interrupt.
 
@@ -940,7 +943,7 @@ async def play_track(self, audio_bytes):
 
 ---
 
-## 17. Common Patterns
+## 18. Common Patterns
 
 ### LLM as Intent Router
 
@@ -1014,7 +1017,7 @@ Full catalog with 40+ voices available in the [OpenHome Dashboard](https://app.o
 
 ---
 
-## 18. Appendix: What You CAN'T Do (Yet)
+## 19. Appendix: What You CAN'T Do (Yet)
 
 Being explicit about limitations saves developers hours of guessing:
 
@@ -1029,24 +1032,20 @@ Being explicit about limitations saves developers hours of guessing:
 | Use `print()` | ❌ Blocked — use `editor_logging_handler` |
 | Use `asyncio.sleep()` or `asyncio.create_task()` | ❌ Blocked — use `session_tasks` |
 | Use `open()` for raw file access | ❌ Blocked — use File Storage API |
-| Import `redis`, `connection_manager`, `user_config` | ❌ Blocked |
+| Import `redis`, `user_config` | ❌ Blocked |
 
 ---
 
-## 19. Appendix: Blocked Imports
+## 20. Appendix: Blocked Imports
 
 These will cause your Ability to be rejected by the sandbox:
 
 | Import | Why | Use Instead |
 |--------|-----|-------------|
 | `redis` | Direct datastore coupling | File Storage API |
-| `RedisHandler` | Bypasses platform abstractions | File Storage API |
-| `connection_manager` | Breaks isolation | CapabilityWorker APIs |
 | `user_config` | Can leak global state | File Storage API |
 
 Also avoid: `exec()`, `eval()`, `pickle`, `dill`, `shelve`, `marshal`, hardcoded secrets, MD5, ECB cipher mode.
 
 ---
-
-*Last updated: March 2026*  
 *Found an undocumented method? Report it on [Discord](https://discord.gg/openhome) so we can add it here.*

@@ -67,6 +67,8 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add CONTRIBUTORS.md
+          git restore --staged .        # unstage everything first
+          git checkout -- .gitignore    # never let a PR's .gitignore change bleed in
+          git add CONTRIBUTORS.md       # stage only what we intend
           git diff --cached --quiet || git commit -m "docs: add @${{ github.event.pull_request.user.login }} to contributors"
           git push origin dev
