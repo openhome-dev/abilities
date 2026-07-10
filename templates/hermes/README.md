@@ -5,62 +5,91 @@ device. Ask out loud; Hermes answers using its tools, memory, and skills, and
 replies in natural spoken language.
 
 ```
-You speak  ->  OpenHome (cloud)  ->  hermes_bridge.py (your PC)  ->  Hermes Agent
-                  spoken reply travels back along the same path
+You speak  ->  OpenHome  ->  OpenHome Local Link (openhome CLI, your PC)  ->  Hermes Agent
+                        spoken reply travels back along the same path
 ```
 
-OpenHome runs in the cloud and can't reach `localhost`, so a small **bridge**
-runs on your PC. It holds a WebSocket to OpenHome, forwards each question to
-Hermes, and returns the answer. It auto-detects how to reach Hermes and needs no
-separate API server in the common case.
-
-[![Download hermes_bridge.py](https://img.shields.io/badge/Download-hermes__bridge.py-2563EB?style=for-the-badge&logo=googledrive&logoColor=white)](https://drive.google.com/file/d/1pEwGb4jO9tkS1_7ZwZl62OJ4eUEizwzG/view)
+The **OpenHome Local Link** gateway runs on your PC via the `openhome` CLI. It
+stays connected to your Agent and routes each request to whichever local handler
+is available — including **Hermes** when it's installed. This ability sends its
+requests over Local Link and speaks back the reply.
 
 ---
 
 ## How it works
 
-**The ability** (installed from the Marketplace) classifies your wake utterance.
-If it already contains a question, the ability forwards it straight to Hermes;
-otherwise it prompts you. It then loops, answering follow up questions without
-needing the wake word again, until you say you're done (for example "stop",
-"that's all", or "goodbye"). Hermes' raw output is rewritten into a short,
-TTS friendly spoken reply.
+**The ability** (installed from the Marketplace) takes your request — if you only
+said the wake word, it asks what you'd like to do first. Before sending anything
+it confirms destructive requests (those containing `rm -rf`, or `sudo` / `kill` /
+`killall` / `pkill`) with you. It then pings Local Link to confirm it's
+connected, runs a discovery call to confirm `hermes` is one of the detected
+handlers, forwards your request, and speaks the reply. It keeps looping for
+follow-up questions (no wake word needed) until you say an exit word such as
+`stop`, `done`, `goodbye`, or `never mind`.
 
-**The bridge** picks a backend on startup. It uses **API mode** if a live
-OpenAI compatible endpoint answers (a Hermes proxy, Open WebUI, or whatever you
-set in `HERMES_API_URL`), and otherwise **CLI mode**, running
-`hermes -z "<question>"` directly. CLI mode is the default for a standard local
-Hermes setup and needs no proxy or login. The bridge warms Hermes up at startup
-and falls back from API to CLI if an endpoint stops responding.
+**OpenHome Local Link** is the `openhome local` gateway running on your computer.
+It routes each incoming request to a local handler:
+
+- **local-link** — a raw shell executor. Always available.
+- **hermes** — used when Hermes is installed and configured.
+- **openclaw** — used when OpenClaw is installed and its gateway is running.
+
+The gateway auto-detects which handlers are ready and reports them to the Agent,
+which is how this ability's discovery check finds `hermes`.
 
 ---
 
 ## Setup
 
-**Prerequisites:** a working Hermes install (verify with `hermes -z "say hello"`),
-Python 3.8 or newer, and `pip install websockets httpx`.
+### 1. Install Hermes
 
-### Part 1: Run the bridge (your PC)
+Install the Hermes Agent from Nous Research
+(<https://github.com/nousresearch/hermes-agent>) and configure it with an LLM API
+key. Verify the CLI is on your PATH:
 
-1. Download `hermes_bridge.py` (button above) onto the machine running Hermes.
-2. Set your OpenHome API key (Dashboard, then Settings, then API Keys) **before**
-   launching:
-   ```bash
-   export OPENHOME_API_KEY="oh_xxx..."
-   ```
-3. Run it, and keep the terminal open:
-   ```bash
-   python3 hermes_bridge.py
-   ```
-   You should see it select a backend, warm up, then print
-   `Connected to OpenHome [backend=cli]`.
+```bash
+hermes --version
+```
 
-   To keep it running across sessions: on Linux or macOS use
-   `nohup python3 hermes_bridge.py > ~/hermes_bridge.log 2>&1 &` (or `tmux`); on
-   Windows use a minimized terminal or Task Scheduler.
+If that prints a version, Local Link will detect Hermes as a handler.
 
-### Part 2: Install the ability (OpenHome dashboard)
+### 2. Install and log in to the OpenHome CLI
+
+The Local Link gateway ships with the OpenHome CLI. Install it from the repo
+(requires Python 3.10 or newer):
+
+```bash
+git clone https://github.com/openhome-dev/abilities.git
+cd abilities
+python3 -m venv cli/.venv && source cli/.venv/bin/activate
+pip install -e cli
+cp .env.example .env
+
+# Log in with your OpenHome API key (Dashboard -> Settings -> API Keys)
+openhome login
+```
+
+Full CLI setup (JWT, command reference):
+<https://docs.openhome.com/guides/getting-started/cli>
+
+### 3. Start OpenHome Local Link
+
+Run the gateway on the same machine where Hermes is installed, and keep it
+running:
+
+```bash
+openhome local start        # start the gateway in the background
+openhome local status       # confirm it's running and Hermes was detected
+openhome local logs         # stream requests and replies live (Ctrl-C to stop)
+openhome local stop         # stop it
+```
+
+`openhome local run` runs it in the foreground for debugging. `start` and `run`
+accept `--client-id` (device name, default `laptop`), `--role` (default `agent`),
+and `--timeout` (per-request seconds, default `30`). Give each device a distinct
+`--client-id` if you run more than one.
+
+### 4. Install the ability (OpenHome dashboard)
 
 Open the Dashboard, go to the **Marketplace**, add the **Hermes** template, set
 **Trigger Words** (for example `hermes` or `ask hermes`), and enable it on your
@@ -70,54 +99,38 @@ agent. You can edit it anytime in the **Live Editor**.
 
 ## Using it
 
-> **"Hermes."** then *"Hermes here. What would you like to ask?"*
+> **"Hermes."** then *"Sending your inquiry to Hermes, one moment."* (if you
+> didn't include a question, it asks what you'd like to ask first)
 > **"What's my disk usage?"** then *"Your main drive is about 72 percent full,
 > with roughly 64 gigabytes free."*
-> **"That's all, thanks."** then *"Okay, leaving Hermes. Goodbye."*
+> **"That's all, thanks."** then *"Exiting now."*
 
-Follow up questions don't need the wake word; the loop keeps listening until you
-exit.
-
----
-
-## Configuration
-
-Environment variables (set before launching), or edit `Config` at the top of
-`hermes_bridge.py`.
-
-| Variable                  | Default            | Meaning                                          |
-| ------------------------- | ------------------ | ------------------------------------------------ |
-| `OPENHOME_API_KEY`        | *(required)*       | Your OpenHome API key.                           |
-| `OPENHOME_HOST`           | `app.openhome.com` | OpenHome host.                                   |
-| `OPENHOME_CLIENT_ID`      | `laptop`           | Device id; must match the ability's `target_id`. |
-| `OPENHOME_ROLE`           | `agent`            | Connection role.                                 |
-| `HERMES_API_URL`          | *(empty)*          | Force API mode against this base URL.            |
-| `HERMES_API_KEY`          | *(empty)*          | Bearer token if your API endpoint needs one.     |
-| `HERMES_MODEL`            | `hermes-agent`     | Model name sent in API mode.                     |
-| `HERMES_BIN`              | `hermes`           | Path to the hermes CLI for CLI mode.             |
-| `HERMES_CLI_EXTRA`        | *(empty)*          | Extra CLI args, such as `--yolo`.                |
-| `HERMES_TIMEOUT`          | `180`              | Seconds to wait for a Hermes answer.             |
-| `API_PROBE_TIMEOUT`       | `2`                | Seconds per endpoint probe at startup.           |
-| `HERMES_SPEAKABLE_HINT`   | `1`                | `0` disables the concise for speech hint.        |
-| `HERMES_BRIDGE_LOG_LEVEL` | `INFO`             | Logging verbosity.                               |
+Follow-up questions don't need the wake word; the loop keeps listening until you
+say an exit word.
 
 ---
 
 ## Troubleshooting
 
-- **"I couldn't reach Hermes":** bridge not running or Hermes not working. Test
-  with `hermes -z "say hi"`.
-- **"No API endpoint and hermes not found":** `hermes` isn't on PATH. Set
-  `HERMES_BIN`, or run an endpoint and set `HERMES_API_URL`.
-- **First question empty, second works:** cold start. Raise `HERMES_TIMEOUT`.
-- **Tool calls hang:** run with `HERMES_CLI_EXTRA="--yolo"` to auto approve.
-- **Replies too long:** keep `HERMES_SPEAKABLE_HINT=1` and ask narrower questions.
-- **Won't connect to OpenHome:** wrong or expired key, or a different host. Check
-  the dashboard.
+- **"OpenHome Local Link isn't connected":** the gateway isn't running. Start it
+  with `openhome local start`, then check `openhome local status`. If you're
+  logged out, run `openhome login` first.
+- **"Hermes isn't available on your computer":** Local Link is connected but
+  didn't detect the Hermes handler. Confirm `hermes --version` works, then
+  restart the gateway (`openhome local stop && openhome local start`).
+- **Requests time out or lose the connection:** raise the per-request timeout,
+  e.g. `openhome local run --timeout 120`, and watch `openhome local logs`.
+- **Tool calls hang waiting for approval:** configure Hermes to auto-approve
+  tool calls (its non-interactive / `--yolo` mode) so it can run unattended for
+  voice. Enable that knowingly.
+- **Won't connect to OpenHome:** wrong or expired API key. Re-run `openhome
+  login` with a fresh key from Dashboard -> Settings -> API Keys.
 
 ## Security
 
-The bridge runs Hermes with **your** permissions (shell and files), so only
-trigger requests you'd run yourself. The `--yolo` flag removes the manual tool
-approval step; use it knowingly. Keep `OPENHOME_API_KEY` secret and rotate it if
+Local Link runs Hermes with **your** permissions (shell and files), so only
+trigger requests you'd run yourself. This ability confirms destructive-looking
+requests (`rm -rf`, `sudo`, `kill`) before sending them, but that's a safety net,
+not a guarantee. Auto-approving Hermes tool calls removes the manual approval
+step — use it knowingly. Keep your OpenHome API key secret and rotate it if
 exposed.
