@@ -20,12 +20,15 @@ The CLI only formats input/output; all real logic lives in the library.
 from __future__ import annotations
 
 import argparse
+import re
 import sys
 from pathlib import Path
 
 from .client import OpenHomeClient
 from .config import Config
 from .errors import NotAuthenticatedError, OpenHomeError, SessionExpiredError
+from . import local
+
 
 
 def _err(msg: str) -> None:
@@ -36,6 +39,42 @@ def _split_csv(value: str | None) -> list[str]:
     if not value:
         return []
     return [w.strip() for w in value.split(",") if w.strip()]
+
+
+MIN_TRIGGER_LEN = 4
+_TRIGGER_OK = re.compile(r"^[A-Za-z0-9 '\-]+$")
+_HAS_LETTER = re.compile(r"[A-Za-z]")
+
+
+def _trigger_problems(words: list[str]) -> list[str]:
+    problems = []
+    for w in words:
+        if not _HAS_LETTER.search(w):
+            problems.append(f'"{w}" must contain letters')
+        elif not _TRIGGER_OK.match(w):
+            problems.append(f'"{w}" has an invalid character (only letters, numbers, spaces, \' and - allowed)')
+        elif len(_HAS_LETTER.findall(w)) < MIN_TRIGGER_LEN:
+            problems.append(f'"{w}" must contain at least {MIN_TRIGGER_LEN} letters')
+    return problems
+
+
+def _check_triggers(words: list[str]) -> None:
+    problems = _trigger_problems(words)
+    if problems:
+        _err("invalid trigger words:\n  " + "\n  ".join(problems))
+        raise SystemExit(1)
+
+
+def _prompt_triggers() -> list[str]:
+    while True:
+        words = _split_csv(_prompt("Trigger words (comma-separated)", required=True))
+        if not words:
+            return []
+        problems = _trigger_problems(words)
+        if problems:
+            print("  invalid trigger words:\n  " + "\n  ".join(problems) + "\n  Please try again.")
+            continue
+        return words
 
 
 def _resolve_folder(arg: str) -> Path:
@@ -121,6 +160,13 @@ def _prompt(label: str, *, required: bool = False, default: str = "") -> str:
 
 def cmd_create(args: argparse.Namespace) -> int:
     client = OpenHomeClient()
+
+    # Validate any --triggers flag BEFORE scaffolding, so a bad flag exits
+    # before a folder is created (avoids "Destination already exists" on retry).
+    triggers = _split_csv(args.triggers)
+    if triggers:
+        _check_triggers(triggers)
+
     dest = client.create_from_template(
         args.name,
         args.template,
@@ -133,12 +179,10 @@ def cmd_create(args: argparse.Namespace) -> int:
         print(f"  Edit {dest / 'main.py'}, then: openhome push {dest}")
         return 0
 
-    # Collect trigger words (flag, else prompt) — required to push.
-    triggers = _split_csv(args.triggers)
+    # Trigger words required to push. Flag validated above; prompt if absent
+    # (the prompt re-asks until every word is valid).
     if not triggers:
-        triggers = _split_csv(
-            _prompt("Trigger words (comma-separated)", required=True)
-        )
+        triggers = _prompt_triggers()
     if not triggers:
         print(
             f"  No trigger words given — not pushed. Add some, then: "
@@ -252,6 +296,7 @@ def cmd_push(args: argparse.Namespace) -> int:
     # New ability → create.
     name = args.name or manifest.get("name") or folder.name
     triggers = _split_csv(args.triggers) or manifest.get("trigger_words") or []
+    _check_triggers(triggers)
     result = client.save_ability(
         folder,
         name=name,
@@ -287,6 +332,7 @@ def cmd_set_triggers(args: argparse.Namespace) -> int:
     if not words:
         _err("Provide at least one trigger word.")
         return 1
+    _check_triggers(words)
     client.set_trigger_words(args.id, words)
     print(f"✓ Updated trigger words for {args.id}: {', '.join(words)}")
     return 0
@@ -470,6 +516,24 @@ def cmd_chat(args: argparse.Namespace) -> int:
     print("\nDisconnected.")
     return 0
 
+def cmd_local(args: argparse.Namespace) -> int:
+    action = args.local_action
+    if action == "run":
+        return local.run_worker(
+            OpenHomeClient().config,
+            client_id=args.client_id, role=args.role,
+            timeout=args.timeout, once=args.once,
+        )
+    if action == "start":
+        return local.start(client_id=args.client_id, role=args.role, timeout=args.timeout)
+    if action == "stop":
+        return local.stop()
+    if action == "status":
+        return local.status()
+    if action == "logs":
+        return local.logs(follow=not args.no_follow, lines=args.lines)
+    _err(f"unknown local action: {action}")
+    return 1
 
 # ── parser ─────────────────────────────────────────────────────────────
 def build_parser() -> argparse.ArgumentParser:
@@ -592,6 +656,31 @@ def build_parser() -> argparse.ArgumentParser:
     p_chat = sub.add_parser("chat", help="Interactive voice session with an agent")
     p_chat.add_argument("agent", nargs="?", help="agent id (or OPENHOME_AGENT_ID)")
     p_chat.set_defaults(func=cmd_chat)
+    
+    p_local = sub.add_parser(
+        "local", help="Run a local bridge that executes requests from your agent"
+    )
+    local_sub = p_local.add_subparsers(dest="local_action", required=True)
+
+    p_l_start = local_sub.add_parser("start", help="Start the bridge in the background")
+    p_l_start.add_argument("--client-id", default="laptop", help="device id (default: laptop)")
+    p_l_start.add_argument("--role", default="agent")
+    p_l_start.add_argument("--timeout", type=float, default=30.0, help="per-request timeout (s)")
+
+    local_sub.add_parser("stop", help="Stop the background bridge")
+    local_sub.add_parser("status", help="Show whether the bridge is running")
+
+    p_l_logs = local_sub.add_parser("logs", help="Stream the bridge's logs (Ctrl-C to stop)")
+    p_l_logs.add_argument("--no-follow", action="store_true", help="print recent logs and exit")
+    p_l_logs.add_argument("-n", "--lines", type=int, default=50, help="history lines to show first")
+
+    p_l_run = local_sub.add_parser("run", help="Run the bridge in the foreground (debugging)")
+    p_l_run.add_argument("--client-id", default="laptop")
+    p_l_run.add_argument("--role", default="agent")
+    p_l_run.add_argument("--timeout", type=float, default=30.0)
+    p_l_run.add_argument("--once", action="store_true", help="don't reconnect on drop")
+
+    p_local.set_defaults(func=cmd_local)
 
     return parser
 
