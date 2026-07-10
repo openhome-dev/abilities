@@ -997,6 +997,7 @@ def _run_effect_speaking(duration="10"):
         (40, 90, 255), (35, 140, 220), (45, 190, 140),
         (70, 80, 210), (110, 55, 220), (70, 65, 255),
     ]
+
     def palette_color(t):
         i = int(t) % len(PALETTE)
         j = (i + 1) % len(PALETTE)
@@ -1049,7 +1050,7 @@ def _run_effect_listening(duration="10"):
     try:
         while _effect_loop_should_continue(end_time):
             for i in range(LED_STRIP_PIXELS):
-                r, g, b = _hex_to_rgb(f"{(hue+i*5)%255:02x}00ff") if False else (0,0,0)
+                r, g, b = _hex_to_rgb(f"{(hue+i*5)%255:02x}00ff") if False else (0, 0, 0)
             for i in range(LED_STRIP_PIXELS):
                 pos = (hue + int(i * 5)) % 255
                 if pos < 85:

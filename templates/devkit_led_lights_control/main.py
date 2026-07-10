@@ -188,7 +188,7 @@ class LedlightstemplateCapability(MatchingCapability):
     capability_worker: CapabilityWorker = None
     _command_counter: int = 0
 
-    #{{register capability}}
+    # {{register capability}}
 
     def _duration_for_effect(self, function_name, args):
         info = NEOPIXEL_COMMANDS.get(function_name, {})
