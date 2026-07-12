@@ -1,5 +1,3 @@
-import json
-import os
 from typing import Optional
 
 import requests
@@ -20,7 +18,7 @@ class DadJokeTellerCapability(MatchingCapability):
     worker: AgentWorker = None
     capability_worker: CapabilityWorker = None
 
-    #{{register_capability}}
+    # {{register_capability}}
 
     def call(self, worker: AgentWorker):
         self.worker = worker

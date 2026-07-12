@@ -1,5 +1,4 @@
 import json
-import os
 from datetime import datetime
 from typing import ClassVar, Optional
 
@@ -26,7 +25,7 @@ class WeatherProCapability(MatchingCapability):
         "that's all", "finish", "end"
     }
 
-    #{{register_capability}}
+    # {{register_capability}}
 
     def call(self, worker: AgentWorker):
         self.worker = worker

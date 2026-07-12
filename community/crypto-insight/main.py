@@ -1,5 +1,4 @@
 import json
-import os
 import re
 from typing import Dict, List, Optional, Tuple
 
@@ -100,7 +99,7 @@ class WewrwewCapability(MatchingCapability):
     capability_worker: CapabilityWorker = None
     initial_request: Optional[str] = None
 
-    #{{register_capability}}
+    # {{register_capability}}
 
     def call(self, worker: AgentWorker):
         self.worker = worker

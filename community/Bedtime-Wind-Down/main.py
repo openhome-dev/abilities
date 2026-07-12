@@ -1,6 +1,5 @@
 import asyncio
 import json
-import os
 import random
 import time
 from datetime import datetime, timedelta
@@ -18,7 +17,7 @@ class BedtimeWindDownCapability(MatchingCapability):
     capability_worker: CapabilityWorker = None
 
     # --- BOILERPLATE REGISTRATION ---
-    #{{register_capability}}
+    # {{register_capability}}
 
     # --- KEYS AND CONSTANTS ---
     CALM_VOICE_ID: ClassVar[str] = "GBv7mTt0atIp3Br8iCZE"
