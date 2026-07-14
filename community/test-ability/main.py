@@ -1,4 +1,3 @@
-import json
 from src.agent.capability import MatchingCapability
 from src.main import AgentWorker
 from src.agent.capability_worker import CapabilityWorker
@@ -7,11 +6,12 @@ INTRO_PROMPT = "Hi! I'm your daily life advisor. Please tell me about a problem 
 FEEDBACK_PROMPT = " Are you satisfied with the advice?"
 FINAL_PROMPT = "Thank you for using the daily life advisor. Goodbye!"
 
+
 class BasicTemplateCapability(MatchingCapability):
     worker: AgentWorker = None
     capability_worker: CapabilityWorker = None
 
-    #{{register capability}}
+    # {{register capability}}
 
     async def give_advice(self):
         """
@@ -42,13 +42,13 @@ class BasicTemplateCapability(MatchingCapability):
 
         # Speak the solution and ask if the user is satisfied
         solution_with_feedback_ask = solution + FEEDBACK_PROMPT
-        
+
         """
         - `run_io_loop` function is used to speak the solution and get the user's feedback. It returns the user's feedback.
                 It is a combination of `speak` and `user_response` functions.
                 Here, the user's feedback is stored in the `user_feedback` variable.
         """
-        user_feedback = await self.capability_worker.run_io_loop(solution_with_feedback_ask)
+        await self.capability_worker.run_io_loop(solution_with_feedback_ask)
 
         # Exit the capability if the user is not satisfied
         await self.capability_worker.speak(FINAL_PROMPT)
