@@ -5,11 +5,25 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "openhome-client"
 version = "0.1.0"
-description = "Python client + CLI to link this abilities repo with an OpenHome account (app.openhome.com)."
+description = "Python client + CLI for building, managing and voice-calling OpenHome agents (app.openhome.com)."
 readme = "README.md"
 requires-python = ">=3.10"
-authors = [{ name = "OpenHome" }]
+authors = [{ name = "OpenHome", email = "support@openhome.com" }]
 license = { text = "MIT" }
+keywords = ["openhome", "voice", "ai", "agents", "assistant", "cli", "abilities"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: Multimedia :: Sound/Audio :: Speech",
+    "Environment :: Console",
+]
 dependencies = [
     "requests>=2.31",
     "websocket-client>=1.7",  # text chat / one-shot trigger (threaded)
@@ -18,6 +32,12 @@ dependencies = [
     "numpy>=1.24",             # VAD / noise gate for voice call
     "coloredlogs>=15",         # level-colored server logs in `openhome call`
 ]
+
+[project.urls]
+Homepage = "https://openhome.com"
+Documentation = "https://github.com/openhome-dev/abilities/tree/main/cli#readme"
+Repository = "https://github.com/openhome-dev/abilities"
+Issues = "https://github.com/openhome-dev/abilities/issues"
 
 [project.scripts]
 openhome = "openhome.cli:main"

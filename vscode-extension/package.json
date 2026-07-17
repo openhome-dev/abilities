@@ -2,7 +2,7 @@
   "name": "openhome-abilities",
   "displayName": "OpenHome Abilities",
   "description": "Manage OpenHome agents, abilities, voice calls and the local devkit bridge from a sidebar.",
-  "version": "0.1.0",
+  "version": "0.1.5",
   "publisher": "openhome",
   "engines": {
     "vscode": "^1.85.0"
@@ -33,7 +33,7 @@
         {
           "id": "openhome",
           "title": "OpenHome",
-          "icon": "media/openhome.svg"
+          "icon": "media/activitybar.png"
         }
       ]
     },
@@ -41,7 +41,7 @@
       "openhome": [
         {
           "id": "openhome.account",
-          "name": "Account"
+          "name": "Personalities"
         },
         {
           "id": "openhome.abilities",
@@ -66,6 +66,7 @@
       { "command": "openhome.create", "title": "OpenHome: Create Ability", "icon": "$(add)" },
       { "command": "openhome.sync", "title": "OpenHome: Sync Abilities", "icon": "$(cloud-download)" },
       { "command": "openhome.push", "title": "OpenHome: Push Ability", "icon": "$(cloud-upload)" },
+      { "command": "openhome.openAbility", "title": "OpenHome: Open Ability Code", "icon": "$(go-to-file)" },
       { "command": "openhome.enable", "title": "OpenHome: Enable", "icon": "$(check)" },
       { "command": "openhome.disable", "title": "OpenHome: Disable", "icon": "$(circle-slash)" },
       { "command": "openhome.setTriggers", "title": "OpenHome: Set Triggers", "icon": "$(edit)" },
@@ -74,6 +75,7 @@
       { "command": "openhome.chat", "title": "OpenHome: Chat", "icon": "$(comment-discussion)" },
       { "command": "openhome.callAgent", "title": "OpenHome: Call this agent", "icon": "$(unmute)" },
       { "command": "openhome.chatAgent", "title": "OpenHome: Chat with this agent", "icon": "$(comment-discussion)" },
+      { "command": "openhome.endCall", "title": "OpenHome: End Call / Session", "icon": "$(debug-stop)" },
       { "command": "openhome.localStart", "title": "OpenHome: Start Local Bridge", "icon": "$(play)" },
       { "command": "openhome.localStop", "title": "OpenHome: Stop Local Bridge", "icon": "$(debug-stop)" },
       { "command": "openhome.localStatus", "title": "OpenHome: Bridge Status", "icon": "$(pulse)" },
@@ -88,6 +90,7 @@
         { "command": "openhome.create", "when": "view == openhome.abilities", "group": "navigation@1" },
         { "command": "openhome.sync", "when": "view == openhome.abilities", "group": "navigation@2" },
         { "command": "openhome.refreshAbilities", "when": "view == openhome.abilities", "group": "navigation@3" },
+        { "command": "openhome.endCall", "when": "view == openhome.voice && openhome.inCall", "group": "navigation@1" },
         { "command": "openhome.localStatus", "when": "view == openhome.local", "group": "navigation@1" },
         { "command": "openhome.localStart", "when": "view == openhome.local", "group": "navigation@2" },
         { "command": "openhome.localStop", "when": "view == openhome.local", "group": "navigation@3" }

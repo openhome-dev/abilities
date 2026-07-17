@@ -33,8 +33,9 @@ export function activate(context: vscode.ExtensionContext): void {
   const abilities = new AbilitiesProvider();
   const local = new LocalProvider();
   const voice = new ActionsProvider([
-    { label: "Voice call an agent", command: "openhome.call", icon: "unmute", tooltip: "Mic + speakers (opens a terminal — needs the CLI)" },
-    { label: "Chat with an agent", command: "openhome.chat", icon: "comment-discussion", tooltip: "Interactive text session (opens a terminal — needs the CLI)" },
+    { label: "Voice call an agent", command: "openhome.call", icon: "unmute", color: "charts.blue", tooltip: "Mic + speakers (opens a terminal — needs the CLI)" },
+    { label: "Chat with an agent", command: "openhome.chat", icon: "comment-discussion", color: "charts.blue", tooltip: "Interactive text session (opens a terminal — needs the CLI)" },
+    { label: "End call / session", command: "openhome.endCall", icon: "circle-slash", color: "charts.red", tooltip: "Hang up the active call or chat" },
   ]);
 
   context.subscriptions.push(
@@ -166,6 +167,53 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.env.openExternal(vscode.Uri.parse("https://app.openhome.com"));
   });
 
+  // Open a downloaded ability's main.py. Local folders (in user/, official/,
+  // community/) carry a `.openhome.json` manifest linking them to a capability_id.
+  reg("openhome.openAbility", async (id?: string, name?: string) => {
+    const manifests = await vscode.workspace.findFiles(
+      "**/.openhome.json",
+      "**/{node_modules,.venv,.git}/**"
+    );
+    let byId: vscode.Uri | undefined;
+    let byName: vscode.Uri | undefined;
+    for (const m of manifests) {
+      try {
+        const raw = await vscode.workspace.fs.readFile(m);
+        const mf = JSON.parse(Buffer.from(raw).toString("utf8"));
+        const folder = vscode.Uri.joinPath(m, "..");
+        if (id && String(mf.capability_id) === String(id)) {
+          byId = folder;
+          break;
+        }
+        if (name && mf.name === name) {
+          byName = folder;
+        }
+      } catch {
+        /* skip unreadable/invalid manifest */
+      }
+    }
+    const folder = byId ?? byName;
+    if (!folder) {
+      const pick = await vscode.window.showInformationMessage(
+        `"${name ?? id}" isn't downloaded locally yet.`,
+        "Sync now"
+      );
+      if (pick === "Sync now") {
+        vscode.commands.executeCommand("openhome.sync");
+      }
+      return;
+    }
+    const mainPy = vscode.Uri.joinPath(folder, "main.py");
+    try {
+      await vscode.workspace.fs.stat(mainPy);
+    } catch {
+      vscode.window.showWarningMessage(`No main.py found in ${folder.fsPath}.`);
+      return;
+    }
+    const doc = await vscode.workspace.openTextDocument(mainPy);
+    await vscode.window.showTextDocument(doc, { preview: false });
+  });
+
   // Create / sync / push operate on local ability folders (scaffold + zip
   // upload), which the Python CLI already handles — so these stay CLI-backed.
   reg("openhome.create", async () => {
@@ -251,19 +299,44 @@ export function activate(context: vscode.ExtensionContext): void {
   const agentArg = (arg?: string | Node): string | undefined =>
     typeof arg === "string" ? arg : arg?.agentId;
 
+  // Track the active interactive session (voice call / chat) so it can be ended
+  // from the UI. The `openhome.inCall` context key toggles the End-call button.
+  let activeSession: vscode.Terminal | undefined;
+  const setSession = (term?: vscode.Terminal) => {
+    activeSession = term;
+    vscode.commands.executeCommand("setContext", "openhome.inCall", Boolean(term));
+  };
+  context.subscriptions.push(
+    vscode.window.onDidCloseTerminal((t) => {
+      if (t === activeSession) {
+        setSession(undefined);
+      }
+    })
+  );
+
   const startCall = async (agent: string) => {
     if (!(await ensureCli())) {
       return;
     }
-    await runInTerminal("OpenHome Call", agent ? ["call", agent] : ["call"]);
+    setSession(await runInTerminal("OpenHome Call", agent ? ["call", agent] : ["call"]));
   };
 
   const startChat = async (agent: string) => {
     if (!(await ensureCli())) {
       return;
     }
-    await runInTerminal("OpenHome Chat", agent ? ["chat", agent] : ["chat"]);
+    setSession(await runInTerminal("OpenHome Chat", agent ? ["chat", agent] : ["chat"]));
   };
+
+  reg("openhome.endCall", () => {
+    if (activeSession) {
+      activeSession.dispose(); // kills the CLI process (it's the terminal's root process)
+      setSession(undefined);
+      vscode.window.showInformationMessage("OpenHome: ended the session.");
+    } else {
+      vscode.window.showInformationMessage("OpenHome: no active call or chat.");
+    }
+  });
 
   // Direct call/chat for a specific agent (tree click or inline button).
   reg("openhome.callAgent", async (arg?: string | Node) => {

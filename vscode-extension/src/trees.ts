@@ -45,8 +45,7 @@ export class AccountProvider implements vscode.TreeDataProvider<Node> {
       }
       return agents.map((a) => {
         const n = new Node(a.name || a.id);
-        n.description = a.id;
-        n.iconPath = new vscode.ThemeIcon("hubot");
+        n.iconPath = new vscode.ThemeIcon("account", new vscode.ThemeColor("charts.purple"));
         n.tooltip = `${a.description || a.name}\n\nClick to voice call · agent id: ${a.id}`;
         n.contextValue = "agent";
         n.agentId = a.id;
@@ -84,16 +83,20 @@ export class AbilitiesProvider implements vscode.TreeDataProvider<Node> {
       }
       return abilities.map((a) => {
         const n = new Node(a.name || a.id);
-        const state = a.isInstalled ? "installed" : "not installed";
-        n.description = `${a.id}  ·  ${state}`;
+        n.description = a.isInstalled ? "installed" : "not installed";
         n.tooltip = [
           `id: ${a.id}`,
           `category: ${a.category ?? "—"}`,
           `triggers: ${a.triggerWords.join(", ") || "—"}`,
         ].join("\n");
-        n.iconPath = new vscode.ThemeIcon(a.isInstalled ? "plug" : "circle-outline");
+        n.iconPath = new vscode.ThemeIcon(
+          a.isInstalled ? "plug" : "circle-outline",
+          new vscode.ThemeColor(a.isInstalled ? "charts.green" : "disabledForeground")
+        );
         n.contextValue = "ability";
         n.abilityId = a.id;
+        // Clicking an ability opens its local main.py (if downloaded).
+        n.command = { command: "openhome.openAbility", title: "Open code", arguments: [a.id, a.name] };
         return n;
       });
     } catch (e) {
@@ -121,10 +124,10 @@ export class LocalProvider implements vscode.TreeDataProvider<Node> {
   readonly onDidChangeTreeData = this._onDidChange.event;
 
   private readonly actions = [
-    { label: "Start bridge", command: "openhome.localStart", icon: "play" },
-    { label: "Stop bridge", command: "openhome.localStop", icon: "debug-stop" },
-    { label: "Show status", command: "openhome.localStatus", icon: "pulse" },
-    { label: "View logs", command: "openhome.localLogs", icon: "output" },
+    { label: "Start bridge", command: "openhome.localStart", icon: "play", color: "charts.green" },
+    { label: "Stop bridge", command: "openhome.localStop", icon: "debug-stop", color: "charts.red" },
+    { label: "Show status", command: "openhome.localStatus", icon: "pulse", color: "charts.blue" },
+    { label: "View logs", command: "openhome.localLogs", icon: "output", color: "charts.yellow" },
   ];
 
   refresh(): void {
@@ -149,18 +152,24 @@ export class LocalProvider implements vscode.TreeDataProvider<Node> {
     const actionNodes = this.actions.map((a) => {
       const n = new Node(a.label);
       n.command = { command: a.command, title: a.label };
-      n.iconPath = new vscode.ThemeIcon(a.icon);
+      n.iconPath = new vscode.ThemeIcon(a.icon, new vscode.ThemeColor(a.color));
       return n;
     });
     return [status, ...actionNodes];
   }
 }
 
+interface Action {
+  label: string;
+  command: string;
+  icon: string;
+  color?: string;
+  tooltip?: string;
+}
+
 /** Static list of clickable actions (used for the Voice view). */
 export class ActionsProvider implements vscode.TreeDataProvider<Node> {
-  constructor(
-    private readonly actions: { label: string; command: string; icon: string; tooltip?: string }[]
-  ) {}
+  constructor(private readonly actions: Action[]) {}
 
   getTreeItem(el: Node): vscode.TreeItem {
     return el;
@@ -170,7 +179,7 @@ export class ActionsProvider implements vscode.TreeDataProvider<Node> {
     return this.actions.map((a) => {
       const n = new Node(a.label);
       n.command = { command: a.command, title: a.label };
-      n.iconPath = new vscode.ThemeIcon(a.icon);
+      n.iconPath = new vscode.ThemeIcon(a.icon, a.color ? new vscode.ThemeColor(a.color) : undefined);
       if (a.tooltip) {
         n.tooltip = a.tooltip;
       }
