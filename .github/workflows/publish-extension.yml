@@ -1,0 +1,32 @@
+name: Publish VS Code Extension
+
+# Publishes the OpenHome VS Code extension (vscode-extension/) to the VS Code
+# Marketplace when a GitHub Release tagged `ext-v*` is published.
+# Requires a repository secret VSCE_PAT (Azure DevOps Personal Access Token with
+# Marketplace > Manage scope for the `openhome` publisher).
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch: {}
+
+jobs:
+  publish:
+    if: ${{ github.event_name == 'workflow_dispatch' || startsWith(github.event.release.tag_name, 'ext-') }}
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: vscode-extension
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Install deps
+        run: npm install
+      - name: Compile
+        run: npm run compile
+      - name: Publish to VS Code Marketplace
+        run: npx @vscode/vsce publish --no-dependencies -p "$VSCE_PAT"
+        env:
+          VSCE_PAT: ${{ secrets.VSCE_PAT }}

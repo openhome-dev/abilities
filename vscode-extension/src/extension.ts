@@ -1,5 +1,6 @@
 import * as vscode from "vscode";
 import * as api from "./api";
+import * as templates from "./templates";
 import { ensureCli, runInTerminal, runCliOrNotify } from "./cli";
 import { AccountProvider, AbilitiesProvider, ActionsProvider, LocalProvider, Node } from "./trees";
 
@@ -214,25 +215,65 @@ export function activate(context: vscode.ExtensionContext): void {
     await vscode.window.showTextDocument(doc, { preview: false });
   });
 
-  // Create / sync / push operate on local ability folders (scaffold + zip
-  // upload), which the Python CLI already handles — so these stay CLI-backed.
+  // Create is fully native: templates come from GitHub (no repo/CLI needed);
+  // the chosen template is downloaded and scaffolded locally. Push (upload) is
+  // still CLI-backed below.
   reg("openhome.create", async () => {
-    if (!(await ensureCli())) {
+    const wsRoot = vscode.workspace.workspaceFolders?.[0]?.uri;
+    if (!wsRoot) {
+      vscode.window.showErrorMessage("OpenHome: open a folder first to create an ability into it.");
       return;
     }
     const name = await vscode.window.showInputBox({
       title: "New ability name",
-      prompt: "lowercase-with-hyphens",
+      prompt: "lowercase-with-hyphens (this becomes the folder + class name)",
       ignoreFocusOut: true,
-      validateInput: (v) => (/^[a-z0-9-]+$/.test(v) ? undefined : "Use lowercase letters, numbers and hyphens."),
+      validateInput: (v) =>
+        /^[a-z][a-z0-9-]*$/.test(v) ? undefined : "Lowercase letters, numbers and hyphens; start with a letter.",
     });
     if (!name) {
       return;
     }
-    const out = await runCliOrNotify(["create", name, "--no-push"]);
-    if (out !== undefined) {
-      vscode.window.showInformationMessage(out.trim() || `Created ${name}.`);
+
+    let list: templates.Template[];
+    try {
+      list = await vscode.window.withProgress(
+        { location: vscode.ProgressLocation.Window, title: "OpenHome: loading templates…" },
+        () => templates.listTemplates()
+      );
+    } catch (e) {
+      vscode.window.showErrorMessage(`OpenHome: couldn't load templates. ${e instanceof Error ? e.message : e}`);
+      return;
+    }
+    if (list.length === 0) {
+      vscode.window.showErrorMessage("OpenHome: no templates found.");
+      return;
+    }
+    const picked = await vscode.window.showQuickPick(
+      list.map((t) => ({
+        label: `$(file-code) ${t.name}`,
+        description: t.source === "official" ? "official example" : "template",
+        t,
+      })),
+      { title: "Choose a template", placeHolder: "Select a starting template", matchOnDescription: true, ignoreFocusOut: true }
+    );
+    if (!picked) {
+      return;
+    }
+
+    try {
+      const folder = await vscode.window.withProgress(
+        { location: vscode.ProgressLocation.Notification, title: `OpenHome: creating "${name}" from ${picked.t.name}…` },
+        () => templates.scaffold(picked.t, name, vscode.Uri.joinPath(wsRoot, "user"))
+      );
       abilities.refresh();
+      const doc = await vscode.workspace.openTextDocument(vscode.Uri.joinPath(folder, "main.py"));
+      await vscode.window.showTextDocument(doc, { preview: false });
+      vscode.window.showInformationMessage(
+        `OpenHome: created "${name}". Edit main.py, then use Push to upload it.`
+      );
+    } catch (e) {
+      vscode.window.showErrorMessage(`OpenHome: create failed. ${e instanceof Error ? e.message : e}`);
     }
   });
 

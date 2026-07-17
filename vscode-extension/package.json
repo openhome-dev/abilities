@@ -2,7 +2,7 @@
   "name": "openhome-abilities",
   "displayName": "OpenHome Abilities",
   "description": "Manage OpenHome agents, abilities, voice calls and the local devkit bridge from a sidebar.",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "publisher": "openhome",
   "engines": {
     "vscode": "^1.85.0"
@@ -25,6 +25,16 @@
           "type": "string",
           "default": "",
           "description": "Working directory for CLI commands. Defaults to the first workspace folder."
+        },
+        "openhome.templatesRepo": {
+          "type": "string",
+          "default": "openhome-dev/abilities",
+          "description": "GitHub owner/repo to fetch ability templates from."
+        },
+        "openhome.templatesRef": {
+          "type": "string",
+          "default": "main",
+          "description": "Git ref (branch/tag) to fetch templates from."
         }
       }
     },
@@ -108,7 +118,7 @@
   "icon": "media/icon.png",
   "repository": {
     "type": "git",
-    "url": "https://github.com/openhome-com/abilities"
+    "url": "https://github.com/openhome-dev/abilities"
   },
   "scripts": {
     "compile": "tsc -p ./",
