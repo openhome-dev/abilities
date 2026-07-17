@@ -17,7 +17,7 @@ class HackathonDemoCapability(MatchingCapability):
     worker: AgentWorker = None
     capability_worker: CapabilityWorker = None
 
-    #{{register capability}}
+    # {{register capability}}
 
     async def qa_loop(self):
         await self.capability_worker.speak(INTRO_PROMPT)
