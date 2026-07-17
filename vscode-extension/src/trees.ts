@@ -83,12 +83,23 @@ export class AbilitiesProvider implements vscode.TreeDataProvider<Node> {
       }
       return abilities.map((a) => {
         const n = new Node(a.name || a.id);
-        n.description = a.isInstalled ? "installed" : "not installed";
-        n.tooltip = [
-          `id: ${a.id}`,
-          `category: ${a.category ?? "—"}`,
-          `triggers: ${a.triggerWords.join(", ") || "—"}`,
-        ].join("\n");
+        const triggers = a.triggerWords.join(", ");
+        // Show the trigger phrases inline (that's how you invoke it in a call).
+        n.description = triggers
+          ? `🗣 ${triggers}`
+          : a.isInstalled
+          ? "installed"
+          : "not installed";
+        const md = new vscode.MarkdownString();
+        md.appendMarkdown(`**${a.name || a.id}**  ·  _${a.isInstalled ? "installed" : "not installed"}_\n\n`);
+        md.appendMarkdown(`**Trigger words:**\n`);
+        if (a.triggerWords.length) {
+          md.appendMarkdown(a.triggerWords.map((w) => `- “${w}”`).join("\n"));
+        } else {
+          md.appendMarkdown("_none set_");
+        }
+        md.appendMarkdown(`\n\ncategory: ${a.category ?? "—"} · id: ${a.id}`);
+        n.tooltip = md;
         n.iconPath = new vscode.ThemeIcon(
           a.isInstalled ? "plug" : "circle-outline",
           new vscode.ThemeColor(a.isInstalled ? "charts.green" : "disabledForeground")

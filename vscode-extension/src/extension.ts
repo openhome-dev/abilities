@@ -168,9 +168,12 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.env.openExternal(vscode.Uri.parse("https://app.openhome.com"));
   });
 
-  // Open a downloaded ability's main.py. Local folders (in user/, official/,
-  // community/) carry a `.openhome.json` manifest linking them to a capability_id.
-  reg("openhome.openAbility", async (id?: string, name?: string) => {
+  // Find a downloaded ability's local folder by matching its `.openhome.json`
+  // manifest (capability_id first, then name). Local folders live in user/ etc.
+  const resolveAbilityFolder = async (
+    id?: string,
+    name?: string
+  ): Promise<vscode.Uri | undefined> => {
     const manifests = await vscode.workspace.findFiles(
       "**/.openhome.json",
       "**/{node_modules,.venv,.git}/**"
@@ -179,12 +182,10 @@ export function activate(context: vscode.ExtensionContext): void {
     let byName: vscode.Uri | undefined;
     for (const m of manifests) {
       try {
-        const raw = await vscode.workspace.fs.readFile(m);
-        const mf = JSON.parse(Buffer.from(raw).toString("utf8"));
+        const mf = JSON.parse(Buffer.from(await vscode.workspace.fs.readFile(m)).toString("utf8"));
         const folder = vscode.Uri.joinPath(m, "..");
         if (id && String(mf.capability_id) === String(id)) {
-          byId = folder;
-          break;
+          return folder;
         }
         if (name && mf.name === name) {
           byName = folder;
@@ -193,15 +194,24 @@ export function activate(context: vscode.ExtensionContext): void {
         /* skip unreadable/invalid manifest */
       }
     }
-    const folder = byId ?? byName;
+    return byId ?? byName;
+  };
+
+  const offerSync = async (label: string) => {
+    const pick = await vscode.window.showInformationMessage(
+      `"${label}" isn't downloaded locally yet.`,
+      "Sync now"
+    );
+    if (pick === "Sync now") {
+      vscode.commands.executeCommand("openhome.sync");
+    }
+  };
+
+  // Open a downloaded ability's main.py.
+  reg("openhome.openAbility", async (id?: string, name?: string) => {
+    const folder = await resolveAbilityFolder(id, name);
     if (!folder) {
-      const pick = await vscode.window.showInformationMessage(
-        `"${name ?? id}" isn't downloaded locally yet.`,
-        "Sync now"
-      );
-      if (pick === "Sync now") {
-        vscode.commands.executeCommand("openhome.sync");
-      }
+      await offerSync(name ?? id ?? "ability");
       return;
     }
     const mainPy = vscode.Uri.joinPath(folder, "main.py");
@@ -213,6 +223,68 @@ export function activate(context: vscode.ExtensionContext): void {
     }
     const doc = await vscode.workspace.openTextDocument(mainPy);
     await vscode.window.showTextDocument(doc, { preview: false });
+  });
+
+  // Resolve the ability folder to push from either a tree item (by capability_id)
+  // or the active/passed main.py editor (its containing folder).
+  const pushTargetFolder = async (arg?: Node | vscode.Uri): Promise<vscode.Uri | undefined> => {
+    if (arg instanceof vscode.Uri) {
+      return vscode.Uri.joinPath(arg, ".."); // folder containing the given main.py
+    }
+    if (arg?.abilityId) {
+      return resolveAbilityFolder(arg.abilityId);
+    }
+    const active = vscode.window.activeTextEditor?.document.uri;
+    if (active && active.path.endsWith("/main.py")) {
+      return vscode.Uri.joinPath(active, "..");
+    }
+    return undefined;
+  };
+
+  const doPush = async (folder: vscode.Uri | undefined, commit: boolean, label: string) => {
+    if (!folder) {
+      await offerSync(label);
+      return;
+    }
+    let message = "";
+    if (commit) {
+      message =
+        (await vscode.window.showInputBox({
+          title: "Commit message",
+          prompt: "Describe this version",
+          placeHolder: "e.g. add first_function",
+          ignoreFocusOut: true,
+        })) || "";
+      if (!message) {
+        return; // cancelled
+      }
+    }
+    if (!(await ensureCli())) {
+      return;
+    }
+    // Save the open editor first so the latest code is what gets uploaded.
+    await vscode.workspace.saveAll(false);
+    const args = commit
+      ? ["push", folder.fsPath, "--commit", "-m", message]
+      : ["push", folder.fsPath];
+    const out = await vscode.window.withProgress(
+      { location: vscode.ProgressLocation.Notification, title: commit ? "OpenHome: committing a version…" : "OpenHome: saving draft…" },
+      () => runCliOrNotify(args)
+    );
+    if (out !== undefined) {
+      vscode.window.showInformationMessage(out.trim() || (commit ? "Committed a version." : "Saved a draft."));
+      abilities.refresh();
+    }
+  };
+
+  // Two explicit buttons: Save Draft (no version) and Commit (cut a version).
+  reg("openhome.pushDraft", async (arg?: Node | vscode.Uri) => {
+    const folder = await pushTargetFolder(arg);
+    await doPush(folder, false, (arg as Node)?.abilityId ?? "ability");
+  });
+  reg("openhome.pushCommit", async (arg?: Node | vscode.Uri) => {
+    const folder = await pushTargetFolder(arg);
+    await doPush(folder, true, (arg as Node)?.abilityId ?? "ability");
   });
 
   // Create is fully native: templates come from GitHub (no repo/CLI needed);
@@ -278,10 +350,18 @@ export function activate(context: vscode.ExtensionContext): void {
   });
 
   reg("openhome.sync", async () => {
+    const wsRoot = vscode.workspace.workspaceFolders?.[0]?.uri;
+    if (!wsRoot) {
+      vscode.window.showErrorMessage("OpenHome: open a folder first to sync abilities into it.");
+      return;
+    }
     if (!(await ensureCli())) {
       return;
     }
-    if ((await runCliOrNotify(["sync"])) !== undefined) {
+    // Force the download into THIS workspace's user/ — without --dest the CLI
+    // writes relative to its own install location, not the open folder.
+    const dest = vscode.Uri.joinPath(wsRoot, "user").fsPath;
+    if ((await runCliOrNotify(["sync", "--dest", dest])) !== undefined) {
       vscode.window.showInformationMessage("OpenHome: synced abilities into user/.");
       abilities.refresh();
     }

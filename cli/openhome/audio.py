@@ -218,14 +218,27 @@ class _VoiceCall:
             pass
 
     async def _finish_speaking(self, turn: int) -> None:
-        """On audio-end: wait for real playback drain, then signal bot-speak-end —
-        unless this turn was interrupted or superseded by a newer one."""
-        await self._await_playback_drained()
+        """On audio-end: close mpv's stdin so it plays everything buffered and
+        exits, then signal bot-speak-end. Waiting for the process to exit is an
+        exact drain signal — unlike polling core-idle, which false-fires before
+        playback starts (cold-start greeting) or during a network underrun, and
+        was letting one turn's audio bleed into the next."""
+        if self._turn != turn or self.is_interrupted:
+            return
+        mpv = self.mpv
+        if mpv is not None:
+            try:
+                if mpv.stdin:
+                    mpv.stdin.close()  # EOF → mpv drains its buffer, then exits
+            except Exception:  # noqa: BLE001
+                pass
+            try:
+                await mpv.wait()  # returns exactly when playback has finished
+            except Exception:  # noqa: BLE001
+                pass
         if self.is_interrupted or self._turn != turn:
             return
         self.is_speaking = False
-        # Fire the "your turn" ping in parallel — never block the turn flip.
-        asyncio.get_event_loop().run_in_executor(None, self._play_ping)
         await self._send_text("bot-speak-end")
         self._note("your turn — speak")
 
@@ -323,6 +336,9 @@ class _VoiceCall:
         if data == "audio-init":
             self.is_interrupted = False
             self._turn += 1
+            # Fresh player each turn — a persistent mpv let one turn's buffered
+            # audio bleed into the next (greeting playing during the 2nd reply).
+            await self._kill_mpv()
             await self._ensure_mpv()
             self.is_speaking = True
             await self._send_text("bot-speaking")

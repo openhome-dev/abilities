@@ -2,7 +2,7 @@
   "name": "openhome-abilities",
   "displayName": "OpenHome Abilities",
   "description": "Manage OpenHome agents, abilities, voice calls and the local devkit bridge from a sidebar.",
-  "version": "0.1.6",
+  "version": "0.1.7",
   "publisher": "openhome",
   "engines": {
     "vscode": "^1.85.0"
@@ -77,6 +77,8 @@
       { "command": "openhome.sync", "title": "OpenHome: Sync Abilities", "icon": "$(cloud-download)" },
       { "command": "openhome.push", "title": "OpenHome: Push Ability", "icon": "$(cloud-upload)" },
       { "command": "openhome.openAbility", "title": "OpenHome: Open Ability Code", "icon": "$(go-to-file)" },
+      { "command": "openhome.pushDraft", "title": "OpenHome: Save to Cloud (draft)", "icon": "$(cloud-upload)" },
+      { "command": "openhome.pushCommit", "title": "OpenHome: Commit Version to Cloud", "icon": "$(git-commit)" },
       { "command": "openhome.enable", "title": "OpenHome: Enable", "icon": "$(check)" },
       { "command": "openhome.disable", "title": "OpenHome: Disable", "icon": "$(circle-slash)" },
       { "command": "openhome.setTriggers", "title": "OpenHome: Set Triggers", "icon": "$(edit)" },
@@ -92,6 +94,10 @@
       { "command": "openhome.localLogs", "title": "OpenHome: Bridge Logs", "icon": "$(output)" }
     ],
     "menus": {
+      "editor/title": [
+        { "command": "openhome.pushDraft", "when": "resourceFilename == main.py", "group": "navigation@1" },
+        { "command": "openhome.pushCommit", "when": "resourceFilename == main.py", "group": "navigation@2" }
+      ],
       "view/title": [
         { "command": "openhome.login", "when": "view == openhome.account", "group": "navigation@1" },
         { "command": "openhome.openDashboard", "when": "view == openhome.account", "group": "navigation@2" },
@@ -108,10 +114,12 @@
       "view/item/context": [
         { "command": "openhome.callAgent", "when": "view == openhome.account && viewItem == agent", "group": "inline@1" },
         { "command": "openhome.chatAgent", "when": "view == openhome.account && viewItem == agent", "group": "inline@2" },
-        { "command": "openhome.enable", "when": "view == openhome.abilities && viewItem == ability", "group": "inline@1" },
-        { "command": "openhome.disable", "when": "view == openhome.abilities && viewItem == ability", "group": "inline@2" },
-        { "command": "openhome.setTriggers", "when": "view == openhome.abilities && viewItem == ability", "group": "inline@3" },
-        { "command": "openhome.delete", "when": "view == openhome.abilities && viewItem == ability", "group": "inline@4" }
+        { "command": "openhome.pushDraft", "when": "view == openhome.abilities && viewItem == ability", "group": "inline@1" },
+        { "command": "openhome.pushCommit", "when": "view == openhome.abilities && viewItem == ability", "group": "inline@2" },
+        { "command": "openhome.enable", "when": "view == openhome.abilities && viewItem == ability", "group": "inline@3" },
+        { "command": "openhome.disable", "when": "view == openhome.abilities && viewItem == ability", "group": "inline@4" },
+        { "command": "openhome.setTriggers", "when": "view == openhome.abilities && viewItem == ability", "group": "inline@5" },
+        { "command": "openhome.delete", "when": "view == openhome.abilities && viewItem == ability", "group": "inline@6" }
       ]
     }
   },
