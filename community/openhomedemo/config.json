@@ -1,0 +1,8 @@
+{
+    "unique_name":"advisor",
+    "matching_hotwords":[
+        "give me advise",
+        "advise me",
+        "advice time"
+    ]
+}
