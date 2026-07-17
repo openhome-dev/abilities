@@ -2,6 +2,7 @@ from src.agent.capability import MatchingCapability
 from src.main import AgentWorker
 from src.agent.capability_worker import CapabilityWorker
 
+
 class VoiceInterpreterCapability(MatchingCapability):
     worker: AgentWorker = None
     capability_worker: CapabilityWorker = None
