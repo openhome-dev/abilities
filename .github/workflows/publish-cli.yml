@@ -12,6 +12,7 @@ on:
 jobs:
   build:
     name: Build distribution
+    if: ${{ github.event_name == 'workflow_dispatch' || startsWith(github.event.release.tag_name, 'cli-') }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
