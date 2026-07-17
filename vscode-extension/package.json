@@ -2,7 +2,7 @@
   "name": "openhome-abilities",
   "displayName": "OpenHome Abilities",
   "description": "Manage OpenHome agents, abilities, voice calls and the local devkit bridge from a sidebar.",
-  "version": "0.1.9",
+  "version": "0.1.7",
   "publisher": "openhome",
   "engines": {
     "vscode": "^1.85.0"
