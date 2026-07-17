@@ -1,0 +1,12 @@
+[
+  {
+    "title": "Song 1",
+    "file": "song.mp3",
+    "keywords": ["one", "first", "song one", "track one"]
+  },
+  {
+    "title": "Song 2",
+    "file": "song2.mp3",
+    "keywords": ["two", "second", "song two", "track two"]
+  }
+]

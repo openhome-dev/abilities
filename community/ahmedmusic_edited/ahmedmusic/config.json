@@ -1,0 +1,6 @@
+{
+    "unique_name": "music",
+    "matching_hotwords": [
+        "play music"
+    ]
+}
