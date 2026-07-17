@@ -1,4 +1,3 @@
-import asyncio
 import json
 import secrets
 from src.agent.capability import MatchingCapability
@@ -17,7 +16,7 @@ class AhmedmusicCapability(MatchingCapability):
     worker: AgentWorker = None
     capability_worker: CapabilityWorker = None
 
-    #{{register capability}}
+    # {{register capability}}
 
     async def _load_songs(self) -> list:
         catalog_path = "songs.json"
