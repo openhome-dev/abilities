@@ -1,0 +1,11 @@
+{
+  "_comment": "IPC bridge between main.py and background.py. Edit trusted_contacts with real phone numbers in E.164 format.",
+  "alert_active": false,
+  "mode": "passive",
+  "gps_feed_url": "",
+  "trusted_contacts": [
+    {"name": "Saad Hamid Ali", "phone": "+923055417130"},
+    {"name": "Muhammad Ammar", "phone": "+923494533107"}
+  ],
+  "use_openclaw_storage": false
+}
