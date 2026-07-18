@@ -161,7 +161,6 @@ class OrbitCapability(MatchingCapability):
     # -------------------------------------------------------------------------
 
     async def _route_intent(self, user_input: str):
-        global USER_CITY
         lower = user_input.lower().strip(string.punctuation + " ")
 
         # Wake check
@@ -285,7 +284,6 @@ class OrbitCapability(MatchingCapability):
     # -------------------------------------------------------------------------
 
     async def _handle_location(self) -> None:
-        global LAST_RESPONSE
         await self._speak_filler()
 
         lat = DEMO_LOCATION["lat"]
@@ -391,7 +389,7 @@ class OrbitCapability(MatchingCapability):
             'Extract the city they want to see the ISS from. '
             'Respond with just the city name, or "unknown".'
         )
-        location = (await self.capability_worker.text_to_text_response(prompt)).strip()
+        location = self.capability_worker.text_to_text_response(prompt).strip()
 
         if location.lower() in ("unknown", "here", "my location", "me", ""):
             await self.capability_worker.speak(
