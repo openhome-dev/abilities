@@ -71,7 +71,7 @@ class KindmindCapability(MatchingCapability):
     _in_panic_mode: bool = False
 
     # Do not change following tag of register capability
-    #{{register capability}}
+    # {{register capability}}
 
     def call(self, worker: AgentWorker):
         self.worker = worker
@@ -319,7 +319,7 @@ class KindmindCapability(MatchingCapability):
         )
         wants_more = self.classify_yes_no(
             continue_reply, "Does this indicate they want to try something "
-                             "else, rather than wrap up?"
+            "else, rather than wrap up?"
         )
         if not wants_more:
             await self.say(self.generate_line(
@@ -424,7 +424,7 @@ class KindmindCapability(MatchingCapability):
     # ------------------------------------------------------------------
 
     async def wait_for_ready(self, instruction: str, retry_instruction: str = None,
-                              persona: str = CALM_PERSONA) -> str:
+                             persona: str = CALM_PERSONA) -> str:
         cw = self.capability_worker
         retry_instruction = retry_instruction or (
             "Gently reassure them there's no rush at all, and ask again "
@@ -866,4 +866,3 @@ class KindmindCapability(MatchingCapability):
 class ExitRequested(Exception):
     """Raised when the user asks to stop mid-exercise, so we can unwind
     cleanly out of nested async steps and still call resume_normal_flow()."""
-    pass
