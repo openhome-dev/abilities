@@ -322,7 +322,6 @@ class OrbitCapability(MatchingCapability):
             f"It is moving at {velocity_mph:,} miles per hour, "
             f"{altitude_mi} miles above Earth.{eclipse_text}"
         )
-        LAST_RESPONSE = response
         await self.capability_worker.speak(response)
 
     async def _handle_crew(self) -> None:
