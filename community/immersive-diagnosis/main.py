@@ -680,27 +680,32 @@ class ImmersiveDiagnosisCapability(MatchingCapability):
         try:
             self._log("info", "ABILITY STARTED")
 
+            # Message history persists across sessions, so only trust the last
+            # user line when it reads like a fresh, substantive complaint —
+            # otherwise a stale reply ("yes", "stop") from an earlier session
+            # would seed the playbook and skip every question.
             history = self._history_text()
             complaint = ""
             if history:
-                # Prefer last user line
                 for line in reversed(history.splitlines()):
                     if line.lower().startswith("user:"):
                         complaint = line.split(":", 1)[-1].strip()
                         break
+            lowered = complaint.lower().strip(" .!?")
+            if (
+                not lowered
+                or lowered in CONTENTLESS_TRIGGERS
+                or len(lowered) < 15
+                or self._is_exit(lowered)
+            ):
+                complaint = ""
             extract = None
-            if history or complaint:
+            if complaint:
+                # Extract from the complaint only — never from old history.
                 extract = self._llm_json(
-                    f"Conversation:\n{history}\n\nFocus on the user's maintenance complaint.",
+                    f"User said: {complaint}",
                     EXTRACT_PROMPT,
                 )
-
-            if not complaint and extract and extract.get("description"):
-                complaint = extract["description"]
-            # A bare trigger phrase is not a complaint — ask for the real one.
-            if complaint and complaint.lower().strip(" .!?") in CONTENTLESS_TRIGGERS:
-                complaint = ""
-                extract = None
             if not complaint:
                 await self.capability_worker.speak(
                     "I'm here to help diagnose the home issue. What's going wrong?"
