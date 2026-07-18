@@ -2,7 +2,7 @@ import random
 import requests
 import string
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Dict, Optional, Tuple
 
 from src.agent.capability import MatchingCapability
 from src.agent.capability_worker import CapabilityWorker
@@ -130,7 +130,7 @@ class OrbitCapability(MatchingCapability):
         global LAST_RESPONSE, USER_CITY
         LAST_RESPONSE = ""
         USER_CITY = None
-        
+
         try:
             await self.capability_worker.speak(
                 "Orbit here. Ask me where the space station is, who is on board, when you can see it, or anything about the ISS."
@@ -206,15 +206,15 @@ class OrbitCapability(MatchingCapability):
         if any(word in lower for word in ("how big", "size", "long", "weigh", "meter", "football", "heavy", "tons", "inside", "room", "bathroom", "gym", "cupola", "solar", "power", "electricity", "panels", "tell me about", "facts", "info", "what is")):
             await self._handle_facts(user_input)
             return
-        
+
         if any(word in lower for word in ("sleep", "sleeping", "asleep", "night", "rest")):
             await self._handle_sleep()
             return
-        
+
         if any(word in lower for word in ("eat", "food", "meal", "breakfast", "lunch", "dinner", "cook")):
             await self._handle_food()
             return
-        
+
         if any(word in lower for word in ("old", "age", "when built", "first launch", "history")):
             await self._handle_age()
             return
@@ -242,26 +242,26 @@ class OrbitCapability(MatchingCapability):
             return "the Arctic Ocean"
         if lat < -60:
             return "Antarctica"
-        
+
         if -180 <= lon <= -120 or 120 <= lon <= 180:
             if lat > 30:
                 return "the North Pacific Ocean"
             if lat < -30:
                 return "the South Pacific Ocean"
             return "the Pacific Ocean"
-        
+
         if -60 <= lon <= 20:
             if lat > 40:
                 return "the North Atlantic Ocean"
             if lat < -40:
                 return "the South Atlantic Ocean"
             return "the Atlantic Ocean"
-        
+
         if 20 <= lon <= 120:
             if lat < -20:
                 return "the southern Indian Ocean"
             return "the Indian Ocean"
-        
+
         if -125 <= lon <= -65 and 25 <= lat <= 50:
             return "North America"
         if -125 <= lon <= -65 and 0 <= lat <= 25:
@@ -276,7 +276,7 @@ class OrbitCapability(MatchingCapability):
             return "Asia"
         if 110 <= lon <= 155 and -45 <= lat <= -10:
             return "Australia"
-        
+
         return "an unknown location"
 
     # -------------------------------------------------------------------------
@@ -308,7 +308,7 @@ class OrbitCapability(MatchingCapability):
                 velocity_kmh = velocity_kms * 3600
                 velocity_mph = int(velocity_kmh * 0.621371)
                 is_eclipsed = pos.get("eclipsed", False)
-                
+
                 location_name = self._coords_to_region(lat, lon)
 
         except Exception as e:
@@ -445,9 +445,9 @@ class OrbitCapability(MatchingCapability):
     async def _handle_facts(self, user_input: str) -> None:
         global LAST_RESPONSE
         await self._speak_filler()
-        
+
         lower = user_input.lower()
-        
+
         if any(word in lower for word in ("big", "size", "long", "weigh", "meter", "football", "heavy", "tons")):
             fact = ISS_FACTS_SIZE
         elif any(word in lower for word in ("fast", "speed", "mile per hour", "kilometer per hour", "velocity", "mph", "km/h", "quick")):
@@ -458,17 +458,17 @@ class OrbitCapability(MatchingCapability):
             fact = ISS_FACTS_INSIDE
         else:
             fact = random.choice(ISS_FACTS_ALL)
-        
+
         LAST_RESPONSE = fact
         await self.capability_worker.speak(fact)
 
     async def _handle_sleep(self) -> None:
         global LAST_RESPONSE
         await self._speak_filler()
-        
+
         utc_now = datetime.now(timezone.utc)
         utc_hour = utc_now.hour
-        
+
         if 21 <= utc_hour or utc_hour < 6:
             response = (
                 "Most of the crew is probably asleep right now. "
@@ -486,24 +486,24 @@ class OrbitCapability(MatchingCapability):
                 "ISS day shift runs from roughly 6 AM to 9:30 PM Greenwich Mean Time. "
                 "They do experiments, maintenance, and two hours of mandatory exercise."
             )
-        
+
         LAST_RESPONSE = response
         await self.capability_worker.speak(response)
-    
+
     async def _handle_age(self) -> None:
         global LAST_RESPONSE
         await self._speak_filler()
-        
+
         first_module = datetime(1998, 11, 20, tzinfo=timezone.utc)
         occupied_since = datetime(2000, 11, 2, tzinfo=timezone.utc)
         now = datetime.now(timezone.utc)
-        
+
         delta = now - first_module
         years = delta.days // 365
         days = delta.days % 365
-        
+
         days_occupied = (now - occupied_since).days
-        
+
         response = (
             f"The International Space Station is {years} years and {days} days old. "
             f"The first module, Zarya, launched on November 20, 1998. "
@@ -511,31 +511,31 @@ class OrbitCapability(MatchingCapability):
             f"that's over {days_occupied:,} days with humans on board. "
             f"The station is older than most smartphones, TikTok, and even some of the astronauts who visit it."
         )
-        
+
         LAST_RESPONSE = response
         await self.capability_worker.speak(response)
-        
+
     async def _handle_food(self) -> None:
         global LAST_RESPONSE
         await self._speak_filler()
-        
+
         meals = [
             "Today the crew probably had rehydrated scrambled eggs and irradiated sausage for breakfast. "
             "No fresh bread — crumbs float everywhere in zero gravity, so they use tortillas instead.",
-            
+
             "For lunch, maybe freeze-dried chicken fajitas or salmon from a pouch. "
             "Salt and pepper are suspended in liquid so the grains don't float into equipment.",
-            
+
             "Dinner could be beef stew from a can, reconstituted mashed potatoes, and thermostabilized vegetables. "
             "They get fresh fruit and vegetables on cargo resupply missions — an orange is a luxury in space.",
-            
+
             "The crew drinks coffee from sealed pouches with straws. "
             "No open cups — the liquid would form floating spheres and short out electronics.",
-            
+
             "Dessert is often pudding cups, freeze-dried ice cream, or candy. "
             "No soda — carbonation doesn't separate from the liquid in microgravity, so astronauts get bloated.",
         ]
-        
+
         fact = random.choice(meals)
         LAST_RESPONSE = fact
         await self.capability_worker.speak(fact)
@@ -560,7 +560,7 @@ class OrbitCapability(MatchingCapability):
             await self.capability_worker.speak(
                 "I haven't said anything yet. Ask me where the ISS is, who is on board, or anything else."
             )
-            
+
     async def _handle_time(self) -> None:
         await self._speak_filler()
         utc_now = datetime.now(timezone.utc)
