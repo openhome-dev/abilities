@@ -165,7 +165,7 @@ class GeneratePassportTokenCapability(MatchingCapability):
     capability_worker: CapabilityWorker = None
 
     # Do not change following tag of register capability
-    #{{register_capability}}
+    # {{register_capability}}
 
     def call(self, worker: AgentWorker):
         self.worker = worker
@@ -370,8 +370,8 @@ class GeneratePassportTokenCapability(MatchingCapability):
 
     async def confirm_email(self, email):
         await self.capability_worker.speak(
-    f"میں نے آپ کا ای میل یہ نوٹ کیا ہے: {email}۔ اگر یہ درست ہے تو 'OK' کہیں۔"
-)
+            f"میں نے آپ کا ای میل یہ نوٹ کیا ہے: {email}۔ اگر یہ درست ہے تو 'OK' کہیں۔"
+        )
         confirm = await self.capability_worker.user_response() or ""
         return self.is_affirmative(confirm)
 
