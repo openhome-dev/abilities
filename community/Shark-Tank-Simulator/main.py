@@ -101,7 +101,7 @@ class SharkTankSimulatorCapability(MatchingCapability):
     _recent: list = None  # [(timestamp, normalized_text)] of recent utterances
 
     # Do not change following tag of register capability
-    #{{register capability}}
+    # {{register capability}}
 
     def call(self, worker: AgentWorker):
         if self._active:
@@ -722,4 +722,3 @@ class SharkTankSimulatorCapability(MatchingCapability):
 
 class ExitRequested(Exception):
     """Control-flow exception: user asked to leave the Tank."""
-    pass
