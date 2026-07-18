@@ -36,9 +36,9 @@ SKIP_WORDS = {"skip", "no", "nothing", "nope", "that's it", "thats it", "all goo
 DEMO_JOB = {
     "id": "demo-1",
     "category": "plumbing",
-    "description": "leaking pipe under the kitchen sink",
+    "description": "leaking pipe under the kitchen sink in the flat",
     "status": "booked",
-    "booked_provider": "Rapid Plumbing Co",
+    "booked_provider": "Karachi Pipe Masters",
 }
 
 RATING_PROMPT = (
