@@ -17,7 +17,9 @@ It is a thin CLI over a reusable Python library (`openhome`).
 Run these from the **abilities repo root**:
 
 ```bash
-python3 -m venv cli/.venv && source cli/.venv/bin/activate
+python3 -m venv cli/.venv
+source cli/.venv/bin/activate        # macOS / Linux
+cli\.venv\Scripts\activate           # Windows
 pip install -e cli
 cp .env.example .env          # at the repo ROOT — then fill in OPENHOME_API_KEY
 ```

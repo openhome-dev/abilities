@@ -36,9 +36,9 @@ SKIP_WORDS = {"skip", "no", "nothing", "nope", "that's it", "thats it", "all goo
 DEMO_JOB = {
     "id": "demo-1",
     "category": "plumbing",
-    "description": "leaking pipe under the kitchen sink in the flat",
+    "description": "leaking pipe under the kitchen sink",
     "status": "booked",
-    "booked_provider": "Karachi Pipe Masters",
+    "booked_provider": "Rapid Plumbing Co",
 }
 
 RATING_PROMPT = (
@@ -73,12 +73,14 @@ LINE_ERROR = "Sorry, something went wrong saving your feedback. Please try again
 class ImmersiveFeedbackCapability(MatchingCapability):
     worker: AgentWorker = None
     capability_worker: CapabilityWorker = None
+    api_base: str = None
 
     # {{register capability}}
 
     def call(self, worker: AgentWorker):
         self.worker = worker
         self.capability_worker = CapabilityWorker(self.worker)
+        self.api_base = None
         self.worker.session_tasks.create(self.run())
 
     # ------------------------------------------------------------------ log
@@ -97,38 +99,56 @@ class ImmersiveFeedbackCapability(MatchingCapability):
             configured = None
         return ((configured or BACKEND_URL) or "").strip().rstrip("/")
 
-    def api_get(self, path: str, api_key: str | None):
-        """Blocking GET, run via asyncio.to_thread. Returns parsed JSON or None."""
+    def base_candidates(self) -> list[str]:
+        """The configured base plus base + /api (some deploys serve the
+        contract under an /api prefix). A detected winner is cached."""
+        if self.api_base:
+            return [self.api_base]
         base = self.backend_url()
         if not base:
-            return None
-        try:
-            headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
-            response = requests.get(
-                f"{base}{path}", headers=headers, timeout=REQUEST_TIMEOUT
-            )
-            if response.status_code != 200:
-                self.log_error(f"GET {path} -> {response.status_code}")
-                return None
-            return response.json()
-        except Exception as error:
-            self.log_error(f"GET {path} failed: {error!r}")
-            return None
+            return []
+        return [base] if base.endswith("/api") else [base, base + "/api"]
+
+    def api_get(self, path: str, api_key: str | None):
+        """Blocking GET, run via asyncio.to_thread. Returns parsed JSON or None.
+        A non-JSON reply (e.g. an SPA catch-all page) moves to the next base."""
+        headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
+        for base in self.base_candidates():
+            try:
+                response = requests.get(
+                    f"{base}{path}", headers=headers, timeout=REQUEST_TIMEOUT
+                )
+                if response.status_code != 200:
+                    continue
+                data = response.json()
+            except ValueError:
+                continue
+            except Exception as error:
+                self.log_error(f"GET {base}{path} failed: {error!r}")
+                continue
+            self.api_base = base
+            return data
+        return None
 
     def api_post(self, path: str, payload: dict, api_key: str | None) -> bool:
-        base = self.backend_url()
-        if not base:
-            return False
-        try:
-            headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
-            response = requests.post(
-                f"{base}{path}", json=payload, headers=headers,
-                timeout=REQUEST_TIMEOUT,
-            )
-            return response.status_code in (200, 201)
-        except Exception as error:
-            self.log_error(f"POST {path} failed: {error!r}")
-            return False
+        headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
+        for base in self.base_candidates():
+            try:
+                response = requests.post(
+                    f"{base}{path}", json=payload, headers=headers,
+                    timeout=REQUEST_TIMEOUT,
+                )
+                if response.status_code not in (200, 201):
+                    continue
+                response.json()
+            except ValueError:
+                continue
+            except Exception as error:
+                self.log_error(f"POST {base}{path} failed: {error!r}")
+                continue
+            self.api_base = base
+            return True
+        return False
 
     # ---------------------------------------------------------- job loading
     async def load_rateable_jobs(self, api_key: str | None) -> list[dict]:

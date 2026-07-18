@@ -1,14 +1,17 @@
+import asyncio
 import json
 import re
 from datetime import datetime, timezone
 from time import time
 
+import requests
+
 from src.agent.capability import MatchingCapability
 from src.agent.capability_worker import CapabilityWorker
 from src.main import AgentWorker
 
-from playbooks import classify_issue_type, get_playbook
-from playbooks.base import (
+from .playbook_registry import classify_issue_type, get_playbook
+from .playbook_base import (
     OUTCOME_ESCALATE,
     OUTCOME_RESOLVED,
     OUTCOME_UNSAFE,
@@ -26,9 +29,23 @@ from playbooks.base import (
 
 REQUESTS_FILE = "immersive_requests.json"
 LEGACY_REQUESTS_FILE = "immersive_open_requests.json"
+BACKEND_URL_KEY = "immersive_backend_url"          # Settings -> API Keys
+API_KEY_NAME = "immersive_api_key"                 # optional
+REQUEST_TIMEOUT = 10
 HANDOFF_TRIGGER_LINE = (
     "Say find me a technician to see who's available now."
 )
+
+# Trigger phrases carry no diagnostic content — never treat them as the
+# complaint, or the playbook skips its questions.
+CONTENTLESS_TRIGGERS = {
+    "home help",
+    "diagnose my home",
+    "diagnose this",
+    "i have a problem",
+    "something's broken",
+    "somethings broken",
+}
 
 EXIT_WORDS = (
     "done",
@@ -99,6 +116,8 @@ No markdown.
 class ImmersiveDiagnosisCapability(MatchingCapability):
     worker: AgentWorker = None
     capability_worker: CapabilityWorker = None
+    session: dict = None
+    playbook: object = None
 
     # {{register capability}}
 
@@ -106,7 +125,7 @@ class ImmersiveDiagnosisCapability(MatchingCapability):
         self.worker = worker
         self.capability_worker = CapabilityWorker(self.worker)
         self.session = empty_session()
-        self._playbook = None
+        self.playbook = None  # active playbook module
         self.worker.session_tasks.create(self.run())
 
     # ── logging ─────────────────────────────────────────────────────────
@@ -303,18 +322,18 @@ class ImmersiveDiagnosisCapability(MatchingCapability):
         self._log("info", f"Detected category: {self.session['category']}")
         self._log("info", f"Detected issue type: {self.session['issue_type']}")
 
-        self._playbook = get_playbook(self.session["issue_type"])
+        self.playbook = get_playbook(self.session["issue_type"])
         try:
-            playbook_name = self._playbook.ISSUE_TYPE
+            playbook_name = self.playbook.ISSUE_TYPE
         except Exception:
             playbook_name = self.session["issue_type"]
         self.session["active_playbook"] = playbook_name
-        self.session["playbook_state"] = self._playbook.initial_state()
+        self.session["playbook_state"] = self.playbook.initial_state()
         self._log("info", f"Selected diagnostic playbook: {self.session['active_playbook']}")
 
         # Seed AC playbook fields from extract
         if extract and playbook_name == "ac_not_cooling":
-            self._playbook.seed_from_extract(self.session["playbook_state"], extract)
+            self.playbook.seed_from_extract(self.session["playbook_state"], extract)
 
         # Seed generic description/location/duration
         state = self.session["playbook_state"]
@@ -346,7 +365,7 @@ class ImmersiveDiagnosisCapability(MatchingCapability):
         state = self.session["playbook_state"]
         awaiting = state.get("awaiting") or state.get("phase") or ""
 
-        kw = self._playbook.interpret_reply_keywords(text, awaiting)
+        kw = self.playbook.interpret_reply_keywords(text, awaiting)
         if kw.get("is_clarification"):
             self._log("info", "User observation extracted: clarification (re-ask)")
             return kw
@@ -474,16 +493,57 @@ class ImmersiveDiagnosisCapability(MatchingCapability):
             request["already_tried"] = pb_state["already_tried"]
         return request
 
+    def _post_request_to_backend(self, request: dict) -> dict | None:
+        """Blocking POST to the marketplace backend (run via asyncio.to_thread).
+        Tries the configured base and base + /api. Returns the created request
+        (with the backend's id) or None."""
+        try:
+            base = (self.capability_worker.get_api_keys(BACKEND_URL_KEY) or "").strip().rstrip("/")
+        except Exception:
+            base = ""
+        if not base:
+            return None
+        candidates = [base] if base.endswith("/api") else [base, base + "/api"]
+        try:
+            api_key = self.capability_worker.get_api_keys(API_KEY_NAME)
+        except Exception:
+            api_key = None
+        headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
+        for candidate in candidates:
+            try:
+                response = requests.post(
+                    f"{candidate}/requests", json=request, headers=headers,
+                    timeout=REQUEST_TIMEOUT,
+                )
+                if response.status_code not in (200, 201):
+                    continue
+                data = response.json()
+            except ValueError:
+                continue
+            except Exception as exc:
+                self._log("error", f"Backend POST via {candidate} failed: {exc!r}")
+                continue
+            return data.get("request") or request
+        return None
+
     async def _persist_request(self, request: dict) -> bool:
-        requests = await self._load_requests()
-        requests.append(request)
-        ok = await self._save_requests(requests)
+        # Backend first: the live marketplace generates quotes, the daemon
+        # announces them, and the provider skill reads from there.
+        created = await asyncio.to_thread(self._post_request_to_backend, request)
+        if created:
+            request.update({k: v for k, v in created.items() if v is not None})
+            self._log("info", f"Service request created on backend: {request['id']}")
+            self._log("info", f"Escalation reason: {request.get('diagnostic_summary')}")
+            return True
+
+        # Fallback: shared local file (provider/feedback skills read it when
+        # the backend is unreachable).
+        stored = await self._load_requests()
+        stored.append(request)
+        ok = await self._save_requests(stored)
         if ok:
-            self._log("info", f"Service request created: {request['id']}")
-            self._log(
-                "info",
-                f"Escalation reason: {request.get('diagnostic_summary')}",
-            )
+            self._log("info", f"Service request saved locally: {request['id']}")
+            self._log("info", f"Escalation reason: {request.get('diagnostic_summary')}")
         return ok
 
     async def _create_request(self, *, skip_confirm: bool = False) -> bool:
@@ -554,7 +614,7 @@ class ImmersiveDiagnosisCapability(MatchingCapability):
 
     async def _run_playbook(self) -> str:
         """Run active playbook. Returns resolved|escalated|unsafe|exit."""
-        result = self._playbook.prompt_for_state(self.session["playbook_state"])
+        result = self.playbook.prompt_for_state(self.session["playbook_state"])
         self._apply_step_result(result)
 
         if result.outcome == OUTCOME_UNSAFE:
@@ -584,7 +644,7 @@ class ImmersiveDiagnosisCapability(MatchingCapability):
 
             obs = self._interpret(text)
             if obs.get("is_clarification"):
-                again = self._playbook.prompt_for_state(self.session["playbook_state"])
+                again = self.playbook.prompt_for_state(self.session["playbook_state"])
                 await self.capability_worker.speak(again.speak[:280])
                 continue
 
@@ -595,7 +655,7 @@ class ImmersiveDiagnosisCapability(MatchingCapability):
                 )
                 self._log("info", "Safety state: red flag during playbook")
 
-            result = self._playbook.apply_reply(self.session["playbook_state"], obs)
+            result = self.playbook.apply_reply(self.session["playbook_state"], obs)
             self._apply_step_result(result)
 
             if result.outcome == OUTCOME_UNSAFE:
@@ -620,23 +680,32 @@ class ImmersiveDiagnosisCapability(MatchingCapability):
         try:
             self._log("info", "ABILITY STARTED")
 
+            # Message history persists across sessions, so only trust the last
+            # user line when it reads like a fresh, substantive complaint —
+            # otherwise a stale reply ("yes", "stop") from an earlier session
+            # would seed the playbook and skip every question.
             history = self._history_text()
             complaint = ""
             if history:
-                # Prefer last user line
                 for line in reversed(history.splitlines()):
                     if line.lower().startswith("user:"):
                         complaint = line.split(":", 1)[-1].strip()
                         break
+            lowered = complaint.lower().strip(" .!?")
+            if (
+                not lowered
+                or lowered in CONTENTLESS_TRIGGERS
+                or len(lowered) < 15
+                or self._is_exit(lowered)
+            ):
+                complaint = ""
             extract = None
-            if history or complaint:
+            if complaint:
+                # Extract from the complaint only — never from old history.
                 extract = self._llm_json(
-                    f"Conversation:\n{history}\n\nFocus on the user's maintenance complaint.",
+                    f"User said: {complaint}",
                     EXTRACT_PROMPT,
                 )
-
-            if not complaint and extract and extract.get("description"):
-                complaint = extract["description"]
             if not complaint:
                 await self.capability_worker.speak(
                     "I'm here to help diagnose the home issue. What's going wrong?"

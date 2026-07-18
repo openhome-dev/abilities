@@ -37,52 +37,23 @@ WEIGHTS = {"rating": 0.45, "reliability": 0.25, "price": 0.15, "availability": 0
 DEMO_REQUEST = {
     "id": "demo-1",
     "category": "plumbing",
-    "description": "leaking pipe under the kitchen sink in the flat",
+    "description": "leaking pipe under the kitchen sink",
     "status": "open",
 }
 
-DEMO_EMERGENCY_REQUEST = {
-    "id": "demo-emergency-1",
-    "category": "electrical",
-    "description": "AC or home electrical hazard — burning smell or sparking",
-    "status": "open",
-    "urgency": "emergency",
-}
-
-# Demo quotes in PKR for Pakistani localities (spoken as "rupees").
 DEMO_QUOTES = [
-    {"id": "q1", "provider": "Karachi Pipe Masters", "price": 4500, "rating": 4.8,
-     "reliability": 0.96, "availability": "today at 5 PM in DHA"},
-    {"id": "q2", "provider": "GharFix Plumbing Gulberg", "price": 3500, "rating": 4.4,
-     "reliability": 0.90, "availability": "tomorrow morning in Gulberg"},
-    {"id": "q3", "provider": "Sadiq Sons Sanitary Works", "price": 2800, "rating": 3.9,
-     "reliability": 0.78, "availability": "in two days in Nazimabad"},
+    {"id": "q1", "provider": "Rapid Plumbing Co", "price": 140, "rating": 4.8,
+     "reliability": 0.96, "availability": "today at 5 PM"},
+    {"id": "q2", "provider": "HomeFix Solutions", "price": 110, "rating": 4.4,
+     "reliability": 0.90, "availability": "tomorrow morning"},
+    {"id": "q3", "provider": "BlueWrench Services", "price": 95, "rating": 3.9,
+     "reliability": 0.78, "availability": "in two days"},
 ]
-
-DEMO_EMERGENCY_QUOTES = [
-    {"id": "eq1", "provider": "Lahore Spark Electricians", "price": 6500, "rating": 4.9,
-     "reliability": 0.98, "availability": "available now in Johar Town",
-     "trade": "electrician"},
-    {"id": "eq2", "provider": "CoolBreeze AC Services", "price": 5500, "rating": 4.7,
-     "reliability": 0.94, "availability": "within 1 hour in Model Town",
-     "trade": "hvac"},
-    {"id": "eq3", "provider": "Islamabad Night Electric Care", "price": 7500, "rating": 4.6,
-     "reliability": 0.92, "availability": "within 1 hour in F-10",
-     "trade": "electrician"},
-]
-
-EMERGENCY_TRIGGER_PHRASES = (
-    "find me a technician",
-    "who should i call",
-    "find an electrician",
-    "emergency help",
-    "call a technician",
-)
 
 INTENT_PROMPT = (
     "You classify one voice reply from a user comparing provider quotes. "
     "The quotes are numbered 1 to {count}. Reply with EXACTLY one token:\n"
-    "SELECT:<n> if they choose quote n to book (e.g. 'book the first one', 'go with Karachi Pipe Masters').\n"
+    "SELECT:<n> if they choose quote n to book (e.g. 'book the first one', 'go with Rapid Plumbing').\n"
     "DETAILS:<n> if they ask about quote n (e.g. 'tell me more about the second').\n"
     "REPEAT if they want the comparison again.\n"
     "EXIT if they want to stop or decide later.\n"
@@ -104,21 +75,19 @@ LINE_NOT_BOOKED = "Okay, not booked. Want details on another quote, or should we
 LINE_HELP = "You can say book the first one, ask for details, or say stop."
 LINE_ERROR = "Sorry, something went wrong checking your quotes. Please try again."
 LINE_WHICH_REQUEST = "Sorry, which request was that?"
-LINE_EMERGENCY_INTRO = (
-    "This looks urgent. Keep the power off if anything was sparking or smelling burnt. "
-    "Here are emergency providers nearby."
-)
 
 
 class ImmersiveProviderCapability(MatchingCapability):
     worker: AgentWorker = None
     capability_worker: CapabilityWorker = None
+    api_base: str = None
 
     # {{register capability}}
 
     def call(self, worker: AgentWorker):
         self.worker = worker
         self.capability_worker = CapabilityWorker(self.worker)
+        self.api_base = None
         self.worker.session_tasks.create(self.run())
 
     # ------------------------------------------------------------------ log
@@ -137,38 +106,56 @@ class ImmersiveProviderCapability(MatchingCapability):
             configured = None
         return ((configured or BACKEND_URL) or "").strip().rstrip("/")
 
-    def api_get(self, path: str, api_key: str | None):
-        """Blocking GET, run via asyncio.to_thread. Returns parsed JSON or None."""
+    def base_candidates(self) -> list[str]:
+        """The configured base plus base + /api (some deploys serve the
+        contract under an /api prefix). A detected winner is cached."""
+        if self.api_base:
+            return [self.api_base]
         base = self.backend_url()
         if not base:
-            return None
-        try:
-            headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
-            response = requests.get(
-                f"{base}{path}", headers=headers, timeout=REQUEST_TIMEOUT
-            )
-            if response.status_code != 200:
-                self.log_error(f"GET {path} -> {response.status_code}")
-                return None
-            return response.json()
-        except Exception as error:
-            self.log_error(f"GET {path} failed: {error!r}")
-            return None
+            return []
+        return [base] if base.endswith("/api") else [base, base + "/api"]
+
+    def api_get(self, path: str, api_key: str | None):
+        """Blocking GET, run via asyncio.to_thread. Returns parsed JSON or None.
+        A non-JSON reply (e.g. an SPA catch-all page) moves to the next base."""
+        headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
+        for base in self.base_candidates():
+            try:
+                response = requests.get(
+                    f"{base}{path}", headers=headers, timeout=REQUEST_TIMEOUT
+                )
+                if response.status_code != 200:
+                    continue
+                data = response.json()
+            except ValueError:
+                continue
+            except Exception as error:
+                self.log_error(f"GET {base}{path} failed: {error!r}")
+                continue
+            self.api_base = base
+            return data
+        return None
 
     def api_post(self, path: str, payload: dict, api_key: str | None) -> bool:
-        base = self.backend_url()
-        if not base:
-            return False
-        try:
-            headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
-            response = requests.post(
-                f"{base}{path}", json=payload, headers=headers,
-                timeout=REQUEST_TIMEOUT,
-            )
-            return response.status_code in (200, 201)
-        except Exception as error:
-            self.log_error(f"POST {path} failed: {error!r}")
-            return False
+        headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
+        for base in self.base_candidates():
+            try:
+                response = requests.post(
+                    f"{base}{path}", json=payload, headers=headers,
+                    timeout=REQUEST_TIMEOUT,
+                )
+                if response.status_code not in (200, 201):
+                    continue
+                response.json()
+            except ValueError:
+                continue
+            except Exception as error:
+                self.log_error(f"POST {base}{path} failed: {error!r}")
+                continue
+            self.api_base = base
+            return True
+        return False
 
     # ------------------------------------------------------- request loading
     async def load_open_requests(self, api_key: str | None) -> list[dict]:
@@ -221,44 +208,14 @@ class ImmersiveProviderCapability(MatchingCapability):
         )
 
     # ------------------------------------------------------------- quotes
-    def is_emergency_request(self, request: dict | None) -> bool:
-        if not request:
-            return False
-        urgency = (request.get("urgency") or "").lower()
-        if urgency == "emergency":
-            return True
-        flags = " ".join(request.get("safety_flags") or []).lower()
-        return any(p in flags for p in ("burn", "spark", "smoke", "shock"))
-
-    def detect_emergency_intent(self) -> bool:
-        """True if recent user speech matches an emergency provider trigger."""
-        try:
-            history = self.capability_worker.get_full_message_history() or []
-        except Exception:
-            history = []
-        for msg in reversed(history[-8:]):
-            if not isinstance(msg, dict):
-                continue
-            if (msg.get("role") or "").lower() not in ("user", "human"):
-                continue
-            text = (msg.get("content") or "").lower()
-            if any(phrase in text for phrase in EMERGENCY_TRIGGER_PHRASES):
-                return True
-        return False
-
-    async def fetch_quotes(
-        self, request: dict, api_key: str | None, *, emergency: bool = False
-    ) -> list[dict]:
+    async def fetch_quotes(self, request: dict, api_key: str | None) -> list[dict]:
         data = await asyncio.to_thread(
             self.api_get, f"/requests/{request['id']}/quotes", api_key
         )
         if data and data.get("quotes"):
             return data["quotes"]
-        if emergency:
-            self.log("Using emergency demo quotes")
-            return list(DEMO_EMERGENCY_QUOTES)
         self.log("Using demo quotes")
-        return list(DEMO_QUOTES)
+        return DEMO_QUOTES
 
     def rank_quotes(self, quotes: list[dict]) -> list[dict]:
         prices = [q["price"] for q in quotes]
@@ -269,13 +226,9 @@ class ImmersiveProviderCapability(MatchingCapability):
             price_score = 0.5 + 0.5 * price_norm
             rating_score = quote.get("rating", 3.0) / 5.0
             reliability = quote.get("reliability", 0.5)
-            availability = (quote.get("availability") or "").lower()
-            if "available now" in availability or "now" in availability:
+            availability = quote.get("availability", "")
+            if "today" in availability:
                 availability_score = 1.0
-            elif "within 1 hour" in availability or "1 hour" in availability:
-                availability_score = 0.95
-            elif "today" in availability:
-                availability_score = 0.9
             elif "tomorrow" in availability:
                 availability_score = 0.75
             else:
@@ -290,21 +243,16 @@ class ImmersiveProviderCapability(MatchingCapability):
         return sorted(quotes, key=score, reverse=True)
 
     # ------------------------------------------------------------- speech
-    def speak_price(self, amount) -> str:
-        """Voice-friendly PKR amount (e.g. 4500 -> '4500 rupees')."""
-        return f"{amount} rupees"
-
     def recap(self, ranked: list[dict]) -> str:
         top = ranked[0]
         recap = (
-            f"Top pick: {top['provider']} at {self.speak_price(top['price'])}, "
+            f"Top pick: {top['provider']} at {top['price']} dollars, "
             f"rated {top['rating']}, available {top['availability']}."
         )
         if len(ranked) > 1:
             runner = ranked[1]
             recap += (
-                f" Second is {runner['provider']} at "
-                f"{self.speak_price(runner['price'])};"
+                f" Second is {runner['provider']} at {runner['price']} dollars;"
                 " say book the first, hear details, or stop."
             )
         return recap
@@ -312,7 +260,7 @@ class ImmersiveProviderCapability(MatchingCapability):
     def details(self, quote: dict) -> str:
         percent = int(quote.get("reliability", 0) * 100)
         return (
-            f"{quote['provider']} charges {self.speak_price(quote['price'])} and is rated "
+            f"{quote['provider']} charges {quote['price']} dollars and is rated "
             f"{quote['rating']} out of 5. They complete {percent} percent of jobs "
             f"on time and can come {quote['availability']}."
         )
@@ -363,52 +311,23 @@ class ImmersiveProviderCapability(MatchingCapability):
     async def run(self):
         try:
             api_key = self.capability_worker.get_api_keys(API_KEY_NAME)
-            emergency_intent = self.detect_emergency_intent()
 
             # Filler before a potentially slow lookup — never leave dead air.
             await self.capability_worker.speak(LINE_CHECKING)
             open_requests = await self.load_open_requests(api_key)
-
-            # Prefer emergency open requests when user asked for a technician urgently.
-            emergency_requests = [
-                r for r in open_requests if self.is_emergency_request(r)
-            ]
-            emergency_mode = emergency_intent or bool(emergency_requests)
-
             if not open_requests:
                 await self.capability_worker.speak(LINE_NO_REQUESTS)
                 return
 
-            if emergency_mode:
-                self.log("EMERGENCY MODE")
-                if emergency_requests:
-                    request = emergency_requests[-1]
-                elif (
-                    len(open_requests) == 1
-                    and open_requests[0].get("id") == DEMO_REQUEST["id"]
-                ):
-                    # Casual demo fallback is wrong for emergency intent
-                    request = dict(DEMO_EMERGENCY_REQUEST)
-                else:
-                    request = await self.choose_request(open_requests)
-            else:
-                request = await self.choose_request(open_requests)
-
+            request = await self.choose_request(open_requests)
             if request is None:
                 await self.capability_worker.speak(LINE_LATER)
                 return
 
-            emergency_mode = emergency_mode or self.is_emergency_request(request)
-
-            if emergency_mode:
-                await self.capability_worker.speak(LINE_EMERGENCY_INTRO)
-            else:
-                await self.capability_worker.speak(
-                    f"Checking quotes for your {request['category']} request."
-                )
-            quotes = await self.fetch_quotes(
-                request, api_key, emergency=emergency_mode
+            await self.capability_worker.speak(
+                f"Checking quotes for your {request['category']} request."
             )
+            quotes = await self.fetch_quotes(request, api_key)
             if not quotes:
                 await self.capability_worker.speak(LINE_NO_QUOTES)
                 return
@@ -442,7 +361,7 @@ class ImmersiveProviderCapability(MatchingCapability):
                     chosen = ranked[select_index]
                     # run_confirmation_loop appends its own yes/no instruction.
                     confirmed = await self.capability_worker.run_confirmation_loop(
-                        f"Book {chosen['provider']} for {self.speak_price(chosen['price'])}, "
+                        f"Book {chosen['provider']} for {chosen['price']} dollars, "
                         f"available {chosen['availability']}?"
                     )
                     if confirmed:
