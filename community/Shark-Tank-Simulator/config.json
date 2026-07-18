@@ -1,0 +1,7 @@
+{
+  "name": "shark-tank-simulator",
+  "display_name": "Shark Tank Simulator",
+  "description": "A Shark Tank style pitch simulation with three sharks and timed Q&A.",
+  "entrypoint": "main.py",
+  "capability_class": "SharkTankSimulatorCapability"
+}
