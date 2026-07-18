@@ -99,7 +99,7 @@ Rules:
 - sos: emergency / help me / SOS / call security for help (urgent alert emails)
 - brief: morning brief / daily brief / brief me
 - weather: weather / temperature / mausam
-- prayer: prayer times / namaz / salah
+- prayer: prayer times / namaz / salah / zahur / zuhr / dhuhr / asr / maghrib / isha / fajr
 - contacts: change contact email / update dad email
 - email: send / draft email
 - reminder: reminder / timer / alarm
@@ -125,7 +125,7 @@ class HomeHelperCapability(MatchingCapability):
     _session_start: float = 0.0
     _dash_cycle: int = 0
 
-    # {{register capability}}
+    #{{register capability}}
 
     # -------------------- storage helpers --------------------
     async def _reset_json(self, filename: str, reason: str = "") -> None:
@@ -388,7 +388,18 @@ class HomeHelperCapability(MatchingCapability):
                 "salah",
                 "fajr",
                 "maghrib",
+                "isha",
+                "asr",
+                "asar",
+                "dhuhr",
+                "zuhr",
+                "zuhar",
+                "zahur",
+                "zohar",
+                "zohur",
                 "نماز",
+                "ظہر",
+                "ظهر",
             )
         ):
             return "prayer"
@@ -756,8 +767,27 @@ User: {user_input}"""
         )
         self._dash_post("update", {"weather": w, "last_action": "weather"})
 
+    def _which_prayer(self, user_input: str) -> str:
+        """Return Aladhan key for a specific prayer, or empty for all."""
+        lower = (user_input or "").lower()
+        mapping = [
+            (("fajr", "fajar", "فجر"), "Fajr"),
+            (("dhuhr", "zuhr", "zuhar", "zahur", "zohar", "zohur", "zahar", "ظہر", "ظهر"), "Dhuhr"),
+            (("asr", "asar", "asar", "عصر"), "Asr"),
+            (("maghrib", "magrib", "maghreb", "مغرب"), "Maghrib"),
+            (("isha", "esha", "ishaa", "عشاء"), "Isha"),
+        ]
+        for keys, name in mapping:
+            if any(k in lower for k in keys):
+                return name
+        return ""
+
     async def _handle_prayer(self, user_input: str) -> None:
-        await self._speak_plain("Fetching Islamabad prayer times.")
+        which = self._which_prayer(user_input)
+        if which:
+            await self._speak_plain(f"Checking {which} time in Islamabad.")
+        else:
+            await self._speak_plain("Fetching Islamabad prayer times.")
         try:
             import asyncio
 
@@ -768,11 +798,19 @@ User: {user_input}"""
         if not p:
             await self._speak_plain("I couldn't get prayer times right now.")
             return
-        await self._speak_plain(
-            f"Islamabad namaz today: Fajr {p.get('Fajr')}, Dhuhr {p.get('Dhuhr')}, "
-            f"Asr {p.get('Asr')}, Maghrib {p.get('Maghrib')}, Isha {p.get('Isha')}."
+        if which and p.get(which):
+            await self._speak_plain(
+                f"{which} namaz in Islamabad is at {p.get(which)} today."
+            )
+        else:
+            await self._speak_plain(
+                f"Islamabad namaz today: Fajr {p.get('Fajr')}, Dhuhr {p.get('Dhuhr')}, "
+                f"Asr {p.get('Asr')}, Maghrib {p.get('Maghrib')}, Isha {p.get('Isha')}."
+            )
+        self._dash_post(
+            "update",
+            {"prayer": p, "last_action": "prayer", "asked_prayer": which or "all"},
         )
-        self._dash_post("update", {"prayer": p, "last_action": "prayer"})
 
     async def _handle_sos(self, user_input: str) -> None:
         await self._ensure_contacts()
@@ -1327,18 +1365,31 @@ User: {user_input}"""
     # -------------------- main loop --------------------
     async def run(self):
         try:
-            await self._ensure_contacts()
+            # Seize the mic turn so the main Agent does not answer over HouseMate
+            try:
+                await self.capability_worker.send_interrupt_signal()
+            except Exception:
+                pass
+
+            try:
+                await self._ensure_contacts()
+            except Exception as e:
+                self.worker.editor_logging_handler.error(f"contacts init: {e}")
+                self._contacts = dict(DEFAULT_CONTACTS)
+
             self._session_id = f"housemate-{int(time())}"
             self._session_start = time()
             self._dash_cycle = 0
-            self._dash_post(
-                "session_start",
-                {"ability": "housemate", "contacts": self._contacts or {}},
-            )
+            try:
+                self._dash_post(
+                    "session_start",
+                    {"ability": "housemate", "contacts": self._contacts or {}},
+                )
+            except Exception:
+                pass
 
             await self._speak_plain(
-                "HouseMate ready. Email, SOS, weather, prayer times, daily brief, "
-                "reminders, schedule memory, and Islamabad time. What do you need?"
+                "HouseMate ready. Ask weather, zahur namaz, brief, email, or SOS."
             )
 
             idle_empty = 0

@@ -16,7 +16,7 @@ class HomeHelperBackground(MatchingCapability):
     capability_worker: CapabilityWorker = None
     background_daemon_mode: bool = False
 
-    # {{register capability}}
+    #{{register capability}}
 
     async def _read_json_safe(self, filename: str, default):
         try:
