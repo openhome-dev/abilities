@@ -28,7 +28,7 @@ class JarvisBackground(MatchingCapability):
     capability_worker: CapabilityWorker = None
     background_daemon_mode: bool = False
 
-    #{{register capability}}
+    # {{register capability}}
 
     def call(self, worker: AgentWorker, background_daemon_mode: bool):
         self.worker = worker

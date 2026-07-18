@@ -222,12 +222,13 @@ def test_task_worker_uses_search():
     run(j.task_worker("meaning of life", "life"))
     check("llm_search used", calls["n"] == 1)
     check("interrupt before speak", j.capability_worker.interrupts == 1)
-    check("spoke one line about label", j.capability_worker.spoken and
-          j.capability_worker.spoken[0].startswith("About life"))
+    check("spoke one line about label", j.capability_worker.spoken
+          and j.capability_worker.spoken[0].startswith("About life"))
 
 
 def test_task_worker_fallback():
     print("task_worker (llm_search fails -> fallback):")
+
     def bad_search(q):
         raise RuntimeError("not wired")
     seen = {"fb": False}
@@ -245,6 +246,7 @@ def test_task_worker_fallback():
 
 def test_task_worker_never_raises():
     print("task_worker (all fails -> must not raise):")
+
     def bad(*a, **k):
         raise RuntimeError("boom")
     j = make_jarvis(search=bad, t2t=bad)

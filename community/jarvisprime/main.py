@@ -40,7 +40,7 @@ class JarvisCapability(MatchingCapability):
     worker: AgentWorker = None
     capability_worker: CapabilityWorker = None
 
-    #{{register capability}}
+    # {{register capability}}
 
     def call(self, worker: AgentWorker):
         self.worker = worker
@@ -347,8 +347,8 @@ class JarvisCapability(MatchingCapability):
             threshold, direction = job.get("threshold"), job.get("direction")
             if threshold is None or direction is None or last is None or value is None:
                 return False, ""  # value None = failed poll → skip, don't crash
-            crossed = ((direction == "above" and last < threshold <= value) or
-                       (direction == "below" and last > threshold >= value))
+            crossed = ((direction == "above" and last < threshold <= value)
+                       or (direction == "below" and last > threshold >= value))
             if crossed:
                 return True, (f"{job['what']} just crossed {threshold} "
                               f"{direction} — now at {value}.")
