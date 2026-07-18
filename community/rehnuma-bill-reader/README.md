@@ -13,16 +13,36 @@ the neighbourhood scribe that used to sit in every mohalla, rebuilt as a voice a
 
 ## What It Does
 
-- Explains a bill out loud: the amount, the due date, one warning worth knowing
-  (arrears, late payment penalty), and where to pay
-- Answers follow-up questions about saved bills — "mera bijli ka bill kab due hai"
-  works in a brand new conversation, days later
-- Warns once at the start of a conversation if a saved bill is due within 3 days
-- Guides government processes: CNIC renewal, passport, bay form / birth
-  registration, plus bank and school forms — documents to bring, fee, which office,
-  what to say to the clerk
-- Speaks only Roman Urdu in short sentences, and never tells the user to read
-  anything
+**Summarises any bill or document out loud.** Instead of reading a page of small
+print, the user hears what it actually means in three or four sentences: what the
+document is, the amount owed, and the one thing on it worth worrying about —
+arrears carried over, a late payment penalty, a slab change. Long official
+documents get the same treatment: the point first, the detail only if asked.
+
+**Tracks due dates and warns before they pass.** Every document is saved, so
+"mera bijli ka bill kab due hai" is answered days later in a brand new
+conversation. Rehnuma works out how many days remain from today's date rather
+than just repeating the date, and if any saved bill falls due within three days
+it opens the conversation with a single reminder line. Late payment surcharges
+fall hardest on people who could not read the deadline in the first place.
+
+**Guides the user through filling and completing forms.** For CNIC renewal,
+passport applications, bay form / birth registration, and bank and school forms,
+Rehnuma explains what each field is asking for and what belongs in it, which
+documents to carry, what the fee is, which office to go to, and what to say to
+the clerk once there. It walks the user through the process step by step and
+answers follow-up questions at any point.
+
+> Rehnuma explains and guides — it does not fill in or submit forms on the
+> user's behalf, and it does not make payments. The user, or whoever is helping
+> them, stays in control of anything written down or handed over.
+
+**Answers follow-up questions in context.** "Uska kitna hai", "aur woh gas wala
+bill", "agar late ho jaun to kya hoga" all resolve correctly against the saved
+documents and the last few turns of conversation.
+
+**Speaks only Roman Urdu** in short sentences, in a male voice, and never tells
+the user to read anything.
 
 ## Suggested Trigger Words
 
