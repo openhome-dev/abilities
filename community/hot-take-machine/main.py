@@ -61,7 +61,7 @@ class HotTakeMachineCapability(MatchingCapability):
             "Make it something people could realistically argue about. "
             "Funny, confident and conversational. "
             "Maximum 2 short punchy sentences. "
-            "No AI disclaimers. No emojis."
+            "No AI disclaimers. No emojis whatsoever. Plain text only."
         )
         hot_take = self.capability_worker.text_to_text_response(hot_take_prompt)
 
@@ -69,6 +69,19 @@ class HotTakeMachineCapability(MatchingCapability):
         await self.capability_worker.speak("Agree or disagree?")
 
         first_response = await self.capability_worker.user_response()
+
+        if any(phrase in first_response.lower() for phrase in EXIT_PHRASES):
+            htm_wins += 1
+            try:
+                self.capability_worker.update_key("htmscoreboard", {"htm": htm_wins, "user": user_wins})
+            except Exception:
+                self.capability_worker.create_key("htmscoreboard", {"htm": htm_wins, "user": user_wins})
+            await self.capability_worker.speak(
+                "You ran before we even started. Classic. Hot Take Machine out."
+            )
+            self.capability_worker.resume_normal_flow()
+            return
+
         agreed = any(word in first_response.lower() for word in AGREE_WORDS)
         if any(word in first_response.lower() for word in DISAGREE_WORDS):
             agreed = False
@@ -90,7 +103,10 @@ class HotTakeMachineCapability(MatchingCapability):
 
             if any(phrase in response.lower() for phrase in EXIT_PHRASES):
                 htm_wins += 1
-                self.capability_worker.create_key("htmscoreboard", {"htm": htm_wins, "user": user_wins})
+                try:
+                    self.capability_worker.update_key("htmscoreboard", {"htm": htm_wins, "user": user_wins})
+                except Exception:
+                    self.capability_worker.create_key("htmscoreboard", {"htm": htm_wins, "user": user_wins})
                 await self.capability_worker.speak(
                     "You ran. Classic. Scoreboard: Hot Take Machine " + str(htm_wins) + ", You " + str(user_wins) + ". Hot Take Machine out."
                 )
@@ -112,12 +128,15 @@ class HotTakeMachineCapability(MatchingCapability):
                     roast_prompt = (
                         "You are the Hot Take Machine and this person has failed to make a single good argument. "
                         "Roast them specifically using what they just said: " + response + ". "
-                        "2 sentences max. No mercy. Casual language."
+                        "2 sentences max. No mercy. Casual language. No emojis."
                     )
                     roast = self.capability_worker.text_to_text_response(roast_prompt)
                     await self.capability_worker.speak(roast)
                     htm_wins += 1
-                    self.capability_worker.create_key("htmscoreboard", {"htm": htm_wins, "user": user_wins})
+                    try:
+                        self.capability_worker.update_key("htmscoreboard", {"htm": htm_wins, "user": user_wins})
+                    except Exception:
+                        self.capability_worker.create_key("htmscoreboard", {"htm": htm_wins, "user": user_wins})
                     await self.capability_worker.speak(
                         "Scoreboard: Hot Take Machine " + str(htm_wins) + ", You " + str(user_wins) + ". Hot Take Machine out."
                     )
@@ -125,14 +144,20 @@ class HotTakeMachineCapability(MatchingCapability):
 
             if round_count >= 4:
                 if agreed:
-                    closing = "We clearly cooked together. No winner today, we're both geniuses. Hot Take Machine out."
+                    closing = "We clearly cooked together. No winner today, we are both geniuses. Hot Take Machine out."
                 elif user_good_points >= 2:
                     user_wins += 1
-                    self.capability_worker.create_key("htmscoreboard", {"htm": htm_wins, "user": user_wins})
+                    try:
+                        self.capability_worker.update_key("htmscoreboard", {"htm": htm_wins, "user": user_wins})
+                    except Exception:
+                        self.capability_worker.create_key("htmscoreboard", {"htm": htm_wins, "user": user_wins})
                     closing = "Okay fine, you actually had some points. I respect it. Scoreboard: Hot Take Machine " + str(htm_wins) + ", You " + str(user_wins) + ". Hot Take Machine out."
                 else:
                     htm_wins += 1
-                    self.capability_worker.create_key("htmscoreboard", {"htm": htm_wins, "user": user_wins})
+                    try:
+                        self.capability_worker.update_key("htmscoreboard", {"htm": htm_wins, "user": user_wins})
+                    except Exception:
+                        self.capability_worker.create_key("htmscoreboard", {"htm": htm_wins, "user": user_wins})
                     closing = random.choice(WIN_LINES) + " Scoreboard: Hot Take Machine " + str(htm_wins) + ", You " + str(user_wins) + ". Hot Take Machine out."
                 await self.capability_worker.speak(closing)
                 break
@@ -143,7 +168,7 @@ class HotTakeMachineCapability(MatchingCapability):
                     "Your hot take was: " + hot_take +
                     ". You both agree. They just said: " + response +
                     ". Add more fuel, share another angle, keep it fun and flowing. "
-                    "Casual, human, funny. Max 2 short sentences."
+                    "Casual, human, funny. Max 2 short sentences. No emojis."
                 )
             else:
                 continue_prompt = (
@@ -151,7 +176,7 @@ class HotTakeMachineCapability(MatchingCapability):
                     "Your hot take was: " + hot_take +
                     ". They disagreed and just said: " + response +
                     ". Clap back hard, defend your take. "
-                    "Casual, savage, funny. Max 2 short sentences."
+                    "Casual, savage, funny. Max 2 short sentences. No emojis."
                 )
 
             counter = self.capability_worker.text_to_text_response(continue_prompt)
