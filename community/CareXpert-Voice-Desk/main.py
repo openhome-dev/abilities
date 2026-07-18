@@ -166,6 +166,7 @@ class CarexpertVoiceDeskCapability(MatchingCapability):
     # ==========================================
     # ROLE 1: TOKEN COUNTER (One-Shot AI Parsing)
     # ==========================================
+
     async def run_token_counter(self):
         try:
             await self.capability_worker.speak(
@@ -326,6 +327,8 @@ class CarexpertVoiceDeskCapability(MatchingCapability):
             tokens = resp.json() if resp.status_code == 200 else []
             if not isinstance(tokens, list):
                 tokens = []
+            if not isinstance(tokens, list):
+                tokens = []
 
             record = next(
                 (r for r in tokens if isinstance(r, dict)
@@ -466,6 +469,7 @@ class CarexpertVoiceDeskCapability(MatchingCapability):
     # ==========================================
     # ROLE 3: QUEUE STATUS CHECKER
     # ==========================================
+
     async def run_queue_status(self):
         try:
             today = datetime.now(PKT).strftime("%Y-%m-%d")
@@ -477,6 +481,8 @@ class CarexpertVoiceDeskCapability(MatchingCapability):
                 timeout=10,
             )
             rows = resp.json() if resp.status_code == 200 else []
+            if not isinstance(rows, list):
+                rows = []
             if not isinstance(rows, list):
                 rows = []
 
@@ -522,6 +528,8 @@ class CarexpertVoiceDeskCapability(MatchingCapability):
                 timeout=10,
             )
             rows = resp.json() if resp.status_code == 200 else []
+            if not isinstance(rows, list):
+                rows = []
             if not isinstance(rows, list):
                 rows = []
 
@@ -591,6 +599,8 @@ class CarexpertVoiceDeskCapability(MatchingCapability):
             rows = resp.json() if resp.status_code == 200 else []
             if not isinstance(rows, list):
                 rows = []
+            if not isinstance(rows, list):
+                rows = []
 
             if not rows:
                 await self.capability_worker.speak("No patients have been completed today yet.")
@@ -639,6 +649,8 @@ class CarexpertVoiceDeskCapability(MatchingCapability):
                 timeout=10,
             )
             rows = resp.json() if resp.status_code == 200 else []
+            if not isinstance(rows, list):
+                rows = []
             if not isinstance(rows, list):
                 rows = []
 
@@ -692,6 +704,8 @@ class CarexpertVoiceDeskCapability(MatchingCapability):
             rows = resp.json() if resp.status_code == 200 else []
             if not isinstance(rows, list):
                 rows = []
+            if not isinstance(rows, list):
+                rows = []
 
             record = next(
                 (r for r in rows if isinstance(r, dict)
@@ -741,6 +755,8 @@ class CarexpertVoiceDeskCapability(MatchingCapability):
                 timeout=10,
             )
             rows = resp.json() if resp.status_code == 200 else []
+            if not isinstance(rows, list):
+                rows = []
             if not isinstance(rows, list):
                 rows = []
 
@@ -793,6 +809,8 @@ class CarexpertVoiceDeskCapability(MatchingCapability):
             rows = resp.json() if resp.status_code == 200 else []
             if not isinstance(rows, list):
                 rows = []
+            if not isinstance(rows, list):
+                rows = []
 
             if not rows:
                 await self.capability_worker.speak("No follow ups are scheduled for today.")
@@ -825,10 +843,16 @@ class CarexpertVoiceDeskCapability(MatchingCapability):
         for word, val in words_map.items():
             if word in text.lower():
                 return val
+            if word in text.lower():
+                return val
         return 25
 
     def _clean_gender(self, text: str) -> str:
         low = text.lower()
+        if any(w in low for w in ["femal", "woman", "girl", "she", "feme"]):
+            return "Female"
+        if any(w in low for w in ["mal", "man", "boy", "he", "main", "mle", "may"]):
+            return "Male"
         if any(w in low for w in ["femal", "woman", "girl", "she", "feme"]):
             return "Female"
         if any(w in low for w in ["mal", "man", "boy", "he", "main", "mle", "may"]):
@@ -871,6 +895,8 @@ class CarexpertVoiceDeskCapability(MatchingCapability):
         for word, val in words_map.items():
             if word in low:
                 return val
+            if word in low:
+                return val
         return None
 
     def _generate_token(self, v_type: str) -> str:
@@ -885,6 +911,8 @@ class CarexpertVoiceDeskCapability(MatchingCapability):
             )
             if resp.status_code == 200:
                 data = resp.json()
+                if isinstance(data, list):
+                    all_tokens = [t for t in data if isinstance(t, dict)]
                 if isinstance(data, list):
                     all_tokens = [t for t in data if isinstance(t, dict)]
         except Exception:
