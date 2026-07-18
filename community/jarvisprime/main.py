@@ -72,7 +72,20 @@ class JarvisCapability(MatchingCapability):
         if time.time() - state.get("beat", 0) < HEARTBEAT_STALE_S:
             return False
         self.worker.session_tasks.create(self.brain_stem())
+        self.resume_watches()
         return True
+
+    def resume_watches(self):
+        """Re-arm persisted watches on a fresh session. mj_watches survives
+        across sessions but the polling tasks are session-scoped and die at
+        session end — so every active watch needs its worker re-spawned here.
+        Runs only on a fresh brain spawn (stale heartbeat = genuinely new
+        session), which is once per session, so it can't double-spawn a watch
+        that's already polling within a live session."""
+        for job in self.get("mj_watches").get("jobs", []):
+            if job.get("active"):
+                self.log(f"resuming watch {job['id']}: {job.get('what')}")
+                self.worker.session_tasks.create(self.watch_worker(job["id"]))
 
     async def dispatch(self, intent: str, text: str):
         await {"TASK": self.handle_task, "WATCH": self.handle_watch,
@@ -236,10 +249,15 @@ class JarvisCapability(MatchingCapability):
             except Exception:
                 return 0
         if job["type"] == "price":
-            resp = requests.get(
-                "https://api.coingecko.com/api/v3/simple/price",
-                params={"ids": job["target"], "vs_currencies": "usd"}, timeout=8)
-            return float(resp.json()[job["target"]]["usd"])
+            try:
+                resp = requests.get(
+                    "https://api.coingecko.com/api/v3/simple/price",
+                    params={"ids": job["target"], "vs_currencies": "usd"}, timeout=8)
+                if resp.status_code != 200:
+                    return None
+                return float(resp.json()[job["target"]]["usd"])
+            except Exception:
+                return None  # bad coin id / rate-limit / shape → skip this tick
         return None
 
     @staticmethod
@@ -255,8 +273,8 @@ class JarvisCapability(MatchingCapability):
             return False, ""
         if job["type"] == "price":
             threshold, direction = job.get("threshold"), job.get("direction")
-            if threshold is None or direction is None or last is None:
-                return False, ""
+            if threshold is None or direction is None or last is None or value is None:
+                return False, ""  # value None = failed poll → skip, don't crash
             crossed = ((direction == "above" and last < threshold <= value) or
                        (direction == "below" and last > threshold >= value))
             if crossed:
