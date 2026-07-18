@@ -53,3 +53,7 @@ temp_interactive_push.bat
 
 # Fonts (generated/local)
 public/fonts/
+
+# Immersive backend local runtime artifacts
+immersive-backend/immersive_db.json
+immersive-backend/server.log
