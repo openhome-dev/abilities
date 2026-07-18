@@ -98,7 +98,7 @@ class RehnumaBillReaderCapability(MatchingCapability):
     capability_worker: CapabilityWorker = None
     server_url: str = ""
 
-    #{{register capability}}
+    # {{register capability}}
 
     # --- logging helpers -----------------------------------------------
 
