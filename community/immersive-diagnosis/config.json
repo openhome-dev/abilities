@@ -1,22 +1,8 @@
 {
     "unique_name": "immersive_diagnosis",
     "matching_hotwords": [
-        "home help",
-        "I have a problem",
-        "something's broken",
-        "this isn't working",
-        "diagnose this",
-        "Help me diagnose my AC",
         "My AC isn't cooling",
-        "AC isn't cooling",
-        "my AC",
-        "I have a home maintenance problem",
-        "Something in my house is broken",
-        "air conditioner",
-        "AC isn't working",
-        "not cooling",
-        "isn't cooling",
-        "AC not cooling",
-        "my air conditioner"
+        "home help",
+        "I have a problem"
     ]
 }
