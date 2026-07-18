@@ -56,6 +56,9 @@ class JarvisCapability(MatchingCapability):
                 if text.strip().lower().rstrip(".!?,") in EXIT_WORDS:
                     await self.capability_worker.speak("I'll be here.")
                     break
+                if "diagnostic" in text.lower():   # TEMP dev hook — remove before submission
+                    await self.speak_diagnostics()
+                    continue
                 verdict = self.llm_json(text, CLASSIFY_SYSTEM, {"intent": "CHAT"})
                 self.log(f"intent={verdict.get('intent')}: {text[:60]}")
                 await self.dispatch(verdict.get("intent", "CHAT"), text)
@@ -153,6 +156,10 @@ class JarvisCapability(MatchingCapability):
 
     async def task_worker(self, question: str, label: str):
         try:
+            # Let the router's "On it." finish before the sync LLM calls below
+            # block the event loop; llm_search returning in ~2s would otherwise
+            # interrupt our own acknowledgement mid-sentence.
+            await self.worker.session_tasks.sleep(6)
             try:
                 answer = self.capability_worker.llm_search(question)
                 if not answer or not str(answer).strip():
@@ -282,6 +289,29 @@ class JarvisCapability(MatchingCapability):
                               f"{direction} — now at {value}.")
             return False, ""
         return False, ""
+
+    async def speak_diagnostics(self):   # TEMP dev hook — remove before submission
+        try:
+            try:
+                self.upsert_key("mj_diag", {"t": int(time.time())})
+                kv = "ok" if self.get("mj_diag").get("t") else "readback-empty"
+            except Exception as e:
+                kv = f"fail {type(e).__name__} {str(e)[:80]}"
+            try:
+                await self.brain_cycle()
+                cyc = "ok"
+            except Exception as e:
+                cyc = f"fail {type(e).__name__} {str(e)[:120]}"
+            state = self.get("mj_state")
+            mem = self.get("mj_memory", {"commitments": [], "facts": []})
+            beat_age = int(time.time() - state.get("beat", 0))
+            await self.capability_worker.speak(
+                f"Diagnostics. KV {kv}. Inline cycle {cyc}. "
+                f"Cursor {state.get('cursor')}, beat {beat_age} seconds ago. "
+                f"Memory {len(mem.get('commitments', []))} commitments, "
+                f"{len(mem.get('facts', []))} facts.")
+        except Exception as e:
+            await self.capability_worker.speak(f"Diagnostics failed: {e}")
 
     # ---------- brain stem: heartbeat, inbox, memory extraction ----------
 
@@ -427,13 +457,22 @@ Never invent. Assistant statements are never commitments."""
             return fallback
 
     def get(self, key: str, default: dict | None = None) -> dict:
-        return self.capability_worker.get_single_key(key) or (default or {})
+        """get_single_key returns a wrapper dict; the stored value is under
+        ["value"] (see community/portfolio-monitor et al. — the SDK doc is
+        vague on this and the naive `or default` reads the wrapper)."""
+        try:
+            result = self.capability_worker.get_single_key(key)
+        except Exception:
+            return default or {}
+        if isinstance(result, dict) and isinstance(result.get("value"), dict):
+            return result["value"]
+        return default or {}
 
     def upsert_key(self, key: str, value: dict):
-        if self.capability_worker.get_single_key(key) is None:
-            self.capability_worker.create_key(key, value)
-        else:
+        try:
             self.capability_worker.update_key(key, value)
+        except Exception:
+            self.capability_worker.create_key(key, value)
 
     def log(self, msg: str, error: bool = False):
         h = self.worker.editor_logging_handler

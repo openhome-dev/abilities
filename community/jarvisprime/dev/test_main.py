@@ -88,14 +88,23 @@ class MockCapabilityWorker:
     def text_to_text_response(self, prompt_text, history=None, system_prompt=""):
         return self._t2t(prompt_text, history=history, system_prompt=system_prompt)
 
-    # key-value store (sync, dict values) — mirrors the SDK contract
+    # key-value store (sync) — mirrors the REAL platform contract discovered
+    # in e2e testing: get_single_key returns a wrapper {"key":…, "value":…}
+    # (None when missing), create errors if the key exists, update errors if
+    # it doesn't. See community/portfolio-monitor for the same pattern.
     def get_single_key(self, key):
-        return self._kv.get(key)
+        if key not in self._kv:
+            return None
+        return {"key": key, "value": self._kv[key]}
 
     def create_key(self, key, value):
+        if key in self._kv:
+            raise RuntimeError(f"key exists: {key}")
         self._kv[key] = json.loads(json.dumps(value))
 
     def update_key(self, key, value):
+        if key not in self._kv:
+            raise RuntimeError(f"key missing: {key}")
         self._kv[key] = json.loads(json.dumps(value))
 
 
@@ -265,7 +274,7 @@ def test_handle_watch_persists():
     payload = '{"what": "demo site", "type": "website", "target": "http://localhost:8080", "threshold": null, "direction": null}'
     j = make_jarvis(confirm=True, t2t=lambda p, **k: payload)
     run(j.handle_watch("watch my demo site"))
-    store = j.capability_worker.get_single_key("mj_watches")
+    store = j.capability_worker.get_single_key("mj_watches")["value"]
     check("one job persisted", store and len(store.get("jobs", [])) == 1)
     job = store["jobs"][0]
     check("frozen schema keys present", all(k in job for k in (
@@ -295,7 +304,7 @@ def test_watch_worker_one_shot(set_get):
     seq = iter([200, 500])
     set_get(lambda *a, **k: R(next(seq)))
     run(j.watch_worker(1))
-    job = j.capability_worker.get_single_key("mj_watches")["jobs"][0]
+    job = j.capability_worker.get_single_key("mj_watches")["value"]["jobs"][0]
     check("deactivated after fire (one-shot)", job["active"] is False)
     check("interrupt fired once", j.capability_worker.interrupts == 1)
     check("spoke down alert", any("went down" in s for s in j.capability_worker.spoken))

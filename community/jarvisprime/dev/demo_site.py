@@ -30,8 +30,13 @@ class Handler(http.server.BaseHTTPRequestHandler):
         pass
 
 
+class ThreadingServer(socketserver.ThreadingTCPServer):
+    allow_reuse_address = True
+    daemon_threads = True
+
+
 if __name__ == "__main__":
-    with socketserver.TCPServer(("", PORT), Handler) as httpd:
+    with ThreadingServer(("", PORT), Handler) as httpd:
         print(f"Demo site UP on http://localhost:{PORT}  (Ctrl+C to take it down)")
         try:
             httpd.serve_forever()

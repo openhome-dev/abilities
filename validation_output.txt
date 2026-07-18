@@ -1,3 +1,3 @@
 
-📋 Validating: community/flowtest
+📋 Validating: community/jarvisprime
   ✅ All checks passed!
