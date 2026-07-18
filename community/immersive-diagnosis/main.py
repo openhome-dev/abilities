@@ -119,7 +119,7 @@ class ImmersiveDiagnosisCapability(MatchingCapability):
     session: dict = None
     playbook: object = None
 
-    #{{register capability}}
+    # {{register capability}}
 
     def call(self, worker: AgentWorker):
         self.worker = worker
