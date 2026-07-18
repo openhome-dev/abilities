@@ -155,7 +155,7 @@ class SentinelVoiceCapability(MatchingCapability):
     last_agents: Optional[List[Dict[str, Any]]] = None
     focus_agent_name: Optional[str] = None
 
-    #{{register capability}}
+    # {{register capability}}
 
     def call(self, worker: AgentWorker):
         self.worker = worker
