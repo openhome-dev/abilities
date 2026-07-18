@@ -5,6 +5,7 @@ from src.agent.capability import MatchingCapability
 from src.agent.capability_worker import CapabilityWorker
 from src.main import AgentWorker
 
+
 class PanicProtocolCapability(MatchingCapability):
     worker: AgentWorker = None
     capability_worker: CapabilityWorker = None
@@ -20,7 +21,7 @@ class PanicProtocolCapability(MatchingCapability):
         """Runs the HTTP POST request to Twilio API to initiate a phone call using requests."""
         url = f"https://api.twilio.com/2010-04-01/Accounts/{account_sid}/Calls.json"
         twiml = f"<Response><Say>{emergency_message}</Say></Response>"
-        
+
         try:
             response = requests.post(
                 url,
@@ -69,11 +70,15 @@ class PanicProtocolCapability(MatchingCapability):
 
             if not all([twilio_sid, twilio_token, from_number, to_number]):
                 missing_keys = []
-                if not twilio_sid: missing_keys.append("twilio_account_sid / TWILIO_ACCOUNT_SID")
-                if not twilio_token: missing_keys.append("twilio_auth_token / TWILIO_AUTH_TOKEN")
-                if not from_number: missing_keys.append("twilio_phone_number / TWILIO_PHONE_NUMBER")
-                if not to_number: missing_keys.append("emergency_contact_number / EMERGENCY_CONTACT_NUMBER")
-                
+                if not twilio_sid:
+                    missing_keys.append("twilio_account_sid / TWILIO_ACCOUNT_SID")
+                if not twilio_token:
+                    missing_keys.append("twilio_auth_token / TWILIO_AUTH_TOKEN")
+                if not from_number:
+                    missing_keys.append("twilio_phone_number / TWILIO_PHONE_NUMBER")
+                if not to_number:
+                    missing_keys.append("emergency_contact_number / EMERGENCY_CONTACT_NUMBER")
+
                 error_msg = f"Error. Missing Twilio API keys in settings: {', '.join(missing_keys)}"
                 self.worker.editor_logging_handler.error(f"[PanicProtocol] {error_msg}")
                 await self.capability_worker.speak("Error. Missing Twilio API keys in the dashboard settings.")
@@ -90,7 +95,7 @@ class PanicProtocolCapability(MatchingCapability):
                     "I repeat, a silent distress call was initiated from the residence. "
                     "Please dispatch emergency help immediately."
                 )
-                
+
                 # Trigger call asynchronously in the background
                 await asyncio.to_thread(self.trigger_twilio_call, twilio_sid, twilio_token, from_number, to_number, silent_message)
 
@@ -101,16 +106,16 @@ class PanicProtocolCapability(MatchingCapability):
                     "Emergency Protocol Active. Initiating panic sequence. "
                     "Please state the exact nature of your emergency, or say cancel to abort."
                 )
-                
+
                 # Step 2: Capture user emergency response
                 emergency_details = await self.capability_worker.user_response()
-                
+
                 # Step 3: Check for Abort/Exit keywords
                 abort_words = ["cancel", "stop", "exit", "never mind", "close", "abort"]
                 if not emergency_details or any(word in emergency_details.lower() for word in abort_words):
                     await self.capability_worker.speak("Emergency protocol aborted. Resuming normal operations.")
                     return
-                
+
                 # Step 4: Dispatch call with structured, repeating message
                 distress_message = (
                     f"Emergency Alert! A panic protocol has been activated at the residence. "
@@ -118,12 +123,12 @@ class PanicProtocolCapability(MatchingCapability):
                     f"I repeat, a panic protocol has been activated. The resident reports: {emergency_details}. "
                     f"Please dispatch emergency help immediately."
                 )
-                
+
                 await asyncio.to_thread(self.trigger_twilio_call, twilio_sid, twilio_token, from_number, to_number, distress_message)
-                
+
                 # Step 5: Acknowledge dispatch with a reassuring confirmation
                 await self.capability_worker.speak("Call request sent to emergency contacts.")
-                
+
                 # Step 6: Fetch situation-specific safety tips from LLM
                 tips_prompt = (
                     f"The user is experiencing an emergency: '{emergency_details}'. "
@@ -132,7 +137,7 @@ class PanicProtocolCapability(MatchingCapability):
                 )
                 safety_tips = self.capability_worker.text_to_text_response(tips_prompt)
                 await self.capability_worker.speak(f"While help is on the way, please follow these safety measures: {safety_tips}")
-                
+
                 # Step 7: Context-aware follow-up question
                 followup_prompt = (
                     f"The user is in a '{emergency_details}' emergency. "
@@ -143,21 +148,21 @@ class PanicProtocolCapability(MatchingCapability):
                 )
                 helper_question = self.capability_worker.text_to_text_response(followup_prompt)
                 await self.capability_worker.speak(helper_question)
-                
+
                 # Step 8: Interactive Assist Loop (Keep checking until exit is triggered)
                 while True:
                     followup_response = await self.capability_worker.user_response()
                     if not followup_response:
                         break
-                    
+
                     # Normalize input
                     response_lower = followup_response.lower()
-                    
+
                     # Check for exit/close commands or negative answers
                     if any(word in response_lower for word in abort_words) or any(word in response_lower for word in ["no", "nothing", "all good", "no thank you", "no thanks"]):
                         await self.capability_worker.speak("Understood. Stay safe. Resuming normal agent flow. Goodbye.")
                         break
-                    
+
                     # LLM dynamic response to handle follow-up actions and ask if they need anything else
                     assistant_prompt = (
                         f"The user is experiencing a '{emergency_details}' emergency. "
