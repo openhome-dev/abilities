@@ -697,7 +697,7 @@ class MnemoCapability(MatchingCapability):
             existing = ""
             if await self.capability_worker.check_if_file_exists(STUDY_LOG_FILE, False):
                 existing = await self.capability_worker.read_file(STUDY_LOG_FILE, False) or ""
-            lines = [l for ln in existing.strip().split("\n") if l.strip()]
+            lines = [ln for ln in existing.strip().split("\n") if ln.strip()]
             lines.append(entry)
             lines = lines[-MAX_HISTORY:]
             await self.capability_worker.write_file(
