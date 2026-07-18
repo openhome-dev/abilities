@@ -196,7 +196,7 @@ class AwkwardCapability(MatchingCapability):
     capability_worker: CapabilityWorker = None
 
     # Do not change following tag of register capability
-    #{{register capability}}
+    # {{register capability}}
 
     # ---------- utilities ----------
 
@@ -322,7 +322,7 @@ class AwkwardCapability(MatchingCapability):
             cleaned = raw.strip().replace("```json", "").replace("```", "")
             start = cleaned.find("{")
             end = cleaned.rfind("}")
-            return json.loads(cleaned[start : end + 1])
+            return json.loads(cleaned[start: end + 1])
         except Exception:
             self.log("Judge JSON parse failed. Raw: %s" % raw)
             return {
