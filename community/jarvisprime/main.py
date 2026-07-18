@@ -16,15 +16,20 @@ DEFAULT_WATCH_INTERVAL_S = 15
 EXIT_WORDS = {"stop", "exit", "quit", "done", "cancel", "bye", "goodbye",
               "that's all", "never mind", "nevermind", "i'm good", "im good"}
 
-CLASSIFY_SYSTEM = """You route commands for a voice assistant. Return ONLY
-JSON, no fences: {"intent": "TASK|WATCH|RECALL|STATUS|FORGET|CHAT"}
-TASK   = a research/background request ("find out...", "look into...",
+CLASSIFY_SYSTEM = """You route commands for a voice assistant. The text comes
+from speech-to-text and may be garbled; infer the most likely intent.
+Return ONLY JSON, no fences:
+{"intent": "TASK|ANSWER|REMIND|WATCH|RECALL|STATUS|FORGET|CHAT"}
+TASK   = research to do in the BACKGROUND ("find out...", "look into...",
          "...and get back to me")
+ANSWER = a direct question needing current/live information answered NOW
+         (weather, news, prices, sports scores, "what's happening in...")
+REMIND = set a reminder or timer ("remind me...", "in 20 minutes tell me...")
 WATCH  = monitor something over time ("keep an eye on...", "tell me if/when...",
          "watch my site/the price of...")
 RECALL = what am I forgetting / what do you remember / open items
 STATUS = what jarvis is doing (watches, tasks)
-FORGET = delete a memory or watch
+FORGET = delete a memory, reminder, or watch
 CHAT   = anything else. When unsure, CHAT."""
 
 CHAT_SYSTEM = ("You are Jarvis, a concise, proactive voice assistant. "
@@ -91,7 +96,8 @@ class JarvisCapability(MatchingCapability):
                 self.worker.session_tasks.create(self.watch_worker(job["id"]))
 
     async def dispatch(self, intent: str, text: str):
-        await {"TASK": self.handle_task, "WATCH": self.handle_watch,
+        await {"TASK": self.handle_task, "ANSWER": self.handle_answer,
+               "REMIND": self.handle_remind, "WATCH": self.handle_watch,
                "RECALL": self.handle_recall, "STATUS": self.handle_status,
                "FORGET": self.handle_forget,
                }.get(intent, self.handle_chat)(text)
@@ -134,6 +140,59 @@ class JarvisCapability(MatchingCapability):
         self.enqueue({"kind": "forget", "query": text})
         await self.capability_worker.speak(
             "Consider it forgotten — scrubbed from my ledgers momentarily.")
+
+    # ---------- ANSWER: live-info question, answered now ----------
+
+    async def handle_answer(self, text: str):
+        await self.capability_worker.speak("Let me check.")
+        try:
+            answer = self.capability_worker.llm_search(text)
+            if not answer or not str(answer).strip():
+                raise ValueError("empty search result")
+        except Exception as e:
+            self.log(f"llm_search failed in ANSWER, falling back: {e}", error=True)
+            answer = self.capability_worker.text_to_text_response(
+                text, system_prompt=(
+                    "Answer concisely from general knowledge; if this needs "
+                    "live data, say what you'd check."))
+        spoken = self.capability_worker.text_to_text_response(
+            str(answer), system_prompt=(
+                "Compress to at most two spoken sentences. Lead with the "
+                "answer. No markdown, no lists."))
+        await self.capability_worker.speak(spoken)
+
+    # ---------- REMIND: timer on the watch machinery ----------
+
+    async def handle_remind(self, text: str):
+        now_local = datetime.now().strftime("%A %H:%M")
+        parsed = self.llm_json(
+            f"Current local time: {now_local}. Request: {text}",
+            'Extract a reminder. Return ONLY JSON: {"what": "short reminder '
+            'text", "seconds_from_now": <integer seconds until it should '
+            'fire>}. If the request gives a clock time, compute seconds from '
+            'the current local time given.',
+            {"what": None, "seconds_from_now": None})
+        what, secs = parsed.get("what"), parsed.get("seconds_from_now")
+        if not what or not isinstance(secs, (int, float)) or secs <= 0:
+            await self.capability_worker.speak(
+                "I couldn't work out when to remind you — try giving me a "
+                "time or a delay.")
+            return
+        secs = int(secs)
+        store = self.get("mj_watches", {"jobs": [], "seq": 0})
+        store["seq"] = store.get("seq", 0) + 1
+        job = {"id": store["seq"], "what": what, "type": "timer",
+               "target": None, "threshold": None, "direction": None,
+               "fire_at": time.time() + secs,
+               "interval_s": max(5, min(15, secs // 4 or 5)), "active": True,
+               "last_value": None, "created": self.now_iso()}
+        store["jobs"] = (store.get("jobs", []) + [job])[-12:]
+        self.upsert_key("mj_watches", store)
+        self.worker.session_tasks.create(self.watch_worker(job["id"]))
+        mins = secs // 60
+        when = (f"in {mins} minute{'s' if mins != 1 else ''}" if mins
+                else f"in {secs} seconds")
+        await self.capability_worker.speak(f"Set — I'll remind you {when}.")
 
     # ---------- P1: background task ----------
 
@@ -250,6 +309,8 @@ class JarvisCapability(MatchingCapability):
 
     @staticmethod
     def poll_watch(job: dict):
+        if job["type"] == "timer":
+            return time.time()
         if job["type"] == "website":
             try:
                 return requests.get(job["target"], timeout=8).status_code
@@ -270,6 +331,10 @@ class JarvisCapability(MatchingCapability):
     @staticmethod
     def judge_watch(job: dict, value):
         last = job.get("last_value")
+        if job["type"] == "timer":
+            if value is not None and value >= job.get("fire_at", 0):
+                return True, f"Reminder — {job['what']}."
+            return False, ""
         if job["type"] == "website":
             if last is None:
                 return False, ""
@@ -294,7 +359,7 @@ class JarvisCapability(MatchingCapability):
         try:
             try:
                 self.upsert_key("mj_diag", {"t": int(time.time())})
-                kv = "ok" if self.get("mj_diag").get("t") else "readback-empty"
+                kv = "ok" if self.get("mj_diag").get("t") else "broken"
             except Exception as e:
                 kv = f"fail {type(e).__name__} {str(e)[:80]}"
             try:
@@ -457,22 +522,37 @@ Never invent. Assistant statements are never commitments."""
             return fallback
 
     def get(self, key: str, default: dict | None = None) -> dict:
-        """get_single_key returns a wrapper dict; the stored value is under
-        ["value"] (see community/portfolio-monitor et al. — the SDK doc is
-        vague on this and the naive `or default` reads the wrapper)."""
+        """get_single_key returns a wrapper; the stored dict may sit under
+        ["value"] directly, as a JSON string, or the result may be the dict
+        itself — normalize all three (the SDK doc is vague; discovered live)."""
         try:
             result = self.capability_worker.get_single_key(key)
         except Exception:
             return default or {}
-        if isinstance(result, dict) and isinstance(result.get("value"), dict):
-            return result["value"]
+        candidates = [result]
+        if isinstance(result, dict) and "value" in result:
+            candidates.insert(0, result["value"])
+        for v in candidates:
+            if isinstance(v, str):
+                try:
+                    v = json.loads(v)
+                except Exception:
+                    continue
+            if isinstance(v, dict) and "value" not in v:
+                return v
         return default or {}
 
     def upsert_key(self, key: str, value: dict):
+        """The KV API signals failure via {'success': False, ...} return
+        values, NOT exceptions (discovered live) — check the response."""
+        def failed(r):
+            return isinstance(r, dict) and r.get("success") is False
         try:
-            self.capability_worker.update_key(key, value)
+            if not failed(self.capability_worker.update_key(key, value)):
+                return
         except Exception:
-            self.capability_worker.create_key(key, value)
+            pass
+        self.capability_worker.create_key(key, value)
 
     def log(self, msg: str, error: bool = False):
         h = self.worker.editor_logging_handler

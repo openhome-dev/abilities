@@ -89,23 +89,25 @@ class MockCapabilityWorker:
         return self._t2t(prompt_text, history=history, system_prompt=system_prompt)
 
     # key-value store (sync) — mirrors the REAL platform contract discovered
-    # in e2e testing: get_single_key returns a wrapper {"key":…, "value":…}
-    # (None when missing), create errors if the key exists, update errors if
-    # it doesn't. See community/portfolio-monitor for the same pattern.
+    # in e2e testing: get_single_key returns {"id":…, "key":…, "value": dict}
+    # ({"key": "", "value": None} when missing); create/update signal failure
+    # by RETURNING {"success": False, "detail": …} — they do NOT raise.
     def get_single_key(self, key):
         if key not in self._kv:
-            return None
-        return {"key": key, "value": self._kv[key]}
+            return {"key": "", "value": None}
+        return {"id": 1, "key": key, "value": self._kv[key]}
 
     def create_key(self, key, value):
         if key in self._kv:
-            raise RuntimeError(f"key exists: {key}")
+            return {"success": False, "detail": "Key already exists."}
         self._kv[key] = json.loads(json.dumps(value))
+        return {"success": True, "id": 1, "key": key, "value": self._kv[key]}
 
     def update_key(self, key, value):
         if key not in self._kv:
-            raise RuntimeError(f"key missing: {key}")
+            return {"success": False, "detail": "Key does not exist."}
         self._kv[key] = json.loads(json.dumps(value))
+        return {"success": True, "id": 1, "key": key, "value": self._kv[key]}
 
 
 def make_jarvis(**kw):
