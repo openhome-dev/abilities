@@ -125,7 +125,7 @@ class HomeHelperCapability(MatchingCapability):
     _session_start: float = 0.0
     _dash_cycle: int = 0
 
-    #{{register capability}}
+    # {{register capability}}
 
     # -------------------- storage helpers --------------------
     async def _reset_json(self, filename: str, reason: str = "") -> None:
