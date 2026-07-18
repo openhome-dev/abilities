@@ -1,65 +1,43 @@
 # HouseMate
 
-Multilingual voice home assistant for OpenHome. Email contacts, Islamabad time, reminders, schedule memory (replaces calendar), doctor plans, and walk-home check-ins.
+Multilingual voice home assistant for OpenHome.
 
-## What it does
+## Features
 
-- Send email to named contacts (`dad`, `security`, `doctor`) via Gmail SMTP app password
-- Tell current time in Islamabad (`Asia/Karachi`)
-- Set / list / clear voice reminders (background daemon)
-- Remember schedule plans in Agent memory (`.md` + JSON) — no Google Calendar required
-- Book doctor visits into memory + reminder + optional email
-- Wikipedia / LLM lookups and general home Q&A
-- Walk-home safety check-in mode
-- Replies in the same language you speak (English, Urdu, Roman Urdu, mixed, …)
+- Email named contacts (`dad`, `security`, `doctor`) via Gmail SMTP
+- **SOS** one-shot alert emails to security + dad
+- Islamabad **time**, **weather** (Open-Meteo), **prayer times** (Aladhan)
+- **Daily brief** (time + weather + prayer + memory schedule + reminders)
+- Reminders (background daemon)
+- Schedule **memory** (`.md` injection — no Google Calendar)
+- Voice-updatable contacts (`housemate_contacts.json`)
+- Walk-home check-ins
+- Optional **companion dashboard** (`companion/`)
 
-## Trigger phrases
+## Triggers
 
-- `housemate`
-- `hey housemate`
-- `send email` / `email dad` / `email security` / `email doctor`
-- `remind me` / `set a reminder`
-- `what time is it` / `current time` / `time in islamabad`
-- `my schedule` / `what's planned` / `remember that`
-- `book a doctor`
-- `look up`
-- `I'm walking home`
+`housemate`, `send email`, `sos`, `emergency`, `weather`, `prayer times`, `daily brief`, `brief me`, `remind me`, `what time is it`, `my schedule`, `remember that`, `book a doctor`, `I'm walking home`
 
 ## Setup
 
-### 1. Contacts
+### Email SMTP
 
-Edit the `CONTACTS` dict at the top of `main.py` with your household emails.
+Dashboard → Settings → API Keys:
 
-### 2. Email (SMTP)
+- `housemate_smtp_email`
+- `housemate_smtp_password` (Gmail app password)
+- optional `housemate_smtp_host` = `smtp.gmail.com`
 
-Create a Gmail [App Password](https://myaccount.google.com/apppasswords), then in OpenHome:
+Edit default contacts in `main.py` (`DEFAULT_CONTACTS`) or say “change dad’s email…”.
 
-1. Dashboard → **Settings → API Keys**
-2. Add:
-   - `housemate_smtp_email` = your Gmail address
-   - `housemate_smtp_password` = the 16-character app password (no spaces)
-   - optional `housemate_smtp_host` = `smtp.gmail.com`
+### Companion dashboard (optional)
 
-Do **not** hardcode secrets in source.
+```bash
+pip install flask flask-cors
+python companion/app.py
+```
 
-### 3. Install
-
-Upload / install this Ability, assign it to an Agent, enable it, then say **housemate**.
-
-## Files
-
-| File | Role |
-|------|------|
-| `main.py` | Interactive skill |
-| `background.py` | Reminder + walk-home watcher |
-| `config.json` | Triggers / metadata |
-| `__init__.py` | Package marker |
-
-## Notes
-
-- After a successful send, HouseMate speaks a plain confirmation (no LLM rewrite) so the Agent cannot falsely say “I can’t send email.”
-- Schedule memory writes `housemate_schedule.md` for Agent context injection.
+Set `DASHBOARD_URL` in `main.py` to your server URL (no trailing slash).
 
 ## License
 

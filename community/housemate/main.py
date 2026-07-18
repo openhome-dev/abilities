@@ -34,11 +34,15 @@ WALK_FILE = "guardian_walk.json"
 PREFS_FILE = "guardian_prefs.json"
 SCHEDULE_FILE = "housemate_schedule.json"
 SCHEDULE_MD = "housemate_schedule.md"
+CONTACTS_FILE = "housemate_contacts.json"
+STATUS_MD = "housemate_status.md"
 
 ISLAMABAD_TZ = "Asia/Karachi"
+ISLAMABAD_LAT = 33.6844
+ISLAMABAD_LON = 73.0479
 
-# Edit these contacts for your household (or leave empty and speak full addresses).
-CONTACTS = {
+# Default contacts (also seeded into housemate_contacts.json memory)
+DEFAULT_CONTACTS = {
     "dad": "dad@example.com",
     "father": "dad@example.com",
     "papa": "dad@example.com",
@@ -47,14 +51,36 @@ CONTACTS = {
     "doctor": "doctor@example.com",
     "dr": "doctor@example.com",
 }
+CONTACTS = dict(DEFAULT_CONTACTS)
 
-# Prefer Dashboard API keys: housemate_smtp_email / housemate_smtp_password / housemate_smtp_host
+# SMTP sender (Gmail app password). Override via Dashboard API keys when set.
 SMTP_FALLBACK_EMAIL = ""
 SMTP_FALLBACK_PASSWORD = ""
 SMTP_FALLBACK_HOST = "smtp.gmail.com"
 
+# Optional companion dashboard base URL (no trailing slash). Empty = disabled.
+DASHBOARD_URL = ""
+
 WIKIPEDIA_API_URL = "https://en.wikipedia.org/api/rest_v1/page/summary/"
 GMAIL_SEND_URL = "https://gmail.googleapis.com/gmail/v1/users/me/messages/send"
+OPEN_METEO_URL = "https://api.open-meteo.com/v1/forecast"
+ALADHAN_URL = "https://api.aladhan.com/v1/timingsByCity"
+
+WMO_WEATHER = {
+    0: "clear",
+    1: "mainly clear",
+    2: "partly cloudy",
+    3: "overcast",
+    45: "foggy",
+    48: "foggy",
+    51: "light drizzle",
+    61: "light rain",
+    63: "rain",
+    65: "heavy rain",
+    71: "snow",
+    80: "rain showers",
+    95: "thunderstorms",
+}
 
 SYSTEM_HOME = (
     "You are HouseMate, a calm multilingual home assistant for voice. "
@@ -67,17 +93,22 @@ SYSTEM_HOME = (
 
 INTENT_PROMPT = """Classify the user's home-helper request. Language may be English, Urdu, Roman Urdu, or mixed.
 Return ONLY valid JSON, nothing else.
-{{"intent":"email|reminder|schedule|doctor|search|time|home_help|guardian_walk|help|exit","confidence":0.0}}
+{{"intent":"email|reminder|schedule|doctor|search|time|weather|prayer|brief|sos|contacts|home_help|guardian_walk|help|exit","confidence":0.0}}
 
 Rules:
-- email: send / draft email (also: email, mail, ای میل, send mail)
-- reminder: reminder / timer / alarm (یاد دہانی, remind)
-- schedule: remember / list / add appointments or plans in memory (schedule, calendar, my plans, what's on, remember that I have)
-- doctor: doctor / medical appointment (saved in memory + reminder + optional email)
-- search: look up facts / internet
-- time: current time / clock / Islamabad / Pakistan time / وقت
+- sos: emergency / help me / SOS / call security for help (urgent alert emails)
+- brief: morning brief / daily brief / brief me
+- weather: weather / temperature / mausam
+- prayer: prayer times / namaz / salah
+- contacts: change contact email / update dad email
+- email: send / draft email
+- reminder: reminder / timer / alarm
+- schedule: remember / list plans in memory
+- doctor: doctor appointment
+- search: look up facts
+- time: current clock time
 - home_help: general household help
-- guardian_walk: walking home / safety check-in
+- guardian_walk: walking home safety
 - help: what can you do
 - exit: finished
 
@@ -89,6 +120,10 @@ class HomeHelperCapability(MatchingCapability):
     worker: AgentWorker = None
     capability_worker: CapabilityWorker = None
     _last_user: str = ""
+    _contacts: dict = None
+    _session_id: str = ""
+    _session_start: float = 0.0
+    _dash_cycle: int = 0
 
     # {{register capability}}
 
@@ -96,7 +131,7 @@ class HomeHelperCapability(MatchingCapability):
     async def _reset_json(self, filename: str, reason: str = "") -> None:
         try:
             if reason:
-                self.worker.editor_logging_handler.warning(
+                self.worker.editor_logging_handler.info(
                     f"{time()}: reset {filename}. {reason}"
                 )
             if await self.capability_worker.check_if_file_exists(filename, False):
@@ -170,9 +205,62 @@ class HomeHelperCapability(MatchingCapability):
             else:
                 self.capability_worker.create_key("housemate_schedule", {"events": events})
         except Exception as e:
-            self.worker.editor_logging_handler.warning(
+            self.worker.editor_logging_handler.info(
                 f"{time()}: schedule key sync skipped: {e}"
             )
+
+    async def _ensure_contacts(self) -> dict:
+        if isinstance(self._contacts, dict) and self._contacts:
+            return self._contacts
+        data = await self._read_json(CONTACTS_FILE, None)
+        if not isinstance(data, dict) or not data:
+            data = dict(DEFAULT_CONTACTS)
+            await self._write_json(CONTACTS_FILE, data)
+        # Keep aliases in sync with dad/doctor/security
+        if data.get("dad"):
+            data["father"] = data["dad"]
+            data["papa"] = data["dad"]
+            data["abu"] = data["dad"]
+        if data.get("doctor"):
+            data["dr"] = data["doctor"]
+        self._contacts = data
+        return data
+
+    async def _save_contacts(self, data: dict) -> None:
+        if data.get("dad"):
+            data["father"] = data["dad"]
+            data["papa"] = data["dad"]
+            data["abu"] = data["dad"]
+        if data.get("doctor"):
+            data["dr"] = data["doctor"]
+        self._contacts = data
+        await self._write_json(CONTACTS_FILE, data)
+
+    def _dash_post(self, event: str, payload: dict) -> None:
+        if not DASHBOARD_URL:
+            return
+
+        async def _send():
+            try:
+                import asyncio
+
+                body = dict(payload)
+                body.setdefault("session_id", self._session_id)
+                body.setdefault("timestamp", time())
+                body.setdefault("cycle_id", self._dash_cycle)
+                await asyncio.to_thread(
+                    requests.post,
+                    f"{DASHBOARD_URL}/api/housemate/{event}",
+                    json=body,
+                    timeout=5,
+                )
+            except Exception as e:
+                self.worker.editor_logging_handler.info(f"[DASH] {event} skip: {e}")
+
+        try:
+            self.worker.session_tasks.create(_send())
+        except Exception:
+            pass
 
     def _now_tz(self):
         tz_name = self.capability_worker.get_timezone() or ISLAMABAD_TZ
@@ -246,10 +334,10 @@ class HomeHelperCapability(MatchingCapability):
 
     def _resolve_contact(self, text: str) -> str:
         lower = (text or "").lower()
-        for name, email in CONTACTS.items():
+        contacts = self._contacts if isinstance(self._contacts, dict) else DEFAULT_CONTACTS
+        for name, email in contacts.items():
             if name in lower:
                 return email
-        # spoken "at gmail"
         cleaned = (
             lower.replace(" at ", "@")
             .replace(" dot ", ".")
@@ -270,6 +358,62 @@ class HomeHelperCapability(MatchingCapability):
         if any(
             w in lower
             for w in (
+                "sos",
+                "emergency",
+                "help me now",
+                "i need help",
+                "call security",
+                "alert security",
+                "send sos",
+                "danger",
+            )
+        ):
+            return "sos"
+        if any(
+            w in lower
+            for w in (
+                "daily brief",
+                "morning brief",
+                "brief me",
+                "start my day",
+                "briefing",
+            )
+        ):
+            return "brief"
+        if any(
+            w in lower
+            for w in (
+                "prayer",
+                "namaz",
+                "salah",
+                "fajr",
+                "maghrib",
+                "نماز",
+            )
+        ):
+            return "prayer"
+        if any(
+            w in lower
+            for w in ("weather", "temperature", "mausam", "forecast", "موسم")
+        ):
+            return "weather"
+        if any(
+            w in lower
+            for w in (
+                "change contact",
+                "update contact",
+                "change dad",
+                "update dad",
+                "change security",
+                "update security",
+                "change doctor email",
+                "set contact",
+            )
+        ):
+            return "contacts"
+        if any(
+            w in lower
+            for w in (
                 "walking home",
                 "walk home",
                 "guardian mode",
@@ -285,12 +429,12 @@ class HomeHelperCapability(MatchingCapability):
                 "current time",
                 "time is it",
                 "clock",
-                "islamabad",
                 "pakistan time",
                 "وقت",
                 "time now",
                 "tell me the time",
                 "tell me current time",
+                "time in islamabad",
             )
         ):
             return "time"
@@ -375,6 +519,11 @@ class HomeHelperCapability(MatchingCapability):
             "doctor",
             "search",
             "time",
+            "weather",
+            "prayer",
+            "brief",
+            "sos",
+            "contacts",
             "home_help",
             "guardian_walk",
             "help",
@@ -412,7 +561,6 @@ class HomeHelperCapability(MatchingCapability):
         return True
 
     def _smtp_creds(self):
-        # Dashboard API keys (Settings -> API Keys), then optional empty fallbacks.
         try:
             sender = self.capability_worker.get_api_keys("housemate_smtp_email") or SMTP_FALLBACK_EMAIL
         except Exception:
@@ -449,6 +597,7 @@ class HomeHelperCapability(MatchingCapability):
         )
 
     async def _handle_email(self, user_input: str) -> None:
+        await self._ensure_contacts()
         sender, password, _host = self._smtp_creds()
         smtp_ready = bool(sender and password)
         if not smtp_ready:
@@ -458,10 +607,11 @@ class HomeHelperCapability(MatchingCapability):
             return
 
         contact = self._resolve_contact(user_input)
+        contacts = self._contacts or DEFAULT_CONTACTS
         draft = self.capability_worker.text_to_text_response(
             f"""Extract an email from this multilingual request. Return ONLY JSON:
 {{"to_contact":"dad|security|doctor|empty","to":"email or empty","subject":"real short subject not placeholder","body":"message body"}}
-Known contacts: dad={CONTACTS['dad']}, security={CONTACTS['security']}, doctor={CONTACTS['doctor']}.
+Known contacts: dad={contacts.get('dad')}, security={contacts.get('security')}, doctor={contacts.get('doctor')}.
 If the user only asks whether email is possible, leave to/body empty.
 User: {user_input}"""
         )
@@ -495,8 +645,8 @@ User: {user_input}"""
 
         who_label = to_addr
         contact_name = "them"
-        for name, email in CONTACTS.items():
-            if email == to_addr:
+        for name, email in (self._contacts or DEFAULT_CONTACTS).items():
+            if email == to_addr and name in ("dad", "security", "doctor"):
                 who_label = name
                 contact_name = name
                 break
@@ -528,10 +678,235 @@ User: {user_input}"""
             self.worker.editor_logging_handler.info(
                 f"HouseMate confirmed email success to={to_addr}"
             )
+            self._dash_cycle += 1
+            self._dash_post(
+                "update",
+                {
+                    "last_action": "email",
+                    "last_email_to": contact_name,
+                    "last_email_ok": True,
+                },
+            )
         else:
             await self._speak_plain(
                 "Send failed. Check the Gmail app password and try again."
             )
+
+    def _fetch_weather_islamabad(self) -> dict:
+        resp = requests.get(
+            OPEN_METEO_URL,
+            params={
+                "latitude": ISLAMABAD_LAT,
+                "longitude": ISLAMABAD_LON,
+                "current": "temperature_2m,weather_code,wind_speed_10m",
+                "daily": "temperature_2m_max,temperature_2m_min,precipitation_probability_max",
+                "timezone": ISLAMABAD_TZ,
+                "forecast_days": 1,
+            },
+            timeout=10,
+        )
+        if resp.status_code != 200:
+            return {}
+        data = resp.json() or {}
+        current = data.get("current") or {}
+        daily = data.get("daily") or {}
+        code = current.get("weather_code")
+        return {
+            "temp": current.get("temperature_2m"),
+            "wind": current.get("wind_speed_10m"),
+            "condition": WMO_WEATHER.get(code, "changing skies"),
+            "high": (daily.get("temperature_2m_max") or [None])[0],
+            "low": (daily.get("temperature_2m_min") or [None])[0],
+            "rain": (daily.get("precipitation_probability_max") or [None])[0],
+        }
+
+    def _fetch_prayer_islamabad(self) -> dict:
+        resp = requests.get(
+            ALADHAN_URL,
+            params={"city": "Islamabad", "country": "Pakistan", "method": 1},
+            timeout=10,
+        )
+        if resp.status_code != 200:
+            return {}
+        timings = ((resp.json() or {}).get("data") or {}).get("timings") or {}
+        keep = ("Fajr", "Dhuhr", "Asr", "Maghrib", "Isha")
+        out = {}
+        for k in keep:
+            val = timings.get(k, "")
+            out[k] = val.split(" ")[0] if val else ""
+        return out
+
+    async def _handle_weather(self, user_input: str) -> None:
+        await self._speak_plain("Checking Islamabad weather.")
+        try:
+            import asyncio
+
+            w = await asyncio.to_thread(self._fetch_weather_islamabad)
+        except Exception as e:
+            self.worker.editor_logging_handler.error(f"weather error: {e}")
+            w = {}
+        if not w or w.get("temp") is None:
+            await self._speak_plain("I couldn't get the weather right now.")
+            return
+        rain = w.get("rain")
+        rain_bit = f" Rain chance {rain} percent." if rain is not None else ""
+        await self._speak_plain(
+            f"Islamabad is {w['temp']} degrees and {w['condition']}. "
+            f"High {w.get('high')}, low {w.get('low')}.{rain_bit}"
+        )
+        self._dash_post("update", {"weather": w, "last_action": "weather"})
+
+    async def _handle_prayer(self, user_input: str) -> None:
+        await self._speak_plain("Fetching Islamabad prayer times.")
+        try:
+            import asyncio
+
+            p = await asyncio.to_thread(self._fetch_prayer_islamabad)
+        except Exception as e:
+            self.worker.editor_logging_handler.error(f"prayer error: {e}")
+            p = {}
+        if not p:
+            await self._speak_plain("I couldn't get prayer times right now.")
+            return
+        await self._speak_plain(
+            f"Islamabad namaz today: Fajr {p.get('Fajr')}, Dhuhr {p.get('Dhuhr')}, "
+            f"Asr {p.get('Asr')}, Maghrib {p.get('Maghrib')}, Isha {p.get('Isha')}."
+        )
+        self._dash_post("update", {"prayer": p, "last_action": "prayer"})
+
+    async def _handle_sos(self, user_input: str) -> None:
+        await self._ensure_contacts()
+        contacts = self._contacts or DEFAULT_CONTACTS
+        now = self._islamabad_now().strftime("%I:%M %p").lstrip("0")
+        subject = "HouseMate SOS ALERT"
+        body = (
+            f"SOS from HouseMate at {now} Islamabad time.\n"
+            f"User said: {user_input}\n"
+            "Please check on them immediately."
+        )
+        await self._speak_plain("Sending SOS emails to security and dad now.")
+        sent = []
+        for name in ("security", "dad"):
+            addr = contacts.get(name)
+            if not addr:
+                continue
+            try:
+                import asyncio
+
+                ok = await asyncio.to_thread(self._send_smtp, addr, subject, body)
+            except Exception as e:
+                self.worker.editor_logging_handler.error(f"SOS email {name}: {e}")
+                ok = False
+            if ok:
+                sent.append(name)
+        if sent:
+            await self._speak_plain(
+                f"SOS sent to {', '.join(sent)}. Get to a safe place if you can."
+            )
+        else:
+            await self._speak_plain(
+                "SOS email failed. Call emergency services directly."
+            )
+        self._dash_post(
+            "update",
+            {"last_action": "sos", "sos_sent_to": sent, "sos_ok": bool(sent)},
+        )
+
+    async def _handle_brief(self, user_input: str) -> None:
+        await self._ensure_contacts()
+        now = self._islamabad_now()
+        clock = now.strftime("%I:%M %p").lstrip("0")
+        await self._speak_plain("Building your Islamabad brief.")
+        try:
+            import asyncio
+
+            weather = await asyncio.to_thread(self._fetch_weather_islamabad)
+            prayer = await asyncio.to_thread(self._fetch_prayer_islamabad)
+        except Exception:
+            weather, prayer = {}, {}
+
+        events = await self._read_json(SCHEDULE_FILE, [])
+        if not isinstance(events, list):
+            events = []
+        active_plans = [e for e in events if e.get("status") != "cancelled"][:3]
+        reminders = await self._read_json(REMINDERS_FILE, [])
+        if not isinstance(reminders, list):
+            reminders = []
+        active_rems = [r for r in reminders if r.get("status") == "scheduled"][:3]
+
+        parts = [f"It is {clock} in Islamabad."]
+        if weather.get("temp") is not None:
+            parts.append(
+                f"Weather {weather['temp']} degrees, {weather.get('condition', 'okay')}."
+            )
+        if prayer.get("Dhuhr"):
+            parts.append(
+                f"Prayers include Dhuhr {prayer.get('Dhuhr')} and Maghrib {prayer.get('Maghrib')}."
+            )
+        if active_plans:
+            plan_bits = "; ".join(
+                f"{e.get('title')} at {e.get('human_time') or e.get('when_text')}"
+                for e in active_plans
+            )
+            parts.append(f"In memory: {plan_bits}.")
+        else:
+            parts.append("No plans saved in memory.")
+        if active_rems:
+            rem_bits = "; ".join(
+                f"{r.get('label')} at {r.get('human_time')}" for r in active_rems
+            )
+            parts.append(f"Reminders: {rem_bits}.")
+
+        spoken = " ".join(parts)
+        await self._speak_plain(spoken)
+        await self._write_md(
+            STATUS_MD,
+            "## HouseMate Daily Brief\n\n"
+            + "\n".join(f"- {p}" for p in parts)
+            + "\n",
+        )
+        self._dash_post(
+            "update",
+            {
+                "last_action": "brief",
+                "brief": spoken,
+                "weather": weather,
+                "prayer": prayer,
+                "plans": active_plans,
+                "reminders": active_rems,
+            },
+        )
+
+    async def _handle_contacts(self, user_input: str) -> None:
+        await self._ensure_contacts()
+        parsed = self._strip_json(
+            self.capability_worker.text_to_text_response(
+                f"""Extract a contact update. Return ONLY JSON:
+{{"name":"dad|security|doctor","email":"address or empty"}}
+User: {user_input}"""
+            )
+        ) or {}
+        name = (parsed.get("name") or "").strip().lower()
+        email = (parsed.get("email") or "").strip()
+        if name not in ("dad", "security", "doctor"):
+            who = await self._ask("Which contact? dad, security, or doctor?")
+            name = "dad"
+            for n in ("dad", "security", "doctor"):
+                if n in who.lower():
+                    name = n
+                    break
+            email = self._resolve_contact(who) or email
+        if not email or "@" not in email:
+            email = await self._ask(f"What is the new email for {name}?")
+            email = email.replace(" at ", "@").replace(" ", "").strip()
+        if "@" not in email:
+            await self._speak_plain("That doesn't look like an email address.")
+            return
+        data = dict(self._contacts or DEFAULT_CONTACTS)
+        data[name] = email
+        await self._save_contacts(data)
+        await self._speak_plain(f"Updated {name} to {email}.")
+        self._dash_post("update", {"last_action": "contacts", "contacts": data})
 
     # -------------------- time (Islamabad) --------------------
     async def _handle_time(self, user_input: str) -> None:
@@ -757,6 +1132,7 @@ User: {user_input}
 
     # -------------------- doctor booking (memory + reminder + email) --------------------
     async def _handle_doctor(self, user_input: str) -> None:
+        await self._ensure_contacts()
         details = self.capability_worker.text_to_text_response(
             f"""Extract doctor appointment details. Return ONLY JSON:
 {{"doctor":"name or type","reason":"short","when_text":"time phrase from user or empty"}}
@@ -792,7 +1168,7 @@ User: {user_input}"""
         )
 
         notify = await self.capability_worker.run_confirmation_loop(
-            f"Also email the doctor contact at {CONTACTS['doctor']}?"
+            f"Also email the doctor contact at {(self._contacts or DEFAULT_CONTACTS).get('doctor')}?"
         )
         if notify:
             await self._handle_email(
@@ -942,21 +1318,27 @@ User: {user_input}"""
             await self.capability_worker.speak(tip)
 
     async def _handle_help(self, user_input: str = "") -> None:
-        await self._say(
-            "I can send email to dad, security, or doctor, set reminders, "
-            "remember your schedule in memory, tell Islamabad time, "
-            "book a doctor visit, look things up, or start walk-home mode.",
-            user_input,
+        await self._speak_plain(
+            "I can email contacts, send SOS alerts, set reminders, remember your schedule, "
+            "tell Islamabad time, weather, and prayer times, give a daily brief, "
+            "update contacts, book a doctor plan, look things up, or start walk-home mode."
         )
 
     # -------------------- main loop --------------------
     async def run(self):
         try:
-            # Greet immediately so the main Agent doesn't steal the turn
+            await self._ensure_contacts()
+            self._session_id = f"housemate-{int(time())}"
+            self._session_start = time()
+            self._dash_cycle = 0
+            self._dash_post(
+                "session_start",
+                {"ability": "housemate", "contacts": self._contacts or {}},
+            )
+
             await self._speak_plain(
-                "HouseMate ready. I can email dad, security, or doctor, "
-                "set reminders, remember your schedule, and tell Islamabad time. "
-                "What do you need?"
+                "HouseMate ready. Email, SOS, weather, prayer times, daily brief, "
+                "reminders, schedule memory, and Islamabad time. What do you need?"
             )
 
             idle_empty = 0
@@ -979,7 +1361,7 @@ User: {user_input}"""
                     "house mate",
                 }:
                     await self._speak_plain(
-                        "Yes? Email, reminder, schedule, or Islamabad time?"
+                        "Yes? Email, SOS, weather, brief, prayer, or reminder?"
                     )
                     continue
 
@@ -995,10 +1377,20 @@ User: {user_input}"""
                     await self._handle_help(user_input)
                 elif intent == "email":
                     await self._handle_email(user_input)
+                elif intent == "sos":
+                    await self._handle_sos(user_input)
                 elif intent == "reminder":
                     await self._handle_reminder(user_input)
                 elif intent == "time":
                     await self._handle_time(user_input)
+                elif intent == "weather":
+                    await self._handle_weather(user_input)
+                elif intent == "prayer":
+                    await self._handle_prayer(user_input)
+                elif intent == "brief":
+                    await self._handle_brief(user_input)
+                elif intent == "contacts":
+                    await self._handle_contacts(user_input)
                 elif intent == "schedule":
                     await self._handle_schedule(user_input)
                 elif intent == "doctor":
@@ -1018,6 +1410,15 @@ User: {user_input}"""
             except Exception:
                 pass
         finally:
+            try:
+                self._dash_post(
+                    "session_end",
+                    {
+                        "duration_seconds": time() - (self._session_start or time()),
+                    },
+                )
+            except Exception:
+                pass
             self.capability_worker.resume_normal_flow()
 
     def call(self, worker: AgentWorker):
