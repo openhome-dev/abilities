@@ -27,11 +27,12 @@ AGREE_WORDS = ["i agree", "yeah i agree", "totally agree", "absolutely", "facts"
 DISAGREE_WORDS = ["disagree", "nah", "nope", "wrong", "cap", "i disagree"]
 EXIT_PHRASES = ["i give up", "stop", "you win", "fine", "okay you win", "i quit", "end"]
 
+
 class HotTakeMachineCapability(MatchingCapability):
     worker: AgentWorker = None
     capability_worker: CapabilityWorker = None
 
-    #{{register capability}}
+    # {{register capability}}
 
     def call(self, worker: AgentWorker):
         self.worker = worker
@@ -116,9 +117,9 @@ class HotTakeMachineCapability(MatchingCapability):
 
             if not agreed:
                 check_prompt = (
-                    "The Hot Take Machine said: " + hot_take +
-                    ". The user replied: " + response +
-                    ". Did the user make a genuinely strong point? Reply with just YES or NO."
+                    "The Hot Take Machine said: " + hot_take
+                    + ". The user replied: " + response
+                    + ". Did the user make a genuinely strong point? Reply with just YES or NO."
                 )
                 user_strong = self.capability_worker.text_to_text_response(check_prompt)
                 if "YES" in user_strong.upper():
@@ -165,17 +166,17 @@ class HotTakeMachineCapability(MatchingCapability):
             if agreed:
                 continue_prompt = (
                     "You are a loudmouth human hyping up a hot take discussion. "
-                    "Your hot take was: " + hot_take +
-                    ". You both agree. They just said: " + response +
-                    ". Add more fuel, share another angle, keep it fun and flowing. "
+                    "Your hot take was: " + hot_take
+                    + ". You both agree. They just said: " + response
+                    + ". Add more fuel, share another angle, keep it fun and flowing. "
                     "Casual, human, funny. Max 2 short sentences. No emojis."
                 )
             else:
                 continue_prompt = (
                     "You are a loudmouth human defending your hot take. "
-                    "Your hot take was: " + hot_take +
-                    ". They disagreed and just said: " + response +
-                    ". Clap back hard, defend your take. "
+                    "Your hot take was: " + hot_take
+                    + ". They disagreed and just said: " + response
+                    + ". Clap back hard, defend your take. "
                     "Casual, savage, funny. Max 2 short sentences. No emojis."
                 )
 
