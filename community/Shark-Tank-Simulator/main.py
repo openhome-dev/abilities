@@ -1,17 +1,16 @@
 import asyncio
 import json
+import os
 import re
 import requests
 import time
-from src.agent.capability import MatchingCapability
+from src.agent.capability import MatchingCapability 
 from src.main import AgentWorker
 from src.agent.capability_worker import CapabilityWorker
 
 
-# ------------------------------ CONFIG ---------------------------------
 
-
-ELEVEN_API_KEY = "ce9be84452706f919667389a08ceaff5874153c4c26e7e100da65f94c0bcc62d"  # <<< PASTE YOUR REAL KEY BACK
+ELEVEN_API_KEY = os.getenv("ce9be84452706f919667389a08ceaff5874153c4c26e7e100da65f94c0bcc62d", "")
 
 VOICE_SKEPTIC = "yJLlp2SHBZbo4wKGgSUY"  # cold, dry, doubting
 VOICE_HYPE = "neuKegR4bFeXZWzEAgYg"     # loud, warm, overexcited
@@ -20,10 +19,7 @@ VOICE_NUMBERS = "21m00Tcm4TlvDq8ikWAM"  # calm, precise, surgical
 # ElevenLabs concurrency cap by plan: Free 2, Starter 3, Creator 5.
 MAX_CONCURRENT_TTS = 2
 
-# ---------- listening behaviour ----------
-# OpenHome fires bursts of empty "finished speaking" events and re-queues
-# duplicate copies of the last transcription. So instead of counting retries,
-# we listen against a wall-clock deadline and simply ignore the junk.
+
 PITCH_WINDOW_SECONDS = 75       # time allowed for the opening pitch
 ANSWER_WINDOW_SECONDS = 45      # time allowed to answer a shark
 RETRY_WINDOW_SECONDS = 25       # extra time after the "sharks are waiting" nudge
@@ -290,7 +286,7 @@ class SharkTankSimulatorCapability(MatchingCapability):
                 self._remember(fresh)
                 break
             if txt is not None:
-                await asyncio.sleep(0.05)  # junk item consumed; avoid a hot loop
+                await self.worker.session_tasks.sleep(0.05)  # junk item consumed; avoid a hot loop
 
         if not answer:
             return ""
@@ -302,7 +298,7 @@ class SharkTankSimulatorCapability(MatchingCapability):
             fresh = self._fresh(txt)
             if not fresh:
                 if txt is not None:
-                    await asyncio.sleep(0.05)
+                    await self.worker.session_tasks.sleep(0.05)
                 continue
             merged = self._merge_parts(answer, fresh)
             if merged != answer:
