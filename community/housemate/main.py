@@ -90,7 +90,7 @@ class HomeHelperCapability(MatchingCapability):
     capability_worker: CapabilityWorker = None
     _last_user: str = ""
 
-    #{{register capability}}
+    # {{register capability}}
 
     # -------------------- storage helpers --------------------
     async def _reset_json(self, filename: str, reason: str = "") -> None:
