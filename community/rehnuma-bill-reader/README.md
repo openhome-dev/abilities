@@ -37,6 +37,13 @@ answers follow-up questions at any point.
 > user's behalf, and it does not make payments. The user, or whoever is helping
 > them, stays in control of anything written down or handed over.
 
+**Emails a document on request.** Saying "email kar dein" sends the document to
+the address saved on the wallet server — useful when a paper copy has to reach
+someone who can read, such as an employer or a relative handling the payment.
+The request is routed straight to the server and never to the language model,
+which would otherwise be liable to claim it had sent something it had not. If no
+address is on file, Rehnuma says so instead of failing silently.
+
 **Answers follow-up questions in context.** "Uska kitna hai", "aur woh gas wala
 bill", "agar late ho jaun to kya hoga" all resolve correctly against the saved
 documents and the last few turns of conversation.
@@ -80,6 +87,7 @@ Your wallet server must expose two read-only JSON endpoints:
 |---|---|
 | `GET /api/documents` | A JSON array of every saved document. Each entry holds the extracted fields (issuer, amount, due date, notes) plus a short description label used to match spoken references like "woh gas wala bill". |
 | `GET /api/pending` | `{"data": ...}` when an upload has arrived that has not been spoken about yet, otherwise an empty object. |
+| `POST /api/email_send` | Body `{"hint": "<what the user said>"}`. The server picks the matching document and emails it to the address saved against that user. Returns `{"ok": true}` on success, or `{"error": "no email ..."}` when no address is on file. |
 
 Both are called with an 8 second timeout, and any failure degrades quietly to
 "no documents" rather than breaking the conversation.

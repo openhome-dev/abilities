@@ -23,6 +23,7 @@ from src.main import AgentWorker
 
 SERVER_URL_KEY = "rehnuma_server_url"   # label in Settings -> API Keys
 REQUEST_TIMEOUT = 8
+EMAIL_TIMEOUT = 45                      # sending renders a file, so allow more
 MAX_DOCUMENTS_CHARS = 8000              # keep the prompt inside a sane budget
 RECENT_TURNS = 10                       # conversation lines kept for context
 
@@ -33,6 +34,11 @@ NOT_UNDERSTOOD = "Maaf kijiye, main samajh nahi paya. Zara phir se kahiye."
 PHOTO_FOUND = "Ji, aap ka bheja hua kaghaz mil gaya hai. Suniye."
 ERROR_PROMPT = ("Maaf kijiye, abhi kuch gadbad ho gayi hai. "
                 "Thori der baad phir koshish kijiye ga.")
+MAIL_SENT = "Ji, aap ke email par bhej diya hai."
+MAIL_NO_ADDRESS = ("Aap ka email address abhi mehfooz nahi hai. Website par "
+                   "apna email likh dein, phir main bhej doon ga.")
+MAIL_FAILED = ("Maaf kijiye, email nahi ja saka. "
+               "Zara baad mein koshish karte hain.")
 EXPLAIN_NEWEST = ("Sab se naya uploaded document tafseel se samjhao: yeh kya "
                   "hai, kitne paise dene hain ya is mein kya likha hai, aakhri "
                   "tareekh kya hai, koi khaas baat ho to woh bhi batao.")
@@ -49,6 +55,14 @@ EXIT_WORDS = ("shukriya", "khuda hafiz", "allah hafiz", "khatam", "bas",
 # answering the same question twice when a new upload arrives mid-turn.
 PHOTO_WORDS = ("photo", "tasveer", "kaghaz", "bhej",
                "फोटो", "काग़ज़", "तस्वीर", "تصویر", "کاغذ")
+
+# Any mention of email means the user wants the document sent. Kept broad on
+# purpose: a missed match lets the model answer instead, and it may then claim
+# to have sent something it did not.
+MAIL_WORDS = ("email", "e mail", "e-mail", "mail", "gmail", "imel", "inbox",
+              "forward", "send it", "send me", "send this", "send the bill",
+              "ईमेल", "इमेल", "मेल", "ई मेल", "जीमेल",
+              "ای میل", "ایمیل", "میل", "جی میل")
 
 BASE_PROMPT = """You are Rehnuma, a calm, patient male voice guide for people
 in Pakistan who cannot read. You explain bills, official documents and
@@ -79,6 +93,9 @@ ANSWERING RULES:
   bay form union council 200 se 500. CNIC and passport need NADRA / passport
   office visit, Pak-ID app works for CNIC renewal at home.
 - If unsure of a fact, say so honestly and name the right office or helpline.
+- NEVER claim you have sent an email. Emailing is handled by the system, not
+  by you. If the user seems to want a document emailed, ask them to say the
+  word email clearly, for example: email kar dein.
 - Use today's date for anything time related: how many days remain, whether a
   due date has passed. If any saved bill's due date is within the next 3 days
   or already passed, begin your FIRST reply of the conversation with one short
@@ -155,6 +172,35 @@ class RehnumaBillReaderCapability(MatchingCapability):
             self._err(f"/api/pending failed: {error!r}")
             return False
 
+    def wants_email(self, text: str) -> bool:
+        """True when the user asked for a document to be emailed."""
+        lowered = (text or "").lower()
+        return any(word in lowered for word in MAIL_WORDS)
+
+    def send_email(self, hint: str = "") -> str:
+        """Ask the wallet server to email the document the user meant, and
+        return the line to speak back. The server chooses the document from the
+        hint and holds the address, so no personal data passes through here.
+        Blocking — always call through asyncio.to_thread."""
+        if not self.server_url:
+            self._log("email requested but no wallet server is configured")
+            return MAIL_FAILED
+        try:
+            response = requests.post(f"{self.server_url}/api/email_send",
+                                     json={"hint": hint},
+                                     timeout=EMAIL_TIMEOUT)
+            body = response.json() if response.content else {}
+            if response.status_code == 200 and body.get("ok"):
+                return MAIL_SENT
+            error = str(body.get("error", ""))
+            if "no email" in error.lower():
+                return MAIL_NO_ADDRESS
+            self._err(f"/api/email_send returned "
+                      f"{response.status_code}: {error[:200]}")
+        except Exception as error:
+            self._err(f"/api/email_send failed: {error!r}")
+        return MAIL_FAILED
+
     # --- conversation ----------------------------------------------------
 
     def is_exit(self, text: str) -> bool:
@@ -215,6 +261,16 @@ class RehnumaBillReaderCapability(MatchingCapability):
 
             if self.is_exit(user_input):
                 break
+
+            # Checked before anything else: emailing is done by the server, so
+            # the request must not reach the LLM, which would otherwise reply
+            # as though it had sent the message itself.
+            if self.wants_email(user_input):
+                line = await asyncio.to_thread(self.send_email, user_input)
+                await self.capability_worker.speak(line)
+                recent = (recent + [f"User: {user_input}",
+                                    f"Rehnuma: {line}"])[-RECENT_TURNS:]
+                continue
 
             # A photo can land mid-conversation; explain it before answering.
             if await asyncio.to_thread(self.has_new_photo):
