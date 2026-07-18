@@ -34,7 +34,7 @@ class ImmersiveQuoteWatcherBackground(MatchingCapability):
     background_daemon_mode: bool = False
     api_base: str = None
 
-    #{{register capability}}
+    # {{register capability}}
 
     def call(self, worker: AgentWorker, background_daemon_mode: bool):
         self.worker = worker
