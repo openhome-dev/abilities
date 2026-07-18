@@ -7,16 +7,19 @@ can be imported without OpenHome, then exercises the pure logic that doesn't
 need the live platform: the edge-triggered watch judge, the pollers, and the
 P1/P2 async handlers against a mocked CapabilityWorker.
 
-Run:  python test_main.py       (needs `requests`; use the CLI venv's python)
+Run:  python dev/test_main.py   (needs `requests`; use the CLI venv's python)
 
-This is a dev aid, not part of the pushed ability. It imports main.py by path,
-so it must sit next to main.py.
+This is a dev aid, not part of the pushed ability. It lives in dev/ and
+imports main.py from the ability folder one level up.
 """
 
 import asyncio
 import json
+import os
 import sys
 import types
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 # --- stub the platform modules main.py imports at top level ---------------
 for _name in ("src", "src.agent", "src.agent.capability", "src.main",

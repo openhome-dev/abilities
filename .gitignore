@@ -38,6 +38,13 @@ Thumbs.db
 # Private to each user; never committed.
 user/
 
+# Jarvis team planning docs — internal reference, not part of the ability PR.
+community/jarvisprime/JARVIS.md
+community/jarvisprime/PLAN-4H.md
+community/jarvisprime/TEAMMATE-BRIEF.md
+community/jarvisprime/DEV1-PLAN.md
+community/jarvisprime/reference/
+
 # Test / Coverage
 .coverage
 htmlcov/
