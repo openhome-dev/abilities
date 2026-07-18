@@ -56,18 +56,18 @@ class CarexpertVoiceDeskCapability(MatchingCapability):
                 )
                 baseline = await self.capability_worker.user_response()
                 role = ""
-                
+
                 while not role:
                     # UPDATED FOR OPENHOME COMPLIANCE
                     await self.worker.session_tasks.sleep(0.4)
                     ans = await self.capability_worker.user_response()
                     if not ans:
                         continue
-                        
+
                     if self._is_exit(ans):
                         await self.capability_worker.speak("Okay, exiting. Have a great day!")
                         return  # Exits the whole loop and capability
-                        
+
                     if ans.strip() and ans.strip() != baseline:
                         low = ans.lower()
                         if any(w in low for w in ["doctor", "dashboard", "desk", "physician"]):
@@ -109,23 +109,23 @@ class CarexpertVoiceDeskCapability(MatchingCapability):
             )
             baseline = await self.capability_worker.user_response()
             action = ""
-            
+
             while not action:
                 await self.worker.session_tasks.sleep(0.4)
                 ans = await self.capability_worker.user_response()
                 if not ans:
                     continue
-                    
+
                 if self._is_exit(ans):
                     await self.capability_worker.speak("Okay, exiting. Have a great day!")
                     return True  # Bubble up the exit
-                    
+
                 if ans.strip() and ans.strip() != baseline:
                     low = ans.lower()
                     if any(w in low for w in ["back", "main menu", "go back", "return"]):
                         await self.capability_worker.speak("Returning to main menu.")
                         return False  # Return to Main Session Loop
-                        
+
                     if any(w in low for w in ["call next", "next patient", "call the next"]):
                         action = "call_next"
                     elif any(w in low for w in ["queue", "how many", "waiting count", "position"]):
@@ -171,8 +171,8 @@ class CarexpertVoiceDeskCapability(MatchingCapability):
             if exit_requested:
                 return True
 
-
     # ==========================================
+
     async def run_token_counter(self):
         try:
             await self.capability_worker.speak("Please tell me the patient's name, age, and gender.")
@@ -181,7 +181,8 @@ class CarexpertVoiceDeskCapability(MatchingCapability):
             while not details:
                 await self.worker.session_tasks.sleep(0.4)
                 ans = await self.capability_worker.user_response()
-                if not ans: continue
+                if not ans:
+                    continue
                 if self._is_exit(ans):
                     await self.capability_worker.speak("Okay, exiting. Have a great day!")
                     return True
@@ -215,7 +216,8 @@ class CarexpertVoiceDeskCapability(MatchingCapability):
             while not visit_type:
                 await self.worker.session_tasks.sleep(0.4)
                 ans = await self.capability_worker.user_response()
-                if not ans: continue
+                if not ans:
+                    continue
                 if self._is_exit(ans):
                     await self.capability_worker.speak("Okay, exiting.")
                     return True
@@ -237,7 +239,8 @@ class CarexpertVoiceDeskCapability(MatchingCapability):
                 while not severity_answer:
                     await self.worker.session_tasks.sleep(0.4)
                     ans = await self.capability_worker.user_response()
-                    if not ans: continue
+                    if not ans:
+                        continue
                     if self._is_exit(ans):
                         await self.capability_worker.speak("Okay, exiting.")
                         return True
@@ -283,7 +286,7 @@ class CarexpertVoiceDeskCapability(MatchingCapability):
         except Exception as e:
             self.worker.editor_logging_handler.error(f"Token counter error: {e}")
             await self.capability_worker.speak("Sorry, an error occurred while registering.")
-            
+
         return False
 
     # ==========================================
@@ -295,7 +298,8 @@ class CarexpertVoiceDeskCapability(MatchingCapability):
             while not token_id:
                 await self.worker.session_tasks.sleep(0.4)
                 ans = await self.capability_worker.user_response()
-                if not ans: continue
+                if not ans:
+                    continue
                 if self._is_exit(ans):
                     await self.capability_worker.speak("Okay, exiting.")
                     return True
@@ -309,7 +313,8 @@ class CarexpertVoiceDeskCapability(MatchingCapability):
                 requests.get, REST_URL, headers=SUPABASE_HEADERS, params={"select": "*"}, timeout=10
             )
             tokens = resp.json() if resp.status_code == 200 else []
-            if not isinstance(tokens, list): tokens = []
+            if not isinstance(tokens, list):
+                tokens = []
 
             record = next(
                 (r for r in tokens if isinstance(r, dict) and str(r.get("token_number", "")).replace("-", "").strip().upper() == token_id.upper()),
@@ -329,7 +334,8 @@ class CarexpertVoiceDeskCapability(MatchingCapability):
                 while not medicines:
                     await self.worker.session_tasks.sleep(0.4)
                     ans = await self.capability_worker.user_response()
-                    if not ans: continue
+                    if not ans:
+                        continue
                     if self._is_exit(ans):
                         await self.capability_worker.speak("Okay, exiting.")
                         return True
@@ -350,7 +356,8 @@ class CarexpertVoiceDeskCapability(MatchingCapability):
                 while not medicines:
                     await self.worker.session_tasks.sleep(0.4)
                     ans = await self.capability_worker.user_response()
-                    if not ans: continue
+                    if not ans:
+                        continue
                     if self._is_exit(ans):
                         await self.capability_worker.speak("Okay, exiting.")
                         return True
@@ -376,11 +383,12 @@ class CarexpertVoiceDeskCapability(MatchingCapability):
             baseline_fu = await self.capability_worker.user_response()
             follow_up_answer = None
             follow_up_date = None
-            
+
             while follow_up_answer is None:
                 await self.worker.session_tasks.sleep(0.4)
                 ans = await self.capability_worker.user_response()
-                if not ans: continue
+                if not ans:
+                    continue
                 if self._is_exit(ans):
                     await self.capability_worker.speak("Okay, exiting.")
                     return True
@@ -410,11 +418,11 @@ class CarexpertVoiceDeskCapability(MatchingCapability):
         except Exception as e:
             self.worker.editor_logging_handler.error(f"Doctor flow error: {e}")
             await self.capability_worker.speak("Sorry, an error occurred. Please try again.")
-            
+
         return False
 
-   
     # ==========================================
+
     async def run_queue_status(self):
         try:
             today = datetime.now(PKT).strftime("%Y-%m-%d")
@@ -422,7 +430,8 @@ class CarexpertVoiceDeskCapability(MatchingCapability):
                 requests.get, REST_URL, headers=SUPABASE_HEADERS, params={"select": "*", "date": f"eq.{today}", "status": "eq.Waiting"}, timeout=10
             )
             rows = resp.json() if resp.status_code == 200 else []
-            if not isinstance(rows, list): rows = []
+            if not isinstance(rows, list):
+                rows = []
 
             total_waiting = len(rows)
             emergency_waiting = len([r for r in rows if str(r.get("visit_type", "")).lower() == "emergency"])
@@ -444,7 +453,8 @@ class CarexpertVoiceDeskCapability(MatchingCapability):
                 requests.get, REST_URL, headers=SUPABASE_HEADERS, params={"select": "*", "date": f"eq.{today}", "status": "eq.Waiting", "order": "id.asc"}, timeout=10
             )
             rows = resp.json() if resp.status_code == 200 else []
-            if not isinstance(rows, list): rows = []
+            if not isinstance(rows, list):
+                rows = []
 
             if not rows:
                 await self.capability_worker.speak("There are no patients waiting right now.")
@@ -475,7 +485,8 @@ class CarexpertVoiceDeskCapability(MatchingCapability):
                 requests.get, REST_URL, headers=SUPABASE_HEADERS, params={"select": "*", "date": f"eq.{today}", "status": "eq.Completed"}, timeout=10
             )
             rows = resp.json() if resp.status_code == 200 else []
-            if not isinstance(rows, list): rows = []
+            if not isinstance(rows, list):
+                rows = []
 
             if not rows:
                 await self.capability_worker.speak("No patients have been completed today yet.")
@@ -498,7 +509,8 @@ class CarexpertVoiceDeskCapability(MatchingCapability):
             while not patient_name:
                 await self.worker.session_tasks.sleep(0.4)
                 ans = await self.capability_worker.user_response()
-                if not ans: continue
+                if not ans:
+                    continue
                 if self._is_exit(ans):
                     await self.capability_worker.speak("Okay, exiting.")
                     return True
@@ -510,7 +522,8 @@ class CarexpertVoiceDeskCapability(MatchingCapability):
                 params={"select": "*", "patient_name": f"ilike.*{patient_name}*", "order": "date.desc"}, timeout=10
             )
             rows = resp.json() if resp.status_code == 200 else []
-            if not isinstance(rows, list): rows = []
+            if not isinstance(rows, list):
+                rows = []
 
             if not rows:
                 await self.capability_worker.speak(f"No visit history found for {patient_name}.")
@@ -537,7 +550,8 @@ class CarexpertVoiceDeskCapability(MatchingCapability):
             while not token_id:
                 await self.worker.session_tasks.sleep(0.4)
                 ans = await self.capability_worker.user_response()
-                if not ans: continue
+                if not ans:
+                    continue
                 if self._is_exit(ans):
                     await self.capability_worker.speak("Okay, exiting.")
                     return True
@@ -551,7 +565,8 @@ class CarexpertVoiceDeskCapability(MatchingCapability):
                 requests.get, REST_URL, headers=SUPABASE_HEADERS, params={"select": "*", "status": "eq.Waiting"}, timeout=10
             )
             rows = resp.json() if resp.status_code == 200 else []
-            if not isinstance(rows, list): rows = []
+            if not isinstance(rows, list):
+                rows = []
 
             record = next((r for r in rows if isinstance(r, dict) and str(r.get("token_number", "")).replace("-", "").strip().upper() == token_id.upper()), None)
             if not record:
@@ -578,12 +593,14 @@ class CarexpertVoiceDeskCapability(MatchingCapability):
                 requests.get, REST_URL, headers=SUPABASE_HEADERS, params={"select": "*", "date": f"eq.{today}", "status": "eq.Completed"}, timeout=10
             )
             rows = resp.json() if resp.status_code == 200 else []
-            if not isinstance(rows, list): rows = []
+            if not isinstance(rows, list):
+                rows = []
 
             durations = []
             for r in rows:
                 created, completed = r.get("created_at"), r.get("completed_at")
-                if not created or not completed: continue
+                if not created or not completed:
+                    continue
                 try:
                     created_dt = datetime.fromisoformat(created.replace("Z", "+00:00"))
                     completed_dt = datetime.fromisoformat(completed.replace("Z", "+00:00"))
@@ -611,7 +628,8 @@ class CarexpertVoiceDeskCapability(MatchingCapability):
                 requests.get, REST_URL, headers=SUPABASE_HEADERS, params={"select": "*", "follow_up_date": f"eq.{today}"}, timeout=10
             )
             rows = resp.json() if resp.status_code == 200 else []
-            if not isinstance(rows, list): rows = []
+            if not isinstance(rows, list):
+                rows = []
 
             if not rows:
                 await self.capability_worker.speak("No follow ups are scheduled for today.")
@@ -630,36 +648,44 @@ class CarexpertVoiceDeskCapability(MatchingCapability):
     # ==========================================
     def _clean_age(self, text: str) -> int:
         match = re.search(r"\d+", text)
-        if match: return int(match.group())
+        if match:
+            return int(match.group())
         words_map = {"one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "seven": 7, "eight": 8, "nine": 9, "ten": 10, "twenty": 20, "thirty": 30, "forty": 40, "fifty": 50}
         for word, val in words_map.items():
-            if word in text.lower(): return val
+            if word in text.lower():
+                return val
         return 25
 
     def _clean_gender(self, text: str) -> str:
         low = text.lower()
-        if any(w in low for w in ["femal", "woman", "girl", "she", "feme"]): return "Female"
-        if any(w in low for w in ["mal", "man", "boy", "he", "main", "mle", "may"]): return "Male"
+        if any(w in low for w in ["femal", "woman", "girl", "she", "feme"]):
+            return "Female"
+        if any(w in low for w in ["mal", "man", "boy", "he", "main", "mle", "may"]):
+            return "Male"
         return "Male"
 
     def _extract_token(self, text: str) -> str:
         t = text.lower().strip()
         words_map = {"one": "1", "two": "2", "three": "3", "four": "4", "five": "5", "six": "6", "seven": "7", "eight": "8", "nine": "9", "ten": "10"}
-        for word, digit in words_map.items(): t = t.replace(word, digit)
+        for word, digit in words_map.items():
+            t = t.replace(word, digit)
         t = t.replace("-", "").replace(" ", "")
         is_emergency = "e" in t or "emerg" in t
         match = re.search(r"\d+", t)
-        if not match: return ""
+        if not match:
+            return ""
         num_str = match.group()
         return f"E{num_str}" if is_emergency else num_str
 
     def _extract_days(self, text: str):
         low = text.lower()
         match = re.search(r"\d+", low)
-        if match: return int(match.group())
+        if match:
+            return int(match.group())
         words_map = {"one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "seven": 7, "week": 7, "ten": 10}
         for word, val in words_map.items():
-            if word in low: return val
+            if word in low:
+                return val
         return None
 
     def _generate_token(self, v_type: str) -> str:
@@ -669,7 +695,8 @@ class CarexpertVoiceDeskCapability(MatchingCapability):
             resp = requests.get(REST_URL, headers=SUPABASE_HEADERS, params={"select": "*", "date": f"eq.{today}"}, timeout=10)
             if resp.status_code == 200:
                 data = resp.json()
-                if isinstance(data, list): all_tokens = [t for t in data if isinstance(t, dict)]
+                if isinstance(data, list):
+                    all_tokens = [t for t in data if isinstance(t, dict)]
         except Exception:
             all_tokens = []
 
