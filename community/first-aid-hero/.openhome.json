@@ -1,0 +1,17 @@
+{
+  "name": "firstaidhero",
+  "capability_id": "7197",
+  "category": "skill",
+  "description": "A hands-free, voice-first emergency first-aid guide that assists users during critical medical emergencies.",
+  "trigger_words": [
+    "emergency first aid",
+    "first aid hero",
+    "cpr guide",
+    "choking emergency",
+    "bleeding emergency",
+    "first aid help"
+  ],
+  "release_id": 16656,
+  "version": "v9",
+  "is_committed": false
+}
