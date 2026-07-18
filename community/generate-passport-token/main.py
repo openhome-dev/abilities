@@ -1,4 +1,3 @@
-import asyncio
 import re
 import aiohttp
 from src.agent.capability import MatchingCapability
@@ -520,7 +519,7 @@ class GeneratePassportTokenCapability(MatchingCapability):
                 f"(status={status}): {data.get('message')}"
             )
             if attempt < retries - 1:
-                await  self.worker.session_tasks.sleep(1)
+                await self.worker.session_tasks.sleep(1)
 
         return None, None
 
