@@ -179,7 +179,7 @@ class SentinelredCapability(MatchingCapability):
     last_finding: Optional[Dict[str, Any]] = None
     last_scan_text: Optional[str] = None
 
-    #{{register capability}}
+    # {{register capability}}
 
     def call(self, worker: AgentWorker):
         self.worker = worker
