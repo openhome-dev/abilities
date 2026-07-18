@@ -8,7 +8,6 @@ Fixes:
 
 import json
 import re
-from typing import Optional
 
 from src.agent.capability import MatchingCapability
 from src.main import AgentWorker
@@ -165,7 +164,7 @@ class MnemoCapability(MatchingCapability):
     worker: AgentWorker = None
     capability_worker: CapabilityWorker = None
 
-    #{{register capability}}
+    # {{register capability}}
 
     def call(self, worker: AgentWorker):
         self.worker = worker
@@ -753,7 +752,7 @@ class MnemoCapability(MatchingCapability):
             start = cleaned.find("{")
             end = cleaned.rfind("}")
             if start != -1 and end > start:
-                candidate = cleaned[start : end + 1]
+                candidate = cleaned[start: end + 1]
                 result = json.loads(candidate)
                 if isinstance(result, dict):
                     return result
@@ -764,7 +763,7 @@ class MnemoCapability(MatchingCapability):
             start = cleaned.find("[")
             end = cleaned.rfind("]")
             if start != -1 and end > start:
-                candidate = cleaned[start : end + 1]
+                candidate = cleaned[start: end + 1]
                 result = json.loads(candidate)
                 if isinstance(result, list):
                     return {"questions": result}
