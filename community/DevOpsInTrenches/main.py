@@ -5,7 +5,6 @@ import time
 import requests
 
 from src.agent.capability import MatchingCapability
-from src.main import AgentWorker
 from src.agent.capability_worker import CapabilityWorker
 
 
@@ -498,7 +497,7 @@ class DevopsintrenchesCapability(MatchingCapability):
     worker = None
     capability_worker = None
 
-    #{{register capability}}
+    # {{register capability}}
 
     def call(self, worker):
         self.worker = worker
