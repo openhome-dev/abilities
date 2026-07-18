@@ -1,8 +1,8 @@
 import json
-import asyncio
 from src.agent.capability import MatchingCapability
 from src.main import AgentWorker
 from src.agent.capability_worker import CapabilityWorker
+
 
 def extract_json(text: str) -> dict:
     text_clean = text.replace("```json", "").replace("```", "").strip()
@@ -14,31 +14,33 @@ def extract_json(text: str) -> dict:
     end = text.rfind('}')
     if start != -1 and end != -1 and end > start:
         try:
-            return json.loads(text[start:end+1])
+            return json.loads(text[start:end + 1])
         except Exception:
             pass
     raise ValueError(f"Could not extract valid JSON from: {text}")
 
+
 # Severity levels
 SEVERITY_CRITICAL = "CRITICAL"   # Life-threatening — needs hospital immediately
-SEVERITY_HIGH     = "HIGH"       # Serious — needs hospital after first aid
+SEVERITY_HIGH = "HIGH"       # Serious — needs hospital after first aid
 SEVERITY_MODERATE = "MODERATE"   # Can manage at home with care / GP visit
 
 # Hardcoded severity for known emergency types
 SEVERITY_MAP = {
-    "Choking":        SEVERITY_CRITICAL,
+    "Choking": SEVERITY_CRITICAL,
     "Severe Bleeding": SEVERITY_CRITICAL,
-    "Burns":          SEVERITY_HIGH,
-    "CPR":            SEVERITY_CRITICAL,
+    "Burns": SEVERITY_HIGH,
+    "CPR": SEVERITY_CRITICAL,
     "General Trauma": SEVERITY_HIGH,
 }
+
 
 class FirstAidHeroCapability(MatchingCapability):
     worker: AgentWorker = None
     capability_worker: CapabilityWorker = None
     VOICE_ID = "onwK4e9ZLuTAKqWW03F9"  # Daniel — deep, calm, authoritative British male (medic specialist)
 
-    #{{register capability}}
+    # {{register capability}}
 
     def call(self, worker: AgentWorker):
         self.worker = worker
@@ -99,10 +101,10 @@ class FirstAidHeroCapability(MatchingCapability):
 
         try:
             hospital = extract_json(hospital_raw)
-            department  = hospital.get("department", "Emergency Department")
-            hospitals   = hospital.get("hospitals", [])
-            helpline    = hospital.get("helpline", "your local emergency number")
-            tip         = hospital.get("transport_tip", "Keep the patient calm and still during transport.")
+            department = hospital.get("department", "Emergency Department")
+            hospitals = hospital.get("hospitals", [])
+            helpline = hospital.get("helpline", "your local emergency number")
+            tip = hospital.get("transport_tip", "Keep the patient calm and still during transport.")
 
             hospital_list = " or ".join(hospitals) if hospitals else "your nearest major hospital"
 
@@ -123,7 +125,7 @@ class FirstAidHeroCapability(MatchingCapability):
             "First Aid Hero on. Call emergency services now if you haven't. "
             "What is the emergency? Say: choking, bleeding, CPR, burns, or describe it."
         )
-        
+
         while True:
             emergency = await self.run_io_loop(intro)
             if not emergency or emergency.strip() == "":
@@ -204,7 +206,7 @@ class FirstAidHeroCapability(MatchingCapability):
             except Exception as e:
                 self.worker.editor_logging_handler.error(f"Error parsing custom emergency JSON: {e}")
                 emergency_type = emergency.title()
-                
+
                 # Assess severity from conversational text
                 raw_lower = recipe_raw.lower()
                 if any(x in raw_lower for x in ["critical", "life-threatening", "unconscious", "cpr", "die", "fatal", "choking"]):
@@ -213,7 +215,7 @@ class FirstAidHeroCapability(MatchingCapability):
                     severity = SEVERITY_HIGH
                 else:
                     severity = SEVERITY_MODERATE
-                
+
                 # Split raw sentences into steps
                 raw_steps = [s.strip() for s in recipe_raw.split('.') if len(s.strip()) > 8]
                 if raw_steps:
@@ -244,18 +246,18 @@ class FirstAidHeroCapability(MatchingCapability):
 
         # General step walkthrough loop
         await self.speak(f"{emergency_type} guide. After each step, say: next, back, repeat, or done.")
-        
+
         step_idx = 0
         while step_idx < len(steps):
             step_text = f"Step {step_idx + 1}: {steps[step_idx]}. Say next, back, or done."
             user_cmd = await self.run_io_loop(step_text)
-            
+
             if not user_cmd or user_cmd.strip() == "":
                 await self.worker.session_tasks.sleep(1.0)
                 continue
 
             cmd_lower = user_cmd.lower()
-            
+
             if "exit" in cmd_lower or "stop" in cmd_lower or "quit" in cmd_lower:
                 await self.speak("Stopping. Stay with the patient.")
                 if severity in [SEVERITY_CRITICAL, SEVERITY_HIGH]:
@@ -292,7 +294,7 @@ class FirstAidHeroCapability(MatchingCapability):
             "CPR guide. Lay the person on their back on the floor. "
             "We do 30 chest pushes, then 2 breaths. Repeat until help arrives."
         )
-        
+
         step_text = "Put the heel of one hand on the center of their chest. Put your other hand on top. Straighten your arms. Say ready when set."
         while True:
             resp = await self.run_io_loop(step_text)
@@ -304,13 +306,13 @@ class FirstAidHeroCapability(MatchingCapability):
         cpr_cycle = 1
         while True:
             await self.speak(f"Cycle {cpr_cycle}. Push down hard and fast. Follow my count.")
-            
+
             for i in range(1, 31):
                 await self.capability_worker.text_to_speech(str(i), self.VOICE_ID)
                 await self.worker.session_tasks.sleep(0.5)
 
             breath_text = "Stop. Tilt their head back. Pinch their nose. Give 2 slow breaths into their mouth. Say next for another cycle, or done to stop."
-            
+
             while True:
                 user_cmd = await self.run_io_loop(breath_text)
                 if not user_cmd or user_cmd.strip() == "":
@@ -322,5 +324,5 @@ class FirstAidHeroCapability(MatchingCapability):
             if "done" in cmd_lower or "stop" in cmd_lower or "exit" in cmd_lower or "revived" in cmd_lower:
                 await self.speak("CPR stopped. Keep watching their breathing until help arrives.")
                 break
-            
+
             cpr_cycle += 1
