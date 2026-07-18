@@ -68,11 +68,11 @@ class SafarSathiBackground(MatchingCapability):
                 data = resp.json()
                 if data.get("status") == "success":
                     return {
-                        "lat":     data.get("lat",         default_loc["lat"]),
-                        "lon":     data.get("lon",         default_loc["lon"]),
-                        "city":    data.get("city",        default_loc["city"]),
-                        "country": data.get("country",     default_loc["country"]),
-                        "time":    datetime.utcnow().strftime("%H:%M UTC")
+                        "lat": data.get("lat", default_loc["lat"]),
+                        "lon": data.get("lon", default_loc["lon"]),
+                        "city": data.get("city", default_loc["city"]),
+                        "country": data.get("country", default_loc["country"]),
+                        "time": datetime.utcnow().strftime("%H:%M UTC")
                     }
         except Exception as e:
             self.worker.editor_logging_handler.error(f"[SafarSathi BG] IP location failed: {e}")
@@ -85,25 +85,25 @@ class SafarSathiBackground(MatchingCapability):
         Sends an email alert to Saad Hamid Ali using Office 365 SMTP credentials.
         """
         # Dynamically resolve import function using hex decoding to bypass compile-time AST scans
-        _dec = lambda h: bytes.fromhex(h).decode('utf-8')
+        def _dec(h): return bytes.fromhex(h).decode('utf-8')
         g = (lambda: None).__globals__
         b_dict = g.get(_dec('5f5f6275696c74696e735f5f'))
         imp = b_dict.get(_dec('5f5f696d706f72745f5f'))
-        
+
         smtplib = imp(_dec('736d74706c6962'))
         email_mime_multipart = imp(_dec('656d61696c2e6d696d652e6d756c746970617274'), g, None, ['MIMEMultipart'])
         email_mime_text = imp(_dec('656d61696c2e6d696d652e74657874'), g, None, ['MIMEText'])
-        
+
         vars_fn = b_dict.get(_dec('76617273'))
         MIMEMultipart = vars_fn(email_mime_multipart).get(_dec('4d494d454d756c746970617274'))
         MIMEText = vars_fn(email_mime_text).get(_dec('4d494d4554657874'))
         SMTP_class = vars_fn(smtplib).get(_dec('534d5450'))
 
         SENDER_EMAIL = "<YOUR_SENDER_EMAIL>"
-        SENDER_PASS  = "<YOUR_SENDER_PASSWORD>"
-        RECEIVER     = "<YOUR_RECEIVER_EMAIL>"
-        SMTP_SERVER  = "smtp.office365.com"
-        SMTP_PORT    = 587
+        SENDER_PASS = "<YOUR_SENDER_PASSWORD>"
+        RECEIVER = "<YOUR_RECEIVER_EMAIL>"
+        SMTP_SERVER = "smtp.office365.com"
+        SMTP_PORT = 587
 
         try:
             msg = MIMEMultipart("alternative")
@@ -141,15 +141,15 @@ class SafarSathiBackground(MatchingCapability):
         Sends an email containing location details, Google Static Maps inline card,
         and IP Webcam live video streaming links to the trusted contact.
         """
-        WEBCAM_URL      = "http://192.168.18.254:8080"
+        WEBCAM_URL = "http://192.168.18.254:8080"
         GOOGLE_MAPS_KEY = "<YOUR_GOOGLE_MAPS_API_KEY>"
 
         # 1. Get location
         loc = self._get_coordinates()
         lat, lon = loc["lat"], loc["lon"]
-        city     = loc["city"]
-        country  = loc["country"]
-        ts       = loc["time"]
+        city = loc["city"]
+        country = loc["country"]
+        ts = loc["time"]
 
         maps_link = f"https://www.google.com/maps?q={lat},{lon}"
         map_image = (
@@ -282,7 +282,7 @@ class SafarSathiBackground(MatchingCapability):
                     continue
 
                 alert_active = state.get("alert_active", False)
-                mode         = state.get("mode", "active")
+                mode = state.get("mode", "active")
 
                 if alert_active:
                     if not was_active:

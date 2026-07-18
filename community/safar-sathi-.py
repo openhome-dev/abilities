@@ -149,7 +149,7 @@ class SafarSathiCapability(MatchingCapability):
                 self.worker.editor_logging_handler.info(f"[SafarSathi] Heard: '{text}'")
 
                 deactivated = False
-                if mode == "active"  and any(p in text for p in active_deactivation_phrases):
+                if mode == "active" and any(p in text for p in active_deactivation_phrases):
                     deactivated = True
                 elif mode == "passive" and any(p in text for p in passive_deactivation_phrases):
                     deactivated = True
