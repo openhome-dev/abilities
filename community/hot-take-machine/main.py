@@ -29,7 +29,7 @@ class HotTakeMachineCapability(MatchingCapability):
             score_data = self.capability_worker.get_single_key("htmscoreboard")
             htm_wins = score_data.get("htm", 0)
             user_wins = score_data.get("user", 0)
-        except:
+        except Exception:
             htm_wins = 0
             user_wins = 0
 
