@@ -1,0 +1,14 @@
+{
+  "name": "immersivefeedback",
+  "capability_id": "7206",
+  "category": "skill",
+  "description": "Rate a completed Immersive provider job by voice for personalized ranking.",
+  "trigger_words": [
+    "rate my service",
+    "job finished",
+    "leave feedback"
+  ],
+  "release_id": 16621,
+  "version": "v2",
+  "is_committed": false
+}

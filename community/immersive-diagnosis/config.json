@@ -1,0 +1,8 @@
+{
+    "unique_name": "immersive_diagnosis",
+    "matching_hotwords": [
+        "home help",
+        "diagnose my home",
+        "ac not cooling"
+    ]
+}

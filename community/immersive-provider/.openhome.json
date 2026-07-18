@@ -1,0 +1,19 @@
+{
+  "name": "immersiveprovider",
+  "capability_id": "7207",
+  "category": "skill",
+  "description": "Compare provider quotes and book one by voice for Immersive service requests.",
+  "trigger_words": [
+    "check my quotes",
+    "compare providers",
+    "book a provider",
+    "find me a technician",
+    "who should I call",
+    "find an electrician",
+    "emergency help",
+    "call a technician"
+  ],
+  "release_id": 16629,
+  "version": "v3",
+  "is_committed": false
+}

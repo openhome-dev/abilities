@@ -1,0 +1,8 @@
+{
+    "unique_name": "immersive_feedback",
+    "matching_hotwords": [
+        "rate my service",
+        "job finished",
+        "leave feedback"
+    ]
+}
