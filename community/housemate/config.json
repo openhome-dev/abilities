@@ -1,0 +1,26 @@
+{
+  "unique_name": "housemate",
+  "description": "Multilingual home assistant: email contacts, Islamabad time, reminders, schedule memory, doctor plans, walk-home.",
+  "category": "skill",
+  "matching_hotwords": [
+    "housemate",
+    "hey housemate",
+    "send email",
+    "send an email",
+    "email dad",
+    "email security",
+    "email doctor",
+    "remind me",
+    "set a reminder",
+    "what time is it",
+    "current time",
+    "time in islamabad",
+    "my schedule",
+    "what's planned",
+    "remember that",
+    "book a doctor",
+    "look up",
+    "I'm walking home",
+    "walking home"
+  ]
+}
