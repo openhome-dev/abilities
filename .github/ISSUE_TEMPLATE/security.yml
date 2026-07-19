@@ -1,0 +1,32 @@
+name: 🔒 Security Vulnerability
+description: Report a security issue (will be kept confidential)
+title: "[Security] "
+labels: ["security", "triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ⚠️ **For critical security issues, please email security@openhome.xyz instead of opening a public issue.**
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Vulnerability Description
+      description: Describe the security issue
+    validations:
+      required: true
+
+  - type: textarea
+    id: impact
+    attributes:
+      label: Potential Impact
+      description: What could an attacker do with this vulnerability?
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to Reproduce
+    validations:
+      required: true

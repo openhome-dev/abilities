@@ -1,0 +1,19 @@
+community-ability:
+  - changed-files:
+    - any-glob-to-any-file: 'community/**'
+
+official-ability:
+  - changed-files:
+    - any-glob-to-any-file: 'official/**'
+
+documentation:
+  - changed-files:
+    - any-glob-to-any-file: 'docs/**'
+
+templates:
+  - changed-files:
+    - any-glob-to-any-file: 'templates/**'
+
+ci-cd:
+  - changed-files:
+    - any-glob-to-any-file: '.github/**'
