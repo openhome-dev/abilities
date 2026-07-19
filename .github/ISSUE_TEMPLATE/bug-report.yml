@@ -1,0 +1,104 @@
+name: 🐛 Bug Report
+description: Report a bug in an existing ability
+title: "[Bug] "
+labels: ["bug", "triage"]
+assignees: []
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting a bug! Please fill out the sections below.
+
+  - type: dropdown
+    id: ability-type
+    attributes:
+      label: Ability Type
+      description: Is this a bug in an official or community ability?
+      options:
+        - Official Ability
+        - Community Ability
+        - Template
+        - validate_ability.py / CI
+    validations:
+      required: true
+
+  - type: input
+    id: ability-name
+    attributes:
+      label: Ability Name
+      description: Which ability is affected?
+      placeholder: e.g., "quiz-game", "weather", "basic-advisor"
+    validations:
+      required: true
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Bug Description
+      description: A clear description of what the bug is.
+      placeholder: Tell us what happened...
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to Reproduce
+      description: How can we reproduce the issue?
+      value: |
+        1. Upload ability to OpenHome dashboard
+        2. Set trigger words to "..."
+        3. Say "..."
+        4. See error
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected Behavior
+      description: What should have happened?
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual Behavior
+      description: What actually happened?
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Error Logs
+      description: Paste any error logs or screenshots
+      render: shell
+
+  - type: dropdown
+    id: device
+    attributes:
+      label: OpenHome Device
+      options:
+        - OpenHome Mini
+        - OpenHome Hub
+        - Other / Simulator
+    validations:
+      required: true
+
+  - type: input
+    id: firmware
+    attributes:
+      label: Firmware / App Version
+      placeholder: e.g., v2.1.0
+
+  - type: checkboxes
+    id: terms
+    attributes:
+      label: Checklist
+      options:
+        - label: I searched existing issues and this hasn't been reported
+          required: true
+        - label: I'm using the latest version of this ability
+          required: true

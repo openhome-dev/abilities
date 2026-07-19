@@ -1,0 +1,58 @@
+name: Welcome
+
+on:
+  pull_request_target:
+    types: [opened]
+  issues:
+    types: [opened]
+
+jobs:
+  welcome-pr:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request_target'
+    permissions:
+      pull-requests: write
+    steps:
+      - uses: actions/github-script@v7
+        with:
+          script: |
+            const creator = context.payload.pull_request.user.login;
+            const { data: prs } = await github.rest.pulls.list({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: 'all',
+              creator: creator
+            });
+            if (prs.length === 1) {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.payload.pull_request.number,
+                body: `👋 Welcome @${creator}! Thanks for your first contribution to OpenHome Abilities!\n\nA maintainer will review your PR shortly. While you wait:\n- ⭐ Star the repo if you haven't already\n- 💬 Join our [Discord](https://discord.gg/openhome)\n- 📖 Check the [Contributing Guide](CONTRIBUTING.md)\n\nHere's what happens next:\n1. Our CI will validate your ability structure\n2. A reviewer will check your code\n3. Once approved, it'll be merged to \`dev\` and then to \`main\`\n\nThanks for building with OpenHome! 🏠`
+              });
+            }
+
+  welcome-issue:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'issues'
+    permissions:
+      issues: write
+    steps:
+      - uses: actions/github-script@v7
+        with:
+          script: |
+            const creator = context.payload.issue.user.login;
+            const { data: issues } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              creator: creator,
+              state: 'all'
+            });
+            if (issues.length === 1) {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.payload.issue.number,
+                body: `👋 Thanks for opening your first issue, @${creator}! A maintainer will triage this shortly.\n\nIn the meantime, check if there's an existing [Discussion](https://github.com/openhome-dev/abilities/discussions) about this topic.`
+              });
+            }

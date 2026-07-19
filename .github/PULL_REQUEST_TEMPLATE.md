@@ -36,9 +36,10 @@
 - [ ] `resume_normal_flow()` called on every exit path
 - [ ] No `print()` — using `editor_logging_handler`
 - [ ] No hardcoded API keys — using placeholders
-- [ ] No blocked imports (`redis`, `connection_manager`, `user_config`)
+- [ ] No blocked imports (`redis`, `user_config`)
 - [ ] No `asyncio.sleep()` or `asyncio.create_task()` — using `session_tasks`
 - [ ] Error handling on all external calls
+- [ ] Tested in OpenHome Live Editor
 
 ## Anything else?
 
