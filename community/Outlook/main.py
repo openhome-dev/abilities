@@ -1,7 +1,6 @@
 import asyncio
 import datetime
 import json
-import os
 import random
 import re
 
@@ -285,7 +284,7 @@ class OutlookCapability(MatchingCapability):
     trigger_data: dict = None  # Stores classified trigger intent
 
     # {{register capability}}
-    #{{register_capability}}
+    # {{register_capability}}
 
     def call(self, worker: AgentWorker):
         self.worker = worker

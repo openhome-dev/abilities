@@ -1,5 +1,3 @@
-import json
-import os
 import random
 
 from src.agent.capability import MatchingCapability
@@ -11,7 +9,7 @@ class CoinFlipperCapability(MatchingCapability):
     worker: AgentWorker = None
     capability_worker: CapabilityWorker = None
 
-    #{{register_capability}}
+    # {{register_capability}}
 
     async def run_coin_logic(self):
         """

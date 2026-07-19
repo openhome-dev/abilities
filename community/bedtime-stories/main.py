@@ -199,7 +199,7 @@ class BedtimeStoriesCapability(MatchingCapability):
         return self._parse_segment(raw)
 
     def _save_checkpoint(self, data: dict, segment_text: str, choice_made: str):
-        hero_name = data.get("hero_name", "the hero")
+        data.get("hero_name", "the hero")
         checkpoint = self._last_sentence(segment_text)
         if not data.get("current_story"):
             data["current_story"] = {
