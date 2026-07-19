@@ -1,0 +1,74 @@
+name: Update Contributors
+
+on:
+  pull_request_target:
+    branches: [dev]
+    types: [closed]
+    paths:
+      - 'community/**'
+
+jobs:
+  update-contributors:
+    if: github.event.pull_request.merged == true
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: dev
+          token: ${{ secrets.PAT_TOKEN }}
+          fetch-depth: 0
+
+      - name: Add contributor
+        run: |
+          USERNAME="${{ github.event.pull_request.user.login }}"
+
+          ABILITY_DIRS=$(git diff --name-only ${{ github.event.pull_request.base.sha }}...${{ github.event.pull_request.merge_commit_sha }} \
+            | grep -E '^community/' \
+            | cut -d'/' -f1-2 \
+            | sort -u)
+
+          if [ -z "$ABILITY_DIRS" ]; then
+            echo "⚠️ No community ability directories found in diff"
+            exit 0
+          fi
+
+          # Remove placeholder line if present
+          sed -i '/\*Be the first!/d' CONTRIBUTORS.md
+
+          for ABILITY_DIR in $ABILITY_DIRS; do
+            ABILITY_NAME=$(basename "$ABILITY_DIR")
+            ABILITY_ENTRY="$ABILITY_NAME ([$ABILITY_NAME]($ABILITY_DIR/))"
+
+            if grep -q "@$USERNAME" CONTRIBUTORS.md; then
+              # User exists — check if this specific ability is already listed
+              USER_LINE=$(grep "@$USERNAME" CONTRIBUTORS.md)
+
+              if echo "$USER_LINE" | grep -qF "$ABILITY_NAME ([$ABILITY_NAME]"; then
+                echo "✅ $USERNAME already has $ABILITY_NAME — skipping"
+                continue
+              fi
+
+              # Append new ability to existing user line
+              sed -i "/@${USERNAME}/s|\$|, ${ABILITY_ENTRY}|" CONTRIBUTORS.md
+              echo "✅ Added $ABILITY_NAME to $USERNAME's existing entry"
+            else
+              # New user — add fresh line
+              echo "- **[@$USERNAME](https://github.com/$USERNAME)** — $ABILITY_ENTRY" >> CONTRIBUTORS.md
+              echo "✅ Added new contributor $USERNAME with $ABILITY_NAME"
+            fi
+          done
+
+          echo ""
+          echo "📄 Final CONTRIBUTORS.md:"
+          cat CONTRIBUTORS.md
+
+      - name: Commit and push
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git restore --staged .        # unstage everything first
+          git checkout -- .gitignore    # never let a PR's .gitignore change bleed in
+          git add CONTRIBUTORS.md       # stage only what we intend
+          git diff --cached --quiet || git commit -m "docs: add @${{ github.event.pull_request.user.login }} to contributors"
+          git push origin dev

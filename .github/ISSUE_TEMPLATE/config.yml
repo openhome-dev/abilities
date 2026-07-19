@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 💬 General Questions & Discussion
+    url: https://github.com/openhome-dev/abilities/discussions
+    about: Ask questions and discuss in Discussions, not Issues
+  - name: 💡 Ability Ideas
+    url: https://github.com/openhome-dev/abilities/discussions/categories/ability-ideas
+    about: Suggest new ability ideas
+  - name: 🎮 Discord Community
+    url: https://discord.gg/openhome
+    about: Chat with the community in real-time
