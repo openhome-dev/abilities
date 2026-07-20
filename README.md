@@ -394,4 +394,6 @@ When promoted, the Ability moves to `official/`, gets the official badge on the 
 
 Licensed under the [MIT License](LICENSE). All contributions to `community/` are licensed under the same terms. By submitting a PR you agree to these terms, and original authorship is always credited.
 
+Client: TIDES
+
 <p align="center"><sub><a href="#top">Back to top</a></sub></p>
