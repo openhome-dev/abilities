@@ -10,7 +10,7 @@ permissions:
   contents: read
  
 jobs:
-  lint:
+  python-lint:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
