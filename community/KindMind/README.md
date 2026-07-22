@@ -1,4 +1,3 @@
-This is a basic capability template.
 # KindMind
 
 An AI Emotional Stabilizer, built as an OpenHome Ability.
@@ -32,20 +31,17 @@ Every multi-step exercise is gated by the same primitive: `wait_for_ready()` —
 | Comfort Plan | Built with the user, not handed to them — a story, music suggestion, or encouragement, based on what they say they want |
 | Quotes & Affirmations | Offered, never automatic |
 | Mood Check-In | Closes every pass through the loop |
-| Reminders | Set up conversationally ("remind me about my exam tomorrow"); tries to create a real Google Calendar event via the account already linked for Calendar Assistant, falling back to a simple stored reminder delivered next time KindMind is triggered |
 
 ## Trigger words
 
-`I need to calm down` · `help me breathe` · `I'm panicking` · `ground me` · `I feel anxious` · `talk me down` · `I need some comfort` · `check on me` · `remind me to` · `kindmind`
+`I need to calm down` · `help me breathe` · `I'm panicking` · `ground me` · `I feel anxious` · `talk me down` · `I need some comfort` · `check on me` · `kindmind`
 
 ## Files
 
-- `main.py` — the Ability itself (`KindMindCapability`)
+- `main.py` — the Ability itself (`KindmindCapability`)
 - `__init__.py` — package init
 
 ## Known limitations (be honest with judges about these)
 
 - **Classifier reliability is untested at scale.** Every routing decision (emotion, affirmation, feature choice) depends on the LLM returning one clean word. It generally will, but hasn't been stress-tested against messy real speech.
-- **Calendar writes depend on Google being linked in OpenHome** via account linking (`get_token("google")`), not a pasted API key. If that link doesn't carry calendar write scope, it silently falls back to a simpler stored reminder — check the Ability's logs to see which path actually ran.
-- **No true unprompted proactivity.** Reminders are delivered the next time KindMind is triggered, not pushed to the person out of nowhere — Abilities are triggered by user speech, not by a background scheduler.
 - **No crisis-escalation path.** KindMind handles panic and distress, but doesn't currently recognize or route on signs of actual self-harm risk. Worth a deliberate conversation before this goes anywhere beyond a hackathon demo.
