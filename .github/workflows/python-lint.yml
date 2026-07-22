@@ -10,7 +10,7 @@ permissions:
   contents: read
  
 jobs:
-  lint:
+  python-lint:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -69,7 +69,7 @@ jobs:
         if: steps.changed.outputs.skip == 'false' && steps.changed.outputs.init_files != ''
         id: init_check
         run: |
-> init_violations.txt
+          > init_violations.txt
           has_violations=false
           for file in ${{ steps.changed.outputs.init_files }}; do
             [ ! -f "$file" ] && continue
