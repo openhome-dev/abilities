@@ -1,7 +1,9 @@
 import * as vscode from "vscode";
 import * as api from "./api";
-import { ensureCli, runInTerminal, runCliOrNotify } from "./cli";
+import * as templates from "./templates";
+import { ensureCli, runInTerminal, runCliOrNotify, initCli } from "./cli";
 import { AccountProvider, AbilitiesProvider, ActionsProvider, LocalProvider, Node } from "./trees";
+import { DevkitMonitor } from "./devkit";
 
 const MIN_TRIGGER_LETTERS = 4;
 
@@ -28,10 +30,13 @@ function triggerError(csv: string): string | undefined {
 
 export function activate(context: vscode.ExtensionContext): void {
   api.initApi(context.secrets);
+  initCli(context);
 
   const account = new AccountProvider();
   const abilities = new AbilitiesProvider();
-  const local = new LocalProvider();
+  const devkit = new DevkitMonitor();
+  const local = new LocalProvider(devkit);
+  context.subscriptions.push(devkit);
   const voice = new ActionsProvider([
     { label: "Voice call an agent", command: "openhome.call", icon: "unmute", color: "charts.blue", tooltip: "Mic + speakers (opens a terminal — needs the CLI)" },
     { label: "Chat with an agent", command: "openhome.chat", icon: "comment-discussion", color: "charts.blue", tooltip: "Interactive text session (opens a terminal — needs the CLI)" },
@@ -92,12 +97,14 @@ export function activate(context: vscode.ExtensionContext): void {
     await api.storeCredentials(apiKey.trim());
     vscode.window.showInformationMessage("OpenHome: signed in.");
     refreshData();
+    void devkit.reconnect(); // pick up the new key on the monitoring socket
   });
 
   reg("openhome.logout", async () => {
     await api.clearCredentials();
     vscode.window.showInformationMessage("OpenHome: signed out.");
     refreshData();
+    devkit.disconnect();
   });
 
   reg("openhome.refreshAccount", () => account.refresh());
@@ -167,9 +174,12 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.env.openExternal(vscode.Uri.parse("https://app.openhome.com"));
   });
 
-  // Open a downloaded ability's main.py. Local folders (in user/, official/,
-  // community/) carry a `.openhome.json` manifest linking them to a capability_id.
-  reg("openhome.openAbility", async (id?: string, name?: string) => {
+  // Find a downloaded ability's local folder by matching its `.openhome.json`
+  // manifest (capability_id first, then name). Local folders live in user/ etc.
+  const resolveAbilityFolder = async (
+    id?: string,
+    name?: string
+  ): Promise<vscode.Uri | undefined> => {
     const manifests = await vscode.workspace.findFiles(
       "**/.openhome.json",
       "**/{node_modules,.venv,.git}/**"
@@ -178,12 +188,10 @@ export function activate(context: vscode.ExtensionContext): void {
     let byName: vscode.Uri | undefined;
     for (const m of manifests) {
       try {
-        const raw = await vscode.workspace.fs.readFile(m);
-        const mf = JSON.parse(Buffer.from(raw).toString("utf8"));
+        const mf = JSON.parse(Buffer.from(await vscode.workspace.fs.readFile(m)).toString("utf8"));
         const folder = vscode.Uri.joinPath(m, "..");
         if (id && String(mf.capability_id) === String(id)) {
-          byId = folder;
-          break;
+          return folder;
         }
         if (name && mf.name === name) {
           byName = folder;
@@ -192,15 +200,24 @@ export function activate(context: vscode.ExtensionContext): void {
         /* skip unreadable/invalid manifest */
       }
     }
-    const folder = byId ?? byName;
+    return byId ?? byName;
+  };
+
+  const offerSync = async (label: string) => {
+    const pick = await vscode.window.showInformationMessage(
+      `"${label}" isn't downloaded locally yet.`,
+      "Sync now"
+    );
+    if (pick === "Sync now") {
+      vscode.commands.executeCommand("openhome.sync");
+    }
+  };
+
+  // Open a downloaded ability's main.py.
+  reg("openhome.openAbility", async (id?: string, name?: string) => {
+    const folder = await resolveAbilityFolder(id, name);
     if (!folder) {
-      const pick = await vscode.window.showInformationMessage(
-        `"${name ?? id}" isn't downloaded locally yet.`,
-        "Sync now"
-      );
-      if (pick === "Sync now") {
-        vscode.commands.executeCommand("openhome.sync");
-      }
+      await offerSync(name ?? id ?? "ability");
       return;
     }
     const mainPy = vscode.Uri.joinPath(folder, "main.py");
@@ -214,33 +231,143 @@ export function activate(context: vscode.ExtensionContext): void {
     await vscode.window.showTextDocument(doc, { preview: false });
   });
 
-  // Create / sync / push operate on local ability folders (scaffold + zip
-  // upload), which the Python CLI already handles — so these stay CLI-backed.
-  reg("openhome.create", async () => {
+  // Resolve the ability folder to push from either a tree item (by capability_id)
+  // or the active/passed main.py editor (its containing folder).
+  const pushTargetFolder = async (arg?: Node | vscode.Uri): Promise<vscode.Uri | undefined> => {
+    if (arg instanceof vscode.Uri) {
+      return vscode.Uri.joinPath(arg, ".."); // folder containing the given main.py
+    }
+    if (arg?.abilityId) {
+      return resolveAbilityFolder(arg.abilityId);
+    }
+    const active = vscode.window.activeTextEditor?.document.uri;
+    if (active && active.path.endsWith("/main.py")) {
+      return vscode.Uri.joinPath(active, "..");
+    }
+    return undefined;
+  };
+
+  const doPush = async (folder: vscode.Uri | undefined, commit: boolean, label: string) => {
+    if (!folder) {
+      await offerSync(label);
+      return;
+    }
+    let message = "";
+    if (commit) {
+      message =
+        (await vscode.window.showInputBox({
+          title: "Commit message",
+          prompt: "Describe this version",
+          placeHolder: "e.g. add first_function",
+          ignoreFocusOut: true,
+        })) || "";
+      if (!message) {
+        return; // cancelled
+      }
+    }
     if (!(await ensureCli())) {
+      return;
+    }
+    // Save the open editor first so the latest code is what gets uploaded.
+    await vscode.workspace.saveAll(false);
+    const args = commit
+      ? ["push", folder.fsPath, "--commit", "-m", message]
+      : ["push", folder.fsPath];
+    const out = await vscode.window.withProgress(
+      { location: vscode.ProgressLocation.Notification, title: commit ? "OpenHome: committing a version…" : "OpenHome: saving draft…" },
+      () => runCliOrNotify(args)
+    );
+    if (out !== undefined) {
+      vscode.window.showInformationMessage(out.trim() || (commit ? "Committed a version." : "Saved a draft."));
+      abilities.refresh();
+    }
+  };
+
+  // Two explicit buttons: Save Draft (no version) and Commit (cut a version).
+  reg("openhome.pushDraft", async (arg?: Node | vscode.Uri) => {
+    const folder = await pushTargetFolder(arg);
+    await doPush(folder, false, (arg as Node)?.abilityId ?? "ability");
+  });
+  reg("openhome.pushCommit", async (arg?: Node | vscode.Uri) => {
+    const folder = await pushTargetFolder(arg);
+    await doPush(folder, true, (arg as Node)?.abilityId ?? "ability");
+  });
+
+  // Create is fully native: templates come from GitHub (no repo/CLI needed);
+  // the chosen template is downloaded and scaffolded locally. Push (upload) is
+  // still CLI-backed below.
+  reg("openhome.create", async () => {
+    const wsRoot = vscode.workspace.workspaceFolders?.[0]?.uri;
+    if (!wsRoot) {
+      vscode.window.showErrorMessage("OpenHome: open a folder first to create an ability into it.");
       return;
     }
     const name = await vscode.window.showInputBox({
       title: "New ability name",
-      prompt: "lowercase-with-hyphens",
+      prompt: "lowercase-with-hyphens (this becomes the folder + class name)",
       ignoreFocusOut: true,
-      validateInput: (v) => (/^[a-z0-9-]+$/.test(v) ? undefined : "Use lowercase letters, numbers and hyphens."),
+      validateInput: (v) =>
+        /^[a-z][a-z0-9-]*$/.test(v) ? undefined : "Lowercase letters, numbers and hyphens; start with a letter.",
     });
     if (!name) {
       return;
     }
-    const out = await runCliOrNotify(["create", name, "--no-push"]);
-    if (out !== undefined) {
-      vscode.window.showInformationMessage(out.trim() || `Created ${name}.`);
+
+    let list: templates.Template[];
+    try {
+      list = await vscode.window.withProgress(
+        { location: vscode.ProgressLocation.Window, title: "OpenHome: loading templates…" },
+        () => templates.listTemplates()
+      );
+    } catch (e) {
+      vscode.window.showErrorMessage(`OpenHome: couldn't load templates. ${e instanceof Error ? e.message : e}`);
+      return;
+    }
+    if (list.length === 0) {
+      vscode.window.showErrorMessage("OpenHome: no templates found.");
+      return;
+    }
+    const picked = await vscode.window.showQuickPick(
+      list.map((t) => ({
+        label: `$(file-code) ${t.name}`,
+        description: t.source === "official" ? "official example" : "template",
+        t,
+      })),
+      { title: "Choose a template", placeHolder: "Select a starting template", matchOnDescription: true, ignoreFocusOut: true }
+    );
+    if (!picked) {
+      return;
+    }
+
+    try {
+      const folder = await vscode.window.withProgress(
+        { location: vscode.ProgressLocation.Notification, title: `OpenHome: creating "${name}" from ${picked.t.name}…` },
+        () => templates.scaffold(picked.t, name, vscode.Uri.joinPath(wsRoot, "user"))
+      );
       abilities.refresh();
+      const doc = await vscode.workspace.openTextDocument(vscode.Uri.joinPath(folder, "main.py"));
+      await vscode.window.showTextDocument(doc, { preview: false });
+      vscode.window.showInformationMessage(
+        `OpenHome: created "${name}". Edit main.py, then use Push to upload it.`
+      );
+    } catch (e) {
+      vscode.window.showErrorMessage(`OpenHome: create failed. ${e instanceof Error ? e.message : e}`);
     }
   });
 
   reg("openhome.sync", async () => {
+    const wsRoot = vscode.workspace.workspaceFolders?.[0]?.uri;
+    if (!wsRoot) {
+      vscode.window.showErrorMessage("OpenHome: open a folder first to sync abilities into it.");
+      return;
+    }
     if (!(await ensureCli())) {
       return;
     }
-    if ((await runCliOrNotify(["sync"])) !== undefined) {
+    // Force the download into THIS workspace's user/ — without --dest the CLI
+    // writes relative to its own install location, not the open folder.
+    const dest = vscode.Uri.joinPath(wsRoot, "user").fsPath;
+    if ((await runCliOrNotify(["sync", "--dest", dest])) !== undefined) {
       vscode.window.showInformationMessage("OpenHome: synced abilities into user/.");
       abilities.refresh();
     }
@@ -368,35 +495,25 @@ export function activate(context: vscode.ExtensionContext): void {
     }
   });
 
-  // ── Local bridge (devkit, needs the CLI) ────────────────────────────────
-  reg("openhome.localStart", async () => {
-    if (!(await ensureCli())) {
+  // ── Devkit monitor (live socket, no CLI needed) ─────────────────────────
+  reg("openhome.devkitConnect", async () => {
+    if (!(await api.isConfigured())) {
+      vscode.window.showWarningMessage("OpenHome: sign in first to connect to your devkit.");
       return;
     }
-    if ((await runCliOrNotify(["local", "start"])) !== undefined) {
-      vscode.window.showInformationMessage("OpenHome: local bridge started.");
-    }
-    local.refresh();
+    await devkit.connect();
   });
 
-  reg("openhome.localStop", async () => {
-    if (!(await ensureCli())) {
-      return;
-    }
-    if ((await runCliOrNotify(["local", "stop"])) !== undefined) {
-      vscode.window.showInformationMessage("OpenHome: local bridge stopped.");
-    }
-    local.refresh();
-  });
+  reg("openhome.devkitDisconnect", () => devkit.disconnect());
 
-  reg("openhome.localStatus", () => local.refresh());
+  reg("openhome.devkitRefresh", () => devkit.reconnect());
 
-  reg("openhome.localLogs", async () => {
-    if (!(await ensureCli())) {
-      return;
+  // Start monitoring immediately if we're already signed in.
+  void (async () => {
+    if (await api.isConfigured()) {
+      await devkit.connect();
     }
-    await runInTerminal("OpenHome Bridge Logs", ["local", "logs"]);
-  });
+  })();
 }
 
 export function deactivate(): void {}
