@@ -171,6 +171,38 @@ function exec(cmd: string, args: string[], cwd?: string): Promise<{ code: number
   });
 }
 
+const PY_VER = ["-c", "import sys;print(sys.version_info[0], sys.version_info[1])"];
+
+function atLeast310(out: string): boolean {
+  const m = out.trim().match(/(\d+)\s+(\d+)/);
+  return !!m && (+m[1] > 3 || (+m[1] === 3 && +m[2] >= 10));
+}
+
+/**
+ * Find a Python 3.10+ launcher. `openhome-client` requires >=3.10, and bare
+ * `python3` is often an older system Python — so try versioned names first.
+ * Returns the argv prefix (e.g. ["python3.12"] or ["py","-3.12"]) or undefined.
+ */
+async function findPython310(): Promise<string[] | undefined> {
+  const candidates: string[][] =
+    process.platform === "win32"
+      ? [["py", "-3.13"], ["py", "-3.12"], ["py", "-3.11"], ["py", "-3.10"], ["python"], ["py"]]
+      : [["python3.13"], ["python3.12"], ["python3.11"], ["python3.10"], ["python3"], ["python"]];
+  for (const c of candidates) {
+    const r = await exec(c[0], [...c.slice(1), ...PY_VER]);
+    if (r.code === 0 && atLeast310(r.out)) {
+      return c;
+    }
+  }
+  return undefined;
+}
+
+/** True if the given venv python is 3.10+. */
+async function venvPy310(venvPy: string): Promise<boolean> {
+  const r = await exec(venvPy, PY_VER);
+  return r.code === 0 && atLeast310(r.out);
+}
+
 /**
  * Automatically set up the Python CLI with no prompts: reuse the workspace
  * `.venv` if present, otherwise create one, then `pip install openhome-client`
@@ -188,15 +220,26 @@ async function autoInstallCli(baseDir: string): Promise<boolean> {
     { location: vscode.ProgressLocation.Notification, title: "OpenHome: setting up the CLI", cancellable: false },
     async (progress) => {
       let venvPy = findVenvPython(baseDir);
-      if (!venvPy) {
+      // Recreate the venv if it's missing or built with an old Python (<3.10),
+      // which can't install openhome-client (requires >=3.10).
+      if (!venvPy || !(await venvPy310(venvPy))) {
         progress.report({ message: "creating a virtual environment…" });
-        let r = await exec(isWin ? "python" : "python3", ["-m", "venv", ".venv"], baseDir);
-        if (r.code !== 0 && !isWin) {
-          r = await exec("python", ["-m", "venv", ".venv"], baseDir); // some distros only have `python`
+        try {
+          fs.rmSync(path.join(baseDir, ".venv"), { recursive: true, force: true });
+        } catch {
+          /* best effort */
         }
+        const py = await findPython310();
+        if (!py) {
+          vscode.window.showErrorMessage(
+            "OpenHome: needs Python 3.10 or newer. Install it (macOS: `brew install python@3.12`) and try again."
+          );
+          return false;
+        }
+        const r = await exec(py[0], [...py.slice(1), "-m", "venv", ".venv"], baseDir);
         if (r.code !== 0) {
           vscode.window.showErrorMessage(
-            `OpenHome: couldn't create a Python venv — install Python 3, or set openhome.cliPath. ${r.out.trim().slice(-200)}`
+            `OpenHome: couldn't create a Python venv. ${r.out.trim().slice(-200)}`
           );
           return false;
         }
@@ -206,15 +249,32 @@ async function autoInstallCli(baseDir: string): Promise<boolean> {
         vscode.window.showErrorMessage("OpenHome: venv created but its Python wasn't found.");
         return false;
       }
+      // Upgrade pip first — old pip (bundled with some Pythons) can't find wheels
+      // for numpy/pyaudio and fails trying to build them from source.
+      progress.report({ message: "upgrading pip…" });
+      await exec(venvPy, ["-m", "pip", "install", "--disable-pip-version-check", "--upgrade", "pip"], baseDir);
+
       // Install from the repo's cli/ (editable) when present, else from PyPI.
       const src = findCliSource(baseDir);
       const target = src ? ["-e", src] : ["openhome-client"];
       progress.report({
         message: src ? "installing the CLI from cli/ …" : "installing openhome-client from PyPI…",
       });
-      const r = await exec(venvPy, ["-m", "pip", "install", "--upgrade", ...target], baseDir);
+      const r = await exec(
+        venvPy,
+        ["-m", "pip", "install", "--disable-pip-version-check", "--upgrade", ...target],
+        baseDir
+      );
       if (r.code !== 0) {
-        vscode.window.showErrorMessage(`OpenHome: pip install failed. ${r.out.trim().slice(-260)}`);
+        // Surface the actual error lines, not the trailing pip-version notice.
+        const errLines = r.out
+          .split("\n")
+          .filter((l) => /error|failed|could not|no matching|not supported/i.test(l))
+          .slice(-4)
+          .join("  ");
+        vscode.window.showErrorMessage(
+          `OpenHome: pip install failed. ${errLines || r.out.trim().slice(-300)}`
+        );
         return false;
       }
       return true;
