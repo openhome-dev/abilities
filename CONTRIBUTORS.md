@@ -52,3 +52,4 @@ Format: - **@username** — ability-name ([ability-name](community/ability-name/
 - **[@SpkArtZen](https://github.com/SpkArtZen)** — podcast-player ([podcast-player](community/podcast-player/))
 - **[@StressTestor](https://github.com/StressTestor)** — on-this-day ([on-this-day](community/on-this-day/))
 - **[@rawqubit](https://github.com/rawqubit)** — celebration-engine ([celebration-engine](community/celebration-engine/)), future-letter-writer ([future-letter-writer](community/future-letter-writer/)), spelling-bee-coach ([spelling-bee-coach](community/spelling-bee-coach/)), workout-tracker ([workout-tracker](community/workout-tracker/))
+- **[@u-faizan](https://github.com/u-faizan)** — voice-interpreter ([voice-interpreter](community/voice-interpreter/))
