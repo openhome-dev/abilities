@@ -10,8 +10,8 @@ from src.agent.capability_worker import CapabilityWorker
 # ==========================================
 # SUPABASE CONFIG  ->  YAHAN APNI VALUES DAALO
 # ==========================================
-SUPABASE_URL = "https://baygwvfczfwxltolxzzp.supabase.co"
-SUPABASE_KEY = "sb_publishable_bDWrB4knE2DyOJ20K7zSGQ_VnitEBbV"
+SUPABASE_URL = "https://###########.supabase.co"
+SUPABASE_KEY = "###############################"
 
 
 TABLE_NAME = "patients"
