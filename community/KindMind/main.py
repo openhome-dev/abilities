@@ -93,9 +93,7 @@ class KindmindCapability(MatchingCapability):
         try:
             await self.say(INTRO_PROMPT)
 
-            first_reply = await cw.user_response()
-            while not first_reply or not first_reply.strip():
-                first_reply = await cw.user_response()
+            first_reply = await self._listen()
             self.absorb_reply(first_reply)
 
             intent = self.classify_intent(first_reply)
@@ -355,13 +353,21 @@ class KindmindCapability(MatchingCapability):
         self._check_exit(reply)
         self.history.append({"role": "user", "content": reply})
 
-    async def say_and_listen(self, instruction: str) -> str:
+    async def _listen(self, max_empty: int = 3) -> str:
+        """Wait for a non-empty reply; after several silent turns, exit
+        gracefully instead of looping forever — a silent user must never
+        hang the session."""
         cw = self.capability_worker
+        for _ in range(max_empty):
+            reply = await cw.user_response()
+            if reply and reply.strip():
+                return reply
+        raise ExitRequested()
+
+    async def say_and_listen(self, instruction: str) -> str:
         line = self.generate_line(instruction)
         await self.say(line)
-        reply = await cw.user_response()
-        while not reply or not reply.strip():
-            reply = await cw.user_response()
+        reply = await self._listen()
         self.absorb_reply(reply)
         return reply
 
@@ -416,7 +422,12 @@ class KindmindCapability(MatchingCapability):
 
     def _check_exit(self, text: str):
         lowered = (text or "").strip().lower()
-        if any(phrase in lowered for phrase in EXIT_PHRASES):
+        # Exact phrase, or a short reply that is clearly an exit — avoids
+        # false-triggering on distress like "I can't stop panicking".
+        if lowered in EXIT_PHRASES:
+            raise ExitRequested()
+        words = lowered.split()
+        if len(words) <= 3 and any(w in {"stop", "exit", "quit"} for w in words):
             raise ExitRequested()
 
     # ------------------------------------------------------------------
@@ -425,25 +436,20 @@ class KindmindCapability(MatchingCapability):
 
     async def wait_for_ready(self, instruction: str, retry_instruction: str = None,
                              persona: str = CALM_PERSONA) -> str:
-        cw = self.capability_worker
         retry_instruction = retry_instruction or (
             "Gently reassure them there's no rush at all, and ask again "
             "when they're ready."
         )
 
         await self.say(self.generate_line(instruction, persona))
-        reply = await cw.user_response()
-        while not reply or not reply.strip():
-            reply = await cw.user_response()
+        reply = await self._listen()
         self.absorb_reply(reply)
 
         signal = self.classify_affirmation(reply)
 
         while signal == "not_ready":
             await self.say(self.generate_line(retry_instruction, persona))
-            reply = await cw.user_response()
-            while not reply or not reply.strip():
-                reply = await cw.user_response()
+            reply = await self._listen()
             self.absorb_reply(reply)
             signal = self.classify_affirmation(reply)
 
