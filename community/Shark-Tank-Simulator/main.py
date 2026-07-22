@@ -9,7 +9,7 @@ from src.main import AgentWorker
 from src.agent.capability_worker import CapabilityWorker
 
 
-ELEVEN_API_KEY = os.getenv("ce9be84452706f919667389a08ceaff5874153c4c26e7e100da65f94c0bcc62d", "")
+ELEVEN_API_KEY = "YOUR_API_KEY"
 
 VOICE_SKEPTIC = "yJLlp2SHBZbo4wKGgSUY"  # cold, dry, doubting
 VOICE_HYPE = "neuKegR4bFeXZWzEAgYg"     # loud, warm, overexcited
