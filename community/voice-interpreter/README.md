@@ -19,7 +19,15 @@ No external API keys are required. This ability uses the core OpenHome LLM routi
 2. The agent asks which two languages to translate between.
 3. The user responds (e.g., "English and French").
 4. A continuous loop starts. The agent listens, automatically detects which of the two languages was spoken, translates it to the other language, and speaks it out loud.
-5. **IMPORTANT:** The loop continues indefinitely in order to provide a seamless interpreter experience. To stop the loop and exit back to the normal OpenHome agent, the user must explicitly say **"Stop translation"** or **"Exit"**.
+5. **IMPORTANT:** The loop continues in order to provide a seamless interpreter experience. To stop the loop and exit back to the normal OpenHome agent, the user can say any of the exit phrases below.
+
+## Stopping / Exiting
+Say any of these at any time to leave translation mode: **"stop translation"**, **"stop"**, **"exit"**, **"quit"**, **"cancel"**, **"done"**, **"goodbye"**, or **"bye"**. The exit phrase is checked *before* any translation call, so it is never mistranslated.
+
+## Robustness Notes
+- **Natural pauses are fine.** A silent turn between speakers does not end the session — the interpreter only stops after several consecutive silent turns (assuming the conversation is over).
+- **Errors degrade gracefully.** If a translation fails or comes back empty, the agent says it couldn't translate that and keeps listening, rather than crashing the loop.
+- On any exit — command, prolonged silence, or error — control is always returned to the normal OpenHome agent.
 
 ## Example Conversation (English & French Scenario)
 
