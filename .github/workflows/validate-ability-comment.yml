@@ -1,0 +1,94 @@
+name: Validate Ability (Comment)
+
+on:
+  workflow_run:
+    workflows: ["Validate Ability (Untrusted)"]
+    types: [completed]
+
+permissions:
+  contents: read
+  pull-requests: write
+  actions: read   # needed to download artifacts from the other run
+
+jobs:
+  comment:
+    runs-on: ubuntu-latest
+    if: github.event.workflow_run.conclusion != 'cancelled'
+    steps:
+      - name: Download artifact from triggering run
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const artifacts = await github.rest.actions.listWorkflowRunArtifacts({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              run_id: context.payload.workflow_run.id,
+            });
+            const match = artifacts.data.artifacts.find(a => a.name === 'validation-results');
+            if (!match) {
+              core.setFailed('No validation-results artifact found — nothing to comment.');
+              return;
+            }
+            const download = await github.rest.actions.downloadArtifact({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              artifact_id: match.id,
+              archive_format: 'zip',
+            });
+            const fs = require('fs');
+            fs.writeFileSync('artifact.zip', Buffer.from(download.data));
+
+      - name: Unzip artifact
+        run: unzip -o artifact.zip -d results
+
+      - name: Verify head SHA is still current, then comment
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const meta = JSON.parse(fs.readFileSync('results/metadata.json', 'utf8'));
+
+            // Re-fetch the PR to confirm nothing was pushed after validation ran
+            const pr = await github.rest.pulls.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: meta.pr_number,
+            });
+            if (pr.data.head.sha !== meta.head_sha) {
+              core.warning(`Stale artifact: validated ${meta.head_sha}, PR is now at ${pr.data.head.sha}. Skipping comment.`);
+              return;
+            }
+
+            const marker = '<!-- ability-validation-bot -->';
+            let body = `${marker}\n`;
+
+            if (meta.has_renames) {
+              const renameLog = fs.readFileSync('results/rename_log.txt', 'utf8').trim();
+              if (!meta.is_fork && meta.push_success === 'true') {
+                body += `## 📁 Folder Names Auto-Fixed\n\nCommunity ability folders may only use **hyphens** (\`-\`) — no underscores or spaces.\n\nThe following folders were **automatically renamed** and pushed:\n\n\`\`\`\n${renameLog}\n\`\`\`\n\n`;
+              } else {
+                body += `## ⚠️ Folder Names Need Fixing\n\nCommunity ability folders may only use **hyphens** (\`-\`) — no underscores or spaces.\n\n`;
+                if (meta.is_fork) body += `This PR is from a fork, so auto-rename cannot be pushed. `;
+                body += `Please rename manually:\n\n\`\`\`\n${renameLog}\n\`\`\`\n\n\`\`\`bash\ngit mv community/my_ability community/my-ability\n\`\`\`\n\n`;
+              }
+            }
+
+            const output = fs.readFileSync('results/validation_output.txt', 'utf8').trim();
+            const passed = meta.validate_outcome === 'success';
+            body += passed ? `## ✅ Ability Validation Passed\n\n` : `## ❌ Ability Validation Failed\n\n`;
+            if (output) body += `\`\`\`\n${output}\n\`\`\`\n\n`;
+            if (!passed) {
+              body += `### 📚 How to fix\n- Read the [Contributing Guide](CONTRIBUTING.md)\n- Check the [CapabilityWorker Reference](docs/capability-worker.md)\n- See [Blocked Imports & Keywords](https://docs.openhome.com/how_to_build_an_ability#blocked-imports-and-keywords)\n`;
+            }
+
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: meta.pr_number,
+            });
+            const existing = comments.find(c => c.body.includes(marker));
+            if (existing) {
+              await github.rest.issues.updateComment({ owner: context.repo.owner, repo: context.repo.repo, comment_id: existing.id, body });
+            } else {
+              await github.rest.issues.createComment({ owner: context.repo.owner, repo: context.repo.repo, issue_number: meta.pr_number, body });
+            }
