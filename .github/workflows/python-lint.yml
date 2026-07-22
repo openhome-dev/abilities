@@ -1,0 +1,155 @@
+name: Python Lint
+ 
+on:
+  pull_request:
+    branches: [dev, main]
+    paths:
+      - '**.py'
+ 
+permissions:
+  contents: read
+ 
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+ 
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+ 
+      - run: pip install flake8 autopep8 autoflake
+ 
+      - name: Check if same-repo branch
+        id: origin_check
+        run: |
+          if [ "${{ github.event.pull_request.head.repo.full_name }}" = "${{ github.repository }}" ]; then
+            echo "same_repo=true" >> $GITHUB_OUTPUT
+          else
+            echo "same_repo=false" >> $GITHUB_OUTPUT
+          fi
+ 
+      - name: Get changed Python files
+        id: changed
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          ALL_FILES=$(curl -s \
+            -H "Authorization: token $GH_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/files?per_page=100" \
+            | jq -r '.[].filename' \
+            | grep '\.py$' \
+            | grep -E '^(community|official|templates)/' || true)
+          echo "📋 PR changed Python files:"
+          echo "$ALL_FILES"
+          if [ -z "$ALL_FILES" ]; then
+            echo "skip=true" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+          INIT_FILES=""
+          LINT_FILES=""
+          while IFS= read -r file; do
+            [ ! -f "$file" ] && continue
+            if [[ "$(basename "$file")" == "__init__.py" ]]; then
+              INIT_FILES="$INIT_FILES $file"
+            else
+              LINT_FILES="$LINT_FILES $file"
+            fi
+          done <<< "$ALL_FILES"
+          echo "skip=false" >> $GITHUB_OUTPUT
+          echo "lint_files=$(echo "$LINT_FILES" | xargs)" >> $GITHUB_OUTPUT
+          echo "init_files=$(echo "$INIT_FILES" | xargs)" >> $GITHUB_OUTPUT
+ 
+      - name: Check __init__.py files are empty
+        if: steps.changed.outputs.skip == 'false' && steps.changed.outputs.init_files != ''
+        id: init_check
+        run: |
+> init_violations.txt
+          has_violations=false
+          for file in ${{ steps.changed.outputs.init_files }}; do
+            [ ! -f "$file" ] && continue
+            CONTENT=$(sed '/^\s*$/d' "$file")
+            if [ -n "$CONTENT" ]; then
+              echo "$file" >> init_violations.txt
+              has_violations=true
+            fi
+          done
+          echo "has_violations=$has_violations" >> $GITHUB_OUTPUT
+ 
+      - name: Auto-fix with autoflake
+        if: steps.changed.outputs.skip == 'false' && steps.changed.outputs.lint_files != ''
+        run: |
+          autoflake --in-place \
+            --remove-all-unused-imports \
+            --remove-unused-variables \
+            ${{ steps.changed.outputs.lint_files }}
+ 
+      - name: Auto-format with autopep8
+        if: steps.changed.outputs.skip == 'false' && steps.changed.outputs.lint_files != ''
+        id: autoformat
+        run: |
+          autopep8 --in-place --max-line-length=120 --ignore=E501,W503 \
+            ${{ steps.changed.outputs.lint_files }}
+          if git diff --quiet; then
+            echo "has_fixes=false" >> $GITHUB_OUTPUT
+          else
+            echo "has_fixes=true" >> $GITHUB_OUTPUT
+          fi
+ 
+      - name: Save formatting patch
+        if: steps.autoformat.outputs.has_fixes == 'true'
+        run: git diff --binary > autofix.patch
+ 
+      - name: Run Flake8
+        if: always() && steps.changed.outputs.skip == 'false' && steps.changed.outputs.lint_files != ''
+        id: flake8
+        continue-on-error: true
+        run: |
+          OUTPUT=$(flake8 ${{ steps.changed.outputs.lint_files }} --max-line-length=120 --ignore=E501,W503 2>&1) || true
+          echo "$OUTPUT" > flake8_output.txt
+          if [ -n "$OUTPUT" ]; then
+            echo "has_errors=true" >> $GITHUB_OUTPUT
+          else
+            echo "has_errors=false" >> $GITHUB_OUTPUT
+          fi
+ 
+      - name: Ensure output files exist
+        if: always() && steps.changed.outputs.skip == 'false'
+        run: touch flake8_output.txt init_violations.txt autofix.patch
+ 
+      - name: Write metadata
+        if: steps.changed.outputs.skip == 'false'
+        run: |
+          cat > metadata.json <<EOF
+          {
+            "pr_number": ${{ github.event.pull_request.number }},
+            "head_sha": "${{ github.event.pull_request.head.sha }}",
+            "head_ref": "${{ github.event.pull_request.head.ref }}",
+            "same_repo": ${{ steps.origin_check.outputs.same_repo }},
+            "has_fixes": ${{ steps.autoformat.outputs.has_fixes || false }},
+            "lint_files": "${{ steps.changed.outputs.lint_files }}",
+            "init_files": "${{ steps.changed.outputs.init_files }}",
+            "flake8_has_errors": "${{ steps.flake8.outputs.has_errors }}",
+            "init_has_violations": "${{ steps.init_check.outputs.has_violations }}"
+          }
+          EOF
+ 
+      - uses: actions/upload-artifact@v4
+        if: steps.changed.outputs.skip == 'false'
+        with:
+          name: python-lint-results
+          path: |
+            flake8_output.txt
+            init_violations.txt
+            autofix.patch
+            metadata.json
+          retention-days: 1
+ 
+      - name: Fail if errors
+        if: steps.flake8.outputs.has_errors == 'true' || steps.init_check.outputs.has_violations == 'true'
+        run: exit 1
