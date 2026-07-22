@@ -1,0 +1,122 @@
+name: Ability Check Report
+
+on:
+  workflow_run:
+    workflows: ["Ability Check"]
+    types: [completed]
+
+permissions:
+  contents: write
+  pull-requests: write
+  actions: read
+
+jobs:
+  ability-check-report:
+    runs-on: ubuntu-latest
+    if: github.event.workflow_run.conclusion != 'cancelled'
+    steps:
+      - name: Download artifact
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const artifacts = await github.rest.actions.listWorkflowRunArtifacts({
+              owner: context.repo.owner, repo: context.repo.repo,
+              run_id: context.payload.workflow_run.id,
+            });
+            const match = artifacts.data.artifacts.find(a => a.name === 'ability-check-results');
+            if (!match) { core.setFailed('No ability-check-results artifact.'); return; }
+            const dl = await github.rest.actions.downloadArtifact({
+              owner: context.repo.owner, repo: context.repo.repo,
+              artifact_id: match.id, archive_format: 'zip',
+            });
+            require('fs').writeFileSync('artifact.zip', Buffer.from(dl.data));
+
+      - run: unzip -o artifact.zip -d results
+
+      - name: Verify PR still at validated SHA
+        id: verify
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const meta = JSON.parse(require('fs').readFileSync('results/metadata.json', 'utf8'));
+            const pr = await github.rest.pulls.get({
+              owner: context.repo.owner, repo: context.repo.repo, pull_number: meta.pr_number,
+            });
+            if (pr.data.head.sha !== meta.head_sha) {
+              core.warning(`Stale artifact (${meta.head_sha} vs ${pr.data.head.sha}); skipping.`);
+              core.setOutput('stale', 'true');
+              return;
+            }
+            core.setOutput('stale', 'false');
+            core.setOutput('same_repo', String(meta.same_repo));
+            core.setOutput('head_ref', meta.head_ref);
+
+      # Push the rename commit — only possible/safe for same-repo branches.
+      # Fork branches can't be pushed to with this token regardless of intent.
+      - name: Checkout branch for rename push
+        if: steps.verify.outputs.stale == 'false' && steps.verify.outputs.same_repo == 'true'
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.verify.outputs.head_ref }}
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Apply rename and push
+        if: steps.verify.outputs.stale == 'false' && steps.verify.outputs.same_repo == 'true'
+        run: |
+          if [ -s results/rename.patch ]; then
+            git apply results/rename.patch
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add -A
+            git commit -m "fix: rename community ability folders to use hyphens"
+            git push
+          fi
+
+      - name: Post comment
+        if: steps.verify.outputs.stale == 'false'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const meta = JSON.parse(fs.readFileSync('results/metadata.json', 'utf8'));
+            const marker = '<!-- ability-validation-bot -->';
+            let body = `${marker}\n`;
+
+            if (meta.has_renames) {
+              const renameLog = fs.readFileSync('results/rename_log.txt', 'utf8').trim();
+              if (meta.same_repo) {
+                body += `## 📁 Folder Names Auto-Fixed\n\n`;
+                body += `Community ability folders may only use **hyphens** (\`-\`) — no underscores or spaces.\n\n`;
+                body += `The following folders were **automatically renamed** and pushed:\n\n`;
+                body += `\`\`\`\n${renameLog}\n\`\`\`\n\n`;
+              } else {
+                body += `## ⚠️ Folder Names Need Fixing\n\n`;
+                body += `Community ability folders may only use **hyphens** (\`-\`) — no underscores or spaces.\n\n`;
+                body += `This PR is from a fork, so the fix could not be pushed automatically. Please rename manually:\n\n`;
+                body += `\`\`\`\n${renameLog}\n\`\`\`\n\n`;
+                body += `\`\`\`bash\ngit mv community/my_ability community/my-ability\n\`\`\`\n\n`;
+              }
+            }
+
+            const output = fs.readFileSync('results/validation_output.txt', 'utf8').trim();
+            const passed = meta.validate_outcome === 'success';
+            body += passed ? `## ✅ Ability Validation Passed\n\n` : `## ❌ Ability Validation Failed\n\n`;
+            if (output) body += `\`\`\`\n${output}\n\`\`\`\n\n`;
+            if (!passed) {
+              body += `### 📚 How to fix\n`;
+              body += `- Read the [Contributing Guide](CONTRIBUTING.md)\n`;
+              body += `- Check the [CapabilityWorker Reference](docs/capability-worker.md)\n`;
+              body += `- See [Blocked Imports & Keywords](https://docs.openhome.com/how_to_build_an_ability#blocked-imports-and-keywords)\n`;
+            }
+
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner, repo: context.repo.repo, issue_number: meta.pr_number,
+            });
+            const existing = comments.find(c => c.body.includes(marker));
+            if (existing) {
+              await github.rest.issues.updateComment({ owner: context.repo.owner, repo: context.repo.repo, comment_id: existing.id, body });
+            } else {
+              await github.rest.issues.createComment({ owner: context.repo.owner, repo: context.repo.repo, issue_number: meta.pr_number, body });
+            }
+ 
