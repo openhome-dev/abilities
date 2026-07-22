@@ -1,4 +1,4 @@
-name: Validate Ability (Untrusted)
+name: Ability Check
 
 on:
   pull_request:
@@ -8,8 +8,7 @@ on:
       - 'official/**'
 
 permissions:
-  contents: write   # only effective for same-repo PRs; forks get read-only regardless
-  pull-requests: none
+  contents: read
 
 jobs:
   validate:
@@ -22,13 +21,13 @@ jobs:
 
       - run: git fetch origin ${{ github.base_ref }}
 
-      - name: Check if fork PR
-        id: fork_check
+      - name: Check if same-repo branch
+        id: origin_check
         run: |
           if [ "${{ github.event.pull_request.head.repo.full_name }}" = "${{ github.repository }}" ]; then
-            echo "is_fork=false" >> $GITHUB_OUTPUT
+            echo "same_repo=true" >> $GITHUB_OUTPUT
           else
-            echo "is_fork=true" >> $GITHUB_OUTPUT
+            echo "same_repo=false" >> $GITHUB_OUTPUT
           fi
 
       - uses: actions/setup-python@v5
@@ -44,6 +43,7 @@ jobs:
             | sort -u)
           if [ -z "$CHANGED_DIRS" ]; then
             echo "skip=true" >> $GITHUB_OUTPUT
+            echo "No ability directories changed — skipping"
             exit 0
           fi
           echo "skip=false" >> $GITHUB_OUTPUT
@@ -51,7 +51,10 @@ jobs:
           echo "dirs<<$EOF_MARKER" >> $GITHUB_OUTPUT
           echo "$CHANGED_DIRS" >> $GITHUB_OUTPUT
           echo "$EOF_MARKER" >> $GITHUB_OUTPUT
+          echo "Changed ability directories:"
+          echo "$CHANGED_DIRS"
 
+      # ── Auto-fix community folder names (working tree only — no push here) ──
       - name: Fix community folder names
         if: steps.changed.outputs.skip == 'false'
         id: fix_names
@@ -71,6 +74,7 @@ jobs:
               old_path="$dir"
               new_path="community/$fixed_name"
               if [ -d "$old_path" ]; then
+                echo "🔧 Renaming: $old_path → $new_path"
                 git mv "$old_path" "$new_path"
                 FIXED_DIRS="${FIXED_DIRS}${new_path}"$'\n'
                 RENAME_LOG="${RENAME_LOG}${old_path} → ${new_path}"$'\n'
@@ -86,18 +90,11 @@ jobs:
           echo "$RENAME_LOG" > rename_log.txt
           FIXED_DIRS_SPACE=$(echo "$FIXED_DIRS" | tr '\n' ' ' | xargs)
           echo "dirs=$FIXED_DIRS_SPACE" >> $GITHUB_OUTPUT
+          echo "📁 Final dirs for validation: $FIXED_DIRS_SPACE"
 
-      - name: Commit and push renames (non-fork only)
-        if: steps.fix_names.outputs.has_renames == 'true' && steps.fork_check.outputs.is_fork == 'false'
-        id: push_renames
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add -A
-          git commit -m "fix: rename community ability folders to use hyphens"
-          git push origin HEAD:refs/heads/${{ github.event.pull_request.head.ref }} && \
-            echo "push_success=true" >> $GITHUB_OUTPUT || \
-            echo "push_success=false" >> $GITHUB_OUTPUT
+      - name: Save rename patch
+        if: steps.fix_names.outputs.has_renames == 'true'
+        run: git diff --binary HEAD > rename.patch
 
       - name: Run validate_ability.py
         if: steps.changed.outputs.skip == 'false'
@@ -105,35 +102,36 @@ jobs:
         continue-on-error: true
         run: |
           DIRS="${{ steps.fix_names.outputs.dirs }}"
-          [ -n "$DIRS" ] && [ -f "validate_ability.py" ] && python validate_ability.py $DIRS
-          exit 0
+          if [ -n "$DIRS" ] && [ -f "validate_ability.py" ]; then
+            python validate_ability.py $DIRS
+          fi
 
       - name: Ensure output files exist
         if: steps.changed.outputs.skip == 'false'
-        run: touch validation_output.txt rename_log.txt
+        run: touch validation_output.txt rename_log.txt rename.patch
 
-      - name: Write metadata for the trusted job
+      - name: Write metadata
         if: steps.changed.outputs.skip == 'false'
         run: |
           cat > metadata.json <<EOF
           {
             "pr_number": ${{ github.event.pull_request.number }},
             "head_sha": "${{ github.event.pull_request.head.sha }}",
-            "is_fork": ${{ steps.fork_check.outputs.is_fork }},
-            "has_renames": ${{ steps.fix_names.outputs.has_renames }},
-            "push_success": "${{ steps.push_renames.outputs.push_success }}",
+            "head_ref": "${{ github.event.pull_request.head.ref }}",
+            "same_repo": ${{ steps.origin_check.outputs.same_repo }},
+            "has_renames": ${{ steps.fix_names.outputs.has_renames || false }},
             "validate_outcome": "${{ steps.validate.outcome }}"
           }
           EOF
 
-      - name: Upload results artifact
+      - uses: actions/upload-artifact@v4
         if: steps.changed.outputs.skip == 'false'
-        uses: actions/upload-artifact@v4
         with:
-          name: validation-results
+          name: ability-check-results
           path: |
             validation_output.txt
             rename_log.txt
+            rename.patch
             metadata.json
           retention-days: 1
 
