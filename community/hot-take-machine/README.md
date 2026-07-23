@@ -25,6 +25,14 @@ A voice-driven OpenHome Ability that drops scorching hot takes on random topics 
 > You: disagree, sleep is essential
 > HTM: Oh you wanna fight? Bet. Bring it.
 
+## Stopping / Exiting
+
+Say any of these to end the debate early: "stop", "exit", "cancel", "quit", "goodbye", "bye", "done", "i give up", "you win", "fine", or "end".
+
+## Score Persistence
+
+Your lifetime score (Hot Take Machine vs. You) is saved across sessions using OpenHome's key/value storage, so the intro line always reflects your real running score.
+
 ## Built with
 
 - OpenHome SDK
