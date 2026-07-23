@@ -40,9 +40,9 @@ This ability uses **free APIs** — no payment or subscription required.
 1. Go to [n2yo.com/api](https://www.n2yo.com/api/)
 2. Click **Sign Up** and create a free account
 3. Copy your **API Key**
-4. Add it in your **OpenHome Settings → Third Party API Keys** as `N2YO_API_KEY`
+4. Add it in your **OpenHome Settings → API Keys** as `n2yo_api_key` (name must match exactly)
 
-For local development, the ability falls back to a default key if none is configured.
+If no key is configured, or N2YO is unreachable, location queries fall back to cached demo data instead of failing — the ability never crashes on a missing or bad key.
 
 ## What You Can Ask
 
