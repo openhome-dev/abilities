@@ -1,0 +1,133 @@
+name: Python Lint Report
+
+on:
+  workflow_run:
+    workflows: ["Python Lint"]
+    types: [completed]
+
+permissions:
+  contents: write
+  pull-requests: write
+  statuses: write
+  actions: read
+
+jobs:
+  python-lint-report:
+    runs-on: ubuntu-latest
+    if: github.event.workflow_run.conclusion != 'cancelled'
+    steps:
+      - name: Download artifact
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const artifacts = await github.rest.actions.listWorkflowRunArtifacts({
+              owner: context.repo.owner, repo: context.repo.repo,
+              run_id: context.payload.workflow_run.id,
+            });
+            const match = artifacts.data.artifacts.find(a => a.name === 'python-lint-results');
+            if (!match) { core.setFailed('No python-lint-results artifact.'); return; }
+            const dl = await github.rest.actions.downloadArtifact({
+              owner: context.repo.owner, repo: context.repo.repo,
+              artifact_id: match.id, archive_format: 'zip',
+            });
+            require('fs').writeFileSync('artifact.zip', Buffer.from(dl.data));
+
+      - run: unzip -o artifact.zip -d results
+
+      - name: Verify PR still at linted SHA
+        id: verify
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const meta = JSON.parse(require('fs').readFileSync('results/metadata.json', 'utf8'));
+            const pr = await github.rest.pulls.get({
+              owner: context.repo.owner, repo: context.repo.repo, pull_number: meta.pr_number,
+            });
+            if (pr.data.head.sha !== meta.head_sha) {
+              core.warning(`Stale artifact (${meta.head_sha} vs ${pr.data.head.sha}); skipping.`);
+              core.setOutput('stale', 'true');
+              return;
+            }
+            core.setOutput('stale', 'false');
+            core.setOutput('same_repo', String(meta.same_repo));
+            core.setOutput('head_ref', meta.head_ref);
+
+      # Push the formatting commit — only possible/safe for same-repo branches.
+      - name: Checkout branch for autofix push
+        if: steps.verify.outputs.stale == 'false' && steps.verify.outputs.same_repo == 'true'
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.verify.outputs.head_ref }}
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Apply autofix and push
+        if: steps.verify.outputs.stale == 'false' && steps.verify.outputs.same_repo == 'true'
+        run: |
+          if [ -s results/autofix.patch ]; then
+            git apply results/autofix.patch
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git add -A
+            git commit -m "style: auto-format Python files with autoflake + autopep8"
+            git push
+          fi
+
+      - name: Post comment and status
+        if: steps.verify.outputs.stale == 'false'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const meta = JSON.parse(fs.readFileSync('results/metadata.json', 'utf8'));
+            const flake8 = fs.readFileSync('results/flake8_output.txt', 'utf8').trim();
+            const initViolations = fs.readFileSync('results/init_violations.txt', 'utf8').trim();
+            const flake8Err = meta.flake8_has_errors === 'true';
+            const initErr = meta.init_has_violations === 'true';
+            const allPassed = !flake8Err && !initErr;
+
+            let body = '<!-- lint-check-result -->\n## 🔍 Lint Results\n\n';
+
+            if (meta.has_fixes) {
+              if (meta.same_repo) {
+                body += '### 🔧 Auto-formatted\n';
+                body += 'Some files were automatically cleaned and formatted with `autoflake` + `autopep8` and pushed.\n\n';
+              } else {
+                body += '### 🔧 Formatting fixes available\n';
+                body += 'This PR is from a fork, so fixes could not be pushed automatically. ';
+                body += 'Download the `python-lint-results` artifact from the workflow run for the patch file, then run:\n\n';
+                body += '```bash\ngit apply autofix.patch\n```\n\n';
+              }
+            }
+            if (meta.init_files) {
+              body += initErr
+                ? `### ❌ \`__init__.py\` Must Be Empty\n\nThe following \`__init__.py\` files must be **completely empty**:\n\n\`\`\`\n${initViolations}\n\`\`\`\n\n`
+                : '### ✅ `__init__.py` — Empty as expected\n\n';
+            }
+            if (meta.lint_files) {
+              body += `**Files linted:** \`${meta.lint_files}\`\n\n`;
+              body += flake8Err
+                ? `### ❌ Flake8 Errors (could not be auto-fixed)\n\`\`\`\n${flake8}\n\`\`\`\n\n`
+                : '### ✅ Flake8 — Passed\n\n';
+            } else {
+              body += '_No non-init Python files to lint._\n\n';
+            }
+            body += allPassed ? '> ✅ All checks passed!' : '> Fix the remaining issues and push again. The lint will re-run automatically.';
+
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner, repo: context.repo.repo, issue_number: meta.pr_number,
+            });
+            const existing = comments.find(c => c.user.type === 'Bot' && c.body.includes('<!-- lint-check-result -->'));
+            if (existing) {
+              await github.rest.issues.updateComment({ owner: context.repo.owner, repo: context.repo.repo, comment_id: existing.id, body });
+            } else {
+              await github.rest.issues.createComment({ owner: context.repo.owner, repo: context.repo.repo, issue_number: meta.pr_number, body });
+            }
+
+            await github.rest.repos.createCommitStatus({
+              owner: context.repo.owner, repo: context.repo.repo,
+              sha: meta.head_sha,
+              state: allPassed ? 'success' : 'failure',
+              context: 'python-lint-report',
+              description: allPassed ? 'Passed' : 'Failed',
+            });
