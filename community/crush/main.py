@@ -15,8 +15,10 @@
 #
 #   Uplift voice layer for Maheen (speak_maheen / _call_uplift_api), gated by
 #   USE_UPLIFT_MAHEEN below — verify these two before a live test:
-#   self.capability_worker.get_api_keys("UPLIFT_VOICE_API")      [sync? verify]
-#   self.capability_worker.play_audio(audio_bytes)                [await? verify]
+#   self.capability_worker.get_api_keys("UPLIFT_VOICE_API")      [sync]
+#   self.capability_worker.play_audio(audio_bytes)                [await]
+#   _call_uplift_api's blocking requests.post is run via asyncio.to_thread
+#   from speak_maheen so it never blocks the event loop.
 #   Endpoint/body verified live against docs.upliftai.org: POST
 #   https://api.upliftai.org/v1/synthesis/text-to-speech, body
 #   {voiceId, text, outputFormat}, Bearer auth. Same dashboard keys as the
@@ -25,6 +27,7 @@
 #   Settings -> API Keys. The code alone does nothing without that.
 # =============================================================================
 
+import asyncio
 import json
 import random
 from src.agent.capability import MatchingCapability
@@ -104,8 +107,15 @@ class CrushCapability(MatchingCapability):
         self.worker.editor_logging_handler.info("[Crush] %s" % msg)
 
     def is_exit(self, text):
-        low = text.lower()
-        return any(w in low for w in EXIT_WORDS)
+        low = text.lower().strip()
+        # Multi-word phrases still match as a substring; single ambiguous
+        # words (e.g. "bas", "cut") only match as a whole word, so ordinary
+        # dialogue like "so cutie" or "that's based" can't false-trigger.
+        words = set(low.split())
+        return any(
+            (w in low if " " in w else w in words)
+            for w in EXIT_WORDS
+        )
 
     def render_transcript(self, transcript):
         return "\n".join(transcript) if transcript else "(scene just started, nothing said yet)"
@@ -126,10 +136,8 @@ class CrushCapability(MatchingCapability):
             await self.capability_worker.speak(text)
 
     def _call_uplift_api(self, text, api_key):
-        # Blocking HTTP call. Called DIRECTLY (not via asyncio.to_thread) —
-        # matching the one real precedent in the openhome-dev/abilities repo
-        # (docs/patterns.md does a bare synchronous requests call inside an
-        # async method). We rely on requests' own timeout=10 to bound this.
+        # Blocking HTTP call — run via asyncio.to_thread by the caller so it
+        # doesn't block the event loop for the duration of the request.
         import requests
         response = requests.post(
             "https://api.upliftai.org/v1/synthesis/text-to-speech",
@@ -160,7 +168,7 @@ class CrushCapability(MatchingCapability):
                     uplift_key = cw.get_api_keys(key_name)
                     if not uplift_key:
                         raise ValueError("%s not set in dashboard" % key_name)
-                    audio_bytes = self._call_uplift_api(text, uplift_key)
+                    audio_bytes = await asyncio.to_thread(self._call_uplift_api, text, uplift_key)
                     await cw.play_audio(audio_bytes)
                     self.log("Maheen line spoken via Uplift (%s, %d bytes)" % (key_name, len(audio_bytes)))
                     return
