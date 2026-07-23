@@ -24,7 +24,14 @@ async def main():
     # --- MODE 2: Background Launcher ---
     if command == "start":
         target_form = sys.argv[2] if len(sys.argv) > 2 else "form.html"
-        subprocess.Popen([sys.executable, "local_runner.py", "start_bg", target_form], creationflags=0x00000008)
+        # Detach the background browser process. creationflags is Windows-only
+        # (raises ValueError on POSIX); start_new_session is the POSIX equivalent.
+        popen_kwargs = (
+            {"creationflags": 0x00000008}
+            if sys.platform == "win32"
+            else {"start_new_session": True}
+        )
+        subprocess.Popen([sys.executable, "local_runner.py", "start_bg", target_form], **popen_kwargs)
         print(f"Launched Playwright in background for {target_form}.")
         return
 
