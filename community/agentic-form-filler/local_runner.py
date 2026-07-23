@@ -55,7 +55,7 @@ async def main():
                     with open("data.json", "r") as f:
                         try:
                             data = json.load(f)
-                        except:
+                        except (json.JSONDecodeError, OSError):
                             data = {}
 
                     inputs = await page.query_selector_all("input, textarea")
