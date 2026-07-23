@@ -32,5 +32,4 @@ This Ability drives a browser on **your own machine**, not the DevKit or the clo
 ## Known limitations
 
 - Field matching is done by substring match against each input's `id`/`name`/`placeholder`, so unusually labeled form fields may be filled incorrectly or skipped.
-- The background browser launch (`local_runner.py start`) uses a Windows-only process flag, so this currently only works on Windows machines.
 - Forms and their required fields are hardcoded in the system prompt; adding a new form means editing `main.py`.
