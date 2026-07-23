@@ -64,3 +64,4 @@ Format: - **@username** — ability-name ([ability-name](community/ability-name/
 - **[@muj25](https://github.com/muj25)** — rehnuma-bill-reader ([rehnuma-bill-reader](community/rehnuma-bill-reader/))
 - **[@Huzaifa-Abdurahman](https://github.com/Huzaifa-Abdurahman)** — housemate ([housemate](community/housemate/))
 - **[@mibrahim-khalil](https://github.com/mibrahim-khalil)** — Shark-Tank-Simulator ([Shark-Tank-Simulator](community/Shark-Tank-Simulator/))
+- **[@BerryBlaast](https://github.com/BerryBlaast)** — sentry-soc ([sentry-soc](community/sentry-soc/))
