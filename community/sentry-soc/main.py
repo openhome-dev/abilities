@@ -1,3 +1,4 @@
+import asyncio
 import datetime
 from typing import Any, Dict, List, Optional
 
@@ -29,15 +30,19 @@ HELP_SPEECH = (
 )
 
 # =============================================================================
-# CONSTANTS — replace placeholders before deploy
+# CONFIG — nothing hardcoded. Add these in OpenHome Settings -> API Keys
+# (names must match exactly). wazuh_verify_tls is optional and defaults to
+# verifying TLS certs; set it to "false" only if the indexer/manager use a
+# self-signed cert you accept the risk of not validating.
 # =============================================================================
-WAZUH_INDEXER_URL = "https://YOUR_WAZUH_HOST:8443/wazuh-alerts-*/_search"
-WAZUH_READONLY_USER = "YOUR_READONLY_USER"
-WAZUH_READONLY_PASSWORD = "YOUR_READONLY_PASSWORD"
-WAZUH_MANAGER_URL = "https://YOUR_WAZUH_HOST:8444"
-WAZUH_API_USER = "YOUR_API_USER"
-WAZUH_API_PASSWORD = "YOUR_API_PASSWORD"
-SHUFFLE_WEBHOOK_URL = "https://YOUR_SHUFFLE_HOST/api/v1/hooks/YOUR_HOOK_ID"
+WAZUH_INDEXER_URL_KEY = "wazuh_indexer_url"
+WAZUH_READONLY_USER_KEY = "wazuh_readonly_user"
+WAZUH_READONLY_PASSWORD_KEY = "wazuh_readonly_password"
+WAZUH_MANAGER_URL_KEY = "wazuh_manager_url"
+WAZUH_API_USER_KEY = "wazuh_api_user"
+WAZUH_API_PASSWORD_KEY = "wazuh_api_password"
+SHUFFLE_WEBHOOK_URL_KEY = "shuffle_webhook_url"
+WAZUH_VERIFY_TLS_KEY = "wazuh_verify_tls"
 
 DEMO_AGENT_ID = "001"
 DEMO_AGENT_NAME = "endpoint-1"
@@ -154,6 +159,14 @@ class SentinelVoiceCapability(MatchingCapability):
     last_alert: Optional[Dict[str, Any]] = None
     last_agents: Optional[List[Dict[str, Any]]] = None
     focus_agent_name: Optional[str] = None
+    wazuh_indexer_url: str = ""
+    wazuh_readonly_user: str = ""
+    wazuh_readonly_password: str = ""
+    wazuh_manager_url: str = ""
+    wazuh_api_user: str = ""
+    wazuh_api_password: str = ""
+    shuffle_webhook_url: str = ""
+    wazuh_verify_tls: bool = True
 
     # {{register capability}}
 
@@ -163,6 +176,17 @@ class SentinelVoiceCapability(MatchingCapability):
         self.last_alert = None
         self.last_agents = None
         self.focus_agent_name = DEMO_AGENT_NAME
+
+        self.wazuh_indexer_url = self.capability_worker.get_api_keys(WAZUH_INDEXER_URL_KEY) or ""
+        self.wazuh_readonly_user = self.capability_worker.get_api_keys(WAZUH_READONLY_USER_KEY) or ""
+        self.wazuh_readonly_password = self.capability_worker.get_api_keys(WAZUH_READONLY_PASSWORD_KEY) or ""
+        self.wazuh_manager_url = self.capability_worker.get_api_keys(WAZUH_MANAGER_URL_KEY) or ""
+        self.wazuh_api_user = self.capability_worker.get_api_keys(WAZUH_API_USER_KEY) or ""
+        self.wazuh_api_password = self.capability_worker.get_api_keys(WAZUH_API_PASSWORD_KEY) or ""
+        self.shuffle_webhook_url = self.capability_worker.get_api_keys(SHUFFLE_WEBHOOK_URL_KEY) or ""
+        raw_verify = (self.capability_worker.get_api_keys(WAZUH_VERIFY_TLS_KEY) or "").strip().lower()
+        self.wazuh_verify_tls = raw_verify not in ("false", "0", "no")
+
         self.worker.session_tasks.create(self.run())
 
     async def run(self):
@@ -240,17 +264,20 @@ class SentinelVoiceCapability(MatchingCapability):
 
         await self.capability_worker.speak(HELP_SPEECH)
 
+    def _narrate(self, content: str, style_prompt: str) -> str:
+        """text_to_text_response() on this host rejects a "system"/"system_prompt"
+        kwarg, so the style prompt is folded into the prompt text itself rather
+        than passed as a separate argument."""
+        full_prompt = style_prompt + "\n\n" + content
+        return self.capability_worker.text_to_text_response(full_prompt)
+
     async def _speak_alert_details(self):
         if not self.last_alert:
             await self.capability_worker.speak(
                 "No alert in memory yet. Ask for critical alerts or FIM first."
             )
             return
-        spoken = self.capability_worker.text_to_text_response(
-            f"Expand this alert: {self.last_alert}",
-            history=[],
-            system_prompt=DETAILS_STYLE_PROMPT,
-        )
+        spoken = self._narrate(f"Expand this alert: {self.last_alert}", DETAILS_STYLE_PROMPT)
         await self.capability_worker.speak(spoken)
 
     async def _check_wazuh_alerts(self):
@@ -331,11 +358,10 @@ class SentinelVoiceCapability(MatchingCapability):
                 )
                 return
             self.focus_agent_name = newest.get("name") or self.focus_agent_name
-            spoken = self.capability_worker.text_to_text_response(
+            spoken = self._narrate(
                 f"Newest WAZUH endpoint agent details: {newest}. "
                 f"Total endpoint agents: {total}. Active: {len(active)}.",
-                history=[],
-                system_prompt=SPEECH_STYLE_PROMPT,
+                SPEECH_STYLE_PROMPT,
             )
             await self.capability_worker.speak(spoken)
             return
@@ -360,11 +386,10 @@ class SentinelVoiceCapability(MatchingCapability):
             self.focus_agent_name = (
                 self._newest_agent(endpoints) or {}
             ).get("name") or self.focus_agent_name
-        spoken = self.capability_worker.text_to_text_response(
+        spoken = self._narrate(
             f"WAZUH endpoint agent inventory. Total: {total}. "
             f"Active: {len(active)}. Agents: {roster}",
-            history=[],
-            system_prompt=SPEECH_STYLE_PROMPT,
+            SPEECH_STYLE_PROMPT,
         )
         await self.capability_worker.speak(spoken)
 
@@ -395,8 +420,9 @@ class SentinelVoiceCapability(MatchingCapability):
         if not token:
             return None
         try:
-            response = requests.get(
-                f"{WAZUH_MANAGER_URL}/agents",
+            response = await asyncio.to_thread(
+                requests.get,
+                f"{self.wazuh_manager_url}/agents",
                 headers={"Authorization": f"Bearer {token}"},
                 params={
                     "select": "id,name,ip,status,dateAdd,lastKeepAlive,version,"
@@ -404,7 +430,7 @@ class SentinelVoiceCapability(MatchingCapability):
                     + "s.name",
                     "limit": 100,
                 },
-                verify=False,
+                verify=self.wazuh_verify_tls,
                 timeout=REQUEST_TIMEOUT_SECONDS,
             )
             response.raise_for_status()
@@ -443,11 +469,21 @@ class SentinelVoiceCapability(MatchingCapability):
         return items if isinstance(items, list) else []
 
     async def _manager_token(self) -> Optional[str]:
+        if not (self.wazuh_manager_url and self.wazuh_api_user and self.wazuh_api_password):
+            self.worker.editor_logging_handler.error(
+                "[SentinelVoice] WAZUH manager API not configured"
+            )
+            await self.capability_worker.speak(
+                "The WAZUH manager API isn't configured yet. "
+                "Add the manager URL and API credentials in Settings."
+            )
+            return None
         try:
-            response = requests.post(
-                f"{WAZUH_MANAGER_URL}/security/user/authenticate",
-                auth=(WAZUH_API_USER, WAZUH_API_PASSWORD),
-                verify=False,
+            response = await asyncio.to_thread(
+                requests.post,
+                f"{self.wazuh_manager_url}/security/user/authenticate",
+                auth=(self.wazuh_api_user, self.wazuh_api_password),
+                verify=self.wazuh_verify_tls,
                 timeout=REQUEST_TIMEOUT_SECONDS,
             )
             response.raise_for_status()
@@ -586,11 +622,7 @@ class SentinelVoiceCapability(MatchingCapability):
             )
             return
         parts = [f"level {b.get('key')}: {b.get('doc_count')}" for b in buckets]
-        spoken = self.capability_worker.text_to_text_response(
-            f"Alert severity counts last 24 hours: {parts}",
-            history=[],
-            system_prompt=SPEECH_STYLE_PROMPT,
-        )
+        spoken = self._narrate(f"Alert severity counts last 24 hours: {parts}", SPEECH_STYLE_PROMPT)
         await self.capability_worker.speak(spoken)
 
     async def _search_and_speak(
@@ -615,20 +647,26 @@ class SentinelVoiceCapability(MatchingCapability):
 
         summaries = [self._summarize_hit(hit) for hit in hits]
         self.last_alert = summaries[0]
-        spoken = self.capability_worker.text_to_text_response(
-            f"{llm_prefix}: {summaries}",
-            history=[],
-            system_prompt=SPEECH_STYLE_PROMPT,
-        )
+        spoken = self._narrate(f"{llm_prefix}: {summaries}", SPEECH_STYLE_PROMPT)
         await self.capability_worker.speak(spoken)
 
     async def _indexer_request(self, body: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        if not (self.wazuh_indexer_url and self.wazuh_readonly_user and self.wazuh_readonly_password):
+            self.worker.editor_logging_handler.error(
+                "[SentinelVoice] WAZUH indexer not configured"
+            )
+            await self.capability_worker.speak(
+                "The WAZUH indexer isn't configured yet. "
+                "Add the indexer URL and read-only credentials in Settings."
+            )
+            return None
         try:
-            response = requests.post(
-                WAZUH_INDEXER_URL,
-                auth=(WAZUH_READONLY_USER, WAZUH_READONLY_PASSWORD),
+            response = await asyncio.to_thread(
+                requests.post,
+                self.wazuh_indexer_url,
+                auth=(self.wazuh_readonly_user, self.wazuh_readonly_password),
                 json=body,
-                verify=False,
+                verify=self.wazuh_verify_tls,
                 timeout=REQUEST_TIMEOUT_SECONDS,
             )
             response.raise_for_status()
@@ -661,7 +699,14 @@ class SentinelVoiceCapability(MatchingCapability):
         return payload if isinstance(payload, dict) else None
 
     async def _trigger_response_playbook(self):
-        await self.capability_worker.speak("Queuing the response playbook.")
+        if not self.shuffle_webhook_url:
+            self.worker.editor_logging_handler.error(
+                "[SentinelVoice] Shuffle webhook not configured"
+            )
+            await self.capability_worker.speak(
+                "The Shuffle webhook isn't configured yet. Add the webhook URL in Settings."
+            )
+            return
 
         alert = await self._resolve_playbook_alert()
         if not alert:
@@ -675,6 +720,18 @@ class SentinelVoiceCapability(MatchingCapability):
             )
             await self.capability_worker.speak(msg)
             return
+
+        # This fires a real SOAR action (enrichment/isolation/block depending on
+        # the playbook) - confirm before sending, rather than acting on a single
+        # matched keyword.
+        confirmed = await self.capability_worker.run_confirmation_loop(
+            f"This will trigger the response playbook for source IP {srcip}. Proceed?"
+        )
+        if not confirmed:
+            await self.capability_worker.speak("Okay, playbook not triggered.")
+            return
+
+        await self.capability_worker.speak("Queuing the response playbook.")
 
         body = {
             "rule_id": str(alert.get("rule_id") or "533"),
@@ -694,8 +751,9 @@ class SentinelVoiceCapability(MatchingCapability):
         }
 
         try:
-            response = requests.post(
-                SHUFFLE_WEBHOOK_URL,
+            response = await asyncio.to_thread(
+                requests.post,
+                self.shuffle_webhook_url,
                 json=body,
                 timeout=REQUEST_TIMEOUT_SECONDS,
             )
