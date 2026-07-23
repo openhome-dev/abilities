@@ -128,7 +128,6 @@ jobs:
               owner: context.repo.owner, repo: context.repo.repo,
               sha: meta.head_sha,
               state: allPassed ? 'success' : 'failure',
-              context: 'lint',
+              context: 'python-lint-report',
               description: allPassed ? 'Passed' : 'Failed',
             });
- 
