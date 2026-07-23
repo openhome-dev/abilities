@@ -34,17 +34,20 @@ Persona: **Sentry**.
 2. Create a **read-only** indexer user scoped to `wazuh-alerts-*`.
 3. Create a **read-only** manager API user (e.g. `agents_readonly`).
 4. Point a Shuffle webhook at a playbook that reads WAZUH-shaped JSON (`data.srcip`, `agent`, `rule`, …).
-5. Edit placeholders at the top of `main.py`:
+5. Nothing is hardcoded in `main.py` — in the OpenHome Dashboard, go to **Settings -> API Keys** and add these (names must match exactly):
 
-```python
-WAZUH_INDEXER_URL = "https://YOUR_WAZUH_HOST:8443/wazuh-alerts-*/_search"
-WAZUH_READONLY_USER = "YOUR_READONLY_USER"
-WAZUH_READONLY_PASSWORD = "YOUR_READONLY_PASSWORD"
-WAZUH_MANAGER_URL = "https://YOUR_WAZUH_HOST:8444"
-WAZUH_API_USER = "YOUR_API_USER"
-WAZUH_API_PASSWORD = "YOUR_API_PASSWORD"
-SHUFFLE_WEBHOOK_URL = "https://YOUR_SHUFFLE_HOST/api/v1/hooks/YOUR_HOOK_ID"
-```
+| API Key name | What it is |
+|---|---|
+| `wazuh_indexer_url` | Full indexer search URL, e.g. `https://YOUR_WAZUH_HOST:8443/wazuh-alerts-*/_search` |
+| `wazuh_readonly_user` | Read-only indexer user |
+| `wazuh_readonly_password` | Read-only indexer password |
+| `wazuh_manager_url` | Manager API base URL, e.g. `https://YOUR_WAZUH_HOST:8444` |
+| `wazuh_api_user` | Read-only manager API user |
+| `wazuh_api_password` | Read-only manager API password |
+| `shuffle_webhook_url` | Shuffle webhook URL for the response playbook |
+| `wazuh_verify_tls` (optional) | Set to `false` only if the indexer/manager use a self-signed cert you accept the risk of not validating. Defaults to verifying TLS certs. |
+
+Alerts/agent-inventory/playbook features degrade independently — e.g. alerts still work without the manager or Shuffle keys configured.
 
 6. Upload this folder via the OpenHome Live Editor or `openhome push community/sentry-soc`.
 7. Suggested triggers: `Sentry`, `check alerts`, `FIM changes`, `connected agents`, `run response playbook`.
@@ -54,8 +57,9 @@ SHUFFLE_WEBHOOK_URL = "https://YOUR_SHUFFLE_HOST/api/v1/hooks/YOUR_HOOK_ID"
 ## Notes
 
 - Indexer queries and Shuffle calls run from the OpenHome cloud sandbox (outbound HTTPS/HTTP).
-- Self-signed indexer certs may require `verify=False` (demo shortcut only).
-- Do not commit real credentials. Keep secrets out of git.
+- TLS certs are verified by default; only disable via `wazuh_verify_tls` if you understand the MITM risk on a self-signed setup.
+- `run response playbook` asks for a yes/no confirmation before it fires — it triggers a real SOAR action.
+- Do not commit real credentials. Credentials live only in OpenHome's API Key store, never in source.
 - FIM works best with a realtime-monitored demo folder on Windows agents (`syscheck`).
 
 ---
