@@ -7,23 +7,20 @@ from src.agent.capability_worker import CapabilityWorker
 # =============================================================================
 # CONFIG
 # =============================================================================
-# Base URL of your Flask app (via ngrok) - update this if the ngrok URL changes
-API_BASE = "https://baggage-untouched-payback.ngrok-free.dev"
-
-# ---------------------------------------------------------------------------
-# Kiosk / admin login. This agent's whole job is to take a citizen's spoken
-# details and generate a token for them - the citizen never has their own
-# account, so we log in once, automatically, with this fixed account instead
-# of asking them for a CNIC/password.
+# Nothing below is hardcoded. Add these three keys in OpenHome Settings ->
+# API Keys (names must match exactly) before using this ability:
+#   - "passport_admin_cnic"      the kiosk service account's CNIC
+#   - "passport_admin_password"  the kiosk service account's password
+#   - "passport_api_base_url"    base URL of the Flask backend (e.g. an ngrok URL)
 #
-# NOTE: this is plaintext, hardcoded in source, matching how /api/signin
-# already compares passwords in plaintext on the Flask side. That's fine for
-# a test/kiosk deployment; if this ever goes near production, move these two
-# values into an environment variable or secrets manager instead of source
-# control, and turn password hashing back on in app.py.
+# This agent's whole job is to take a citizen's spoken details and generate a
+# token for them - the citizen never has their own account, so we log in once,
+# automatically, with the kiosk service account instead of asking them for a
+# CNIC/password.
 # ---------------------------------------------------------------------------
-ADMIN_CNIC = "1000000000000"
-ADMIN_PASSWORD = "123456"
+ADMIN_CNIC_KEY = "passport_admin_cnic"
+ADMIN_PASSWORD_KEY = "passport_admin_password"
+API_BASE_KEY = "passport_api_base_url"
 
 # ---------------------------------------------------------------------------
 # NOTE ON EMAIL: the Ability does NOT send the token email itself anymore.
@@ -75,6 +72,16 @@ AFFIRMATIVE_WORDS = [
 NO_EMAIL_WORDS = [
     "نہیں ہے", "نہیں", "میرے پاس نہیں ہے", "میرے پاس ای میل نہیں ہے", "ای میل نہیں ہے",
     "no email", "nahi hai", "nahi", "no", "skip", "chor dain", "chhor dain",
+]
+
+# Words that end the whole flow early - checked on every single turn, before
+# any transcript is ever handed to an LLM. Covers Urdu script, roman-Urdu, and
+# the standard English exit set (stop/done/bye/cancel/exit/quit/goodbye).
+EXIT_WORDS = [
+    "روک دیں", "روکیں", "بند کریں", "بند کرو", "کینسل", "کینسل کریں", "چھوڑ دیں",
+    "رہنے دیں", "رہنے دو", "نہیں کرنا", "معاف کریں چھوڑ دیں",
+    "band karo", "band kardo", "cancel", "chor do", "chhor do", "rehnay do", "rehne do",
+    "stop", "exit", "quit", "goodbye", "bye", "done",
 ]
 
 # Simple, permissive email shape check: something@something.something,
@@ -162,18 +169,20 @@ PROVINCE_CITIES = {
 class GeneratePassportTokenCapability(MatchingCapability):
     worker: AgentWorker = None
     capability_worker: CapabilityWorker = None
+    api_base: str = ""
+    exit_requested: bool = False
 
     # Do not change following tag of register capability
     # {{register_capability}}
 
     def call(self, worker: AgentWorker):
         self.worker = worker
-        self.capability_worker = CapabilityWorker(self)
+        self.capability_worker = CapabilityWorker(self.worker)
         self.worker.session_tasks.create(self.run())
 
     # ---------------------------------------------------------------
-    # Small helpers - yes/no and "no email" detection (works on Urdu
-    # script or roman-Urdu transcripts, since STT behavior can vary
+    # Small helpers - yes/no, "no email", and exit detection (works on
+    # Urdu script or roman-Urdu transcripts, since STT behavior can vary
     # by provider)
     # ---------------------------------------------------------------
 
@@ -185,6 +194,10 @@ class GeneratePassportTokenCapability(MatchingCapability):
         text = (text or "").strip().lower()
         return any(word in text for word in NO_EMAIL_WORDS)
 
+    def is_exit(self, text: str) -> bool:
+        text = (text or "").strip().lower()
+        return any(word in text for word in EXIT_WORDS)
+
     def is_valid_email(self, email: str) -> bool:
         return bool(EMAIL_RE.match(email or ""))
 
@@ -193,6 +206,17 @@ class GeneratePassportTokenCapability(MatchingCapability):
         already safe to store as-is without running it through a
         translation round-trip."""
         return not any("\u0600" <= ch <= "\u06FF" for ch in (text or ""))
+
+    async def _listen(self) -> str:
+        """Read one user turn and check it against the escape hatch before
+        any LLM call or field-parsing logic ever sees the transcript. Sets
+        exit_requested instead of raising, so every caller just checks the
+        flag with a plain if - same pattern the other Abilities use."""
+        raw = await self.capability_worker.user_response()
+        if self.is_exit(raw):
+            self.exit_requested = True
+            return ""
+        return raw or ""
 
     def to_urdu(self, english_text: str) -> str:
         """Backend error/status messages come back in English. Translate them
@@ -336,7 +360,9 @@ class GeneratePassportTokenCapability(MatchingCapability):
 
     async def ask_llm_field(self, question, build_prompt, retries=3, fast_digits=False, expected_length=None):
         await self.capability_worker.speak(question)
-        raw = (await self.capability_worker.user_response() or "").strip()
+        raw = (await self._listen()).strip()
+        if self.exit_requested:
+            return ""
 
         for _attempt in range(retries):
             if fast_digits:
@@ -355,7 +381,9 @@ class GeneratePassportTokenCapability(MatchingCapability):
 
             follow_up = result[6:].strip() or "معذرت، سمجھ نہیں آیا۔ ذرا آہستہ اور دوبارہ بتا دیں؟"
             await self.capability_worker.speak(follow_up)
-            raw = (await self.capability_worker.user_response() or "").strip()
+            raw = (await self._listen()).strip()
+            if self.exit_requested:
+                return ""
 
         return raw  # fall back to the raw transcript after retries
 
@@ -371,14 +399,18 @@ class GeneratePassportTokenCapability(MatchingCapability):
         await self.capability_worker.speak(
             f"میں نے آپ کا ای میل یہ نوٹ کیا ہے: {email}۔ اگر یہ درست ہے تو 'OK' کہیں۔"
         )
-        confirm = await self.capability_worker.user_response() or ""
+        confirm = await self._listen()
+        if self.exit_requested:
+            return False
         return self.is_affirmative(confirm)
 
     async def ask_email(self, question, retries=3, allow_skip=True):
         await self.capability_worker.speak(question)
 
         for _attempt in range(retries):
-            raw = (await self.capability_worker.user_response() or "").strip()
+            raw = (await self._listen()).strip()
+            if self.exit_requested:
+                return None
             if allow_skip and self.is_no_email(raw):
                 return None
 
@@ -412,7 +444,9 @@ class GeneratePassportTokenCapability(MatchingCapability):
 
         listing = "، ".join(f"نمبر {i + 1} {opt}" for i, opt in enumerate(options))
         await self.capability_worker.speak(f"{question} براہ کرم صرف نمبر بول کر بتائیں: {listing}۔")
-        raw = (await self.capability_worker.user_response() or "").strip()
+        raw = (await self._listen()).strip()
+        if self.exit_requested:
+            return None
 
         for _attempt in range(retries):
             # Fast path: transcript has a literal digit or a plain number word
@@ -438,7 +472,9 @@ class GeneratePassportTokenCapability(MatchingCapability):
                 else f"معذرت، صرف 1 سے {len(options)} کے درمیان نمبر بتا دیں۔"
             )
             await self.capability_worker.speak(follow_up)
-            raw = (await self.capability_worker.user_response() or "").strip()
+            raw = (await self._listen()).strip()
+            if self.exit_requested:
+                return None
 
         return None  # exhausted retries - caller decides how to handle this
 
@@ -486,7 +522,7 @@ class GeneratePassportTokenCapability(MatchingCapability):
         try:
             async with aiohttp.ClientSession() as session:
                 async with session.request(
-                    method, f"{API_BASE}{path}", json=json_body,
+                    method, f"{self.api_base}{path}", json=json_body,
                     headers=headers, timeout=aiohttp.ClientTimeout(total=15)
                 ) as resp:
                     data = await resp.json()
@@ -506,13 +542,13 @@ class GeneratePassportTokenCapability(MatchingCapability):
     # retries guard against a transient ngrok/network blip.
     # ---------------------------------------------------------------
 
-    async def auto_login_admin(self, retries=2):
+    async def auto_login_admin(self, admin_cnic, admin_password, retries=2):
         for attempt in range(retries):
             status, data = await self.api_call("POST", "/api/signin", {
-                "cnic": ADMIN_CNIC, "password": ADMIN_PASSWORD,
+                "cnic": admin_cnic, "password": admin_password,
             })
             if data.get("success"):
-                return data["api_token"], data["user"]
+                return data.get("api_token"), data.get("user")
 
             self.worker.editor_logging_handler.info(
                 f"[passport-token] admin auto-login attempt {attempt + 1} failed "
@@ -532,10 +568,25 @@ class GeneratePassportTokenCapability(MatchingCapability):
             await self.capability_worker.speak(
                 "السلام علیکم! پاسپورٹ ٹوکن سسٹم میں خوش آمدید۔ "
                 "میں آپ سے چند آسان سوالات پوچھوں گا تاکہ آپ کا ٹوکن بن سکے۔ "
-                "آپ آرام سے، اپنی زبان میں جواب دیں، اگر کوئی سوال سمجھ نہ آئے تو بتا دیجیے گا۔"
+                "آپ آرام سے، اپنی زبان میں جواب دیں، اگر کوئی سوال سمجھ نہ آئے تو بتا دیجیے گا۔ "
+                "کسی بھی وقت 'روک دیں' کہہ کر یہ عمل بند کر سکتے ہیں۔"
             )
 
-            api_token, user = await self.auto_login_admin()
+            self.api_base = self.capability_worker.get_api_keys(API_BASE_KEY)
+            admin_cnic = self.capability_worker.get_api_keys(ADMIN_CNIC_KEY)
+            admin_password = self.capability_worker.get_api_keys(ADMIN_PASSWORD_KEY)
+
+            if not self.api_base or not admin_cnic or not admin_password:
+                self.worker.editor_logging_handler.error(
+                    "[passport-token] missing required API keys - configure "
+                    f"{API_BASE_KEY}, {ADMIN_CNIC_KEY}, and {ADMIN_PASSWORD_KEY} in Settings"
+                )
+                await self.capability_worker.speak(
+                    "معذرت، سسٹم ابھی درست طریقے سے سیٹ اپ نہیں ہوا۔ براہ کرم عملے کو بتائیں۔"
+                )
+                return
+
+            api_token, user = await self.auto_login_admin(admin_cnic, admin_password)
 
             if not api_token:
                 await self.capability_worker.speak(
@@ -544,6 +595,12 @@ class GeneratePassportTokenCapability(MatchingCapability):
                 return
 
             await self.handle_token_generation(api_token, user)
+
+            if self.exit_requested:
+                self.worker.editor_logging_handler.info("[passport-token] user exited the flow")
+                await self.capability_worker.speak(
+                    "ٹھیک ہے، میں یہ عمل روک رہا ہوں۔ جب چاہیں دوبارہ کوشش کر سکتے ہیں۔"
+                )
 
         except Exception as exc:
             self.worker.editor_logging_handler.info(f"[passport-token] unexpected error: {exc}")
@@ -557,13 +614,17 @@ class GeneratePassportTokenCapability(MatchingCapability):
 
     async def handle_token_generation(self, api_token, user):
         await self.capability_worker.speak("سب سے پہلے بتائیں، درخواست دہندہ کا پورا نام کیا ہے؟")
-        name = (await self.capability_worker.user_response() or "").strip()
+        name = (await self._listen()).strip()
+        if self.exit_requested:
+            return
 
         age = await self.ask_llm_field(
             "درخواست دہندہ کی عمر کتنی ہے؟",
             self.build_number_prompt("عمر"),
             fast_digits=True,
         )
+        if self.exit_requested:
+            return
         if not age or not age.isdigit():
             await self.capability_worker.speak(
                 "معذرت، عمر ٹھیک طرح سمجھ نہیں آئی۔ براہ کرم چیٹ باکس میں ٹائپ کر دیں۔"
@@ -574,24 +635,32 @@ class GeneratePassportTokenCapability(MatchingCapability):
             "تاریخ پیدائش کیا ہے؟ دن، مہینہ اور سال کے ساتھ بتائیں، جیسے چودہ مارچ دو ہزار پانچ۔",
             self.build_dob_prompt,
         )
+        if self.exit_requested:
+            return
 
         cnic = await self.ask_llm_field(
             "درخواست دہندہ کا شناختی کارڈ نمبر بتائیں، تیرہ ہندسوں کا، ایک ایک ہندسہ کر کے آہستہ آہستہ۔",
             self.build_number_prompt("شناختی کارڈ نمبر", 13),
             fast_digits=True, expected_length=13,
         )
+        if self.exit_requested:
+            return
 
         email = await self.ask_email(
             "اب اپنا مکمل ای میل ایڈریس لکھیں، تاکہ ٹوکن کی رسید آپ کو ای میل پر بھی مل جائے۔ "
             "اگر ای میل نہ ہو تو 'نہیں ہے' لکھ دیں۔"
         )
+        if self.exit_requested:
+            return
         if not email:
             await self.capability_worker.speak(
                 "کوئی بات نہیں، ای میل کے بغیر بھی آپ کا ٹوکن بن جائے گا، بس ٹوکن نمبر ضرور لکھ لیجیے گا۔"
             )
 
         await self.capability_worker.speak("گھر کا مکمل پتہ کیا ہے؟")
-        address = (await self.capability_worker.user_response() or "").strip()
+        address = (await self._listen()).strip()
+        if self.exit_requested:
+            return
 
         # Province, city, district, and domicile all come from a fixed,
         # known list - the UI (voice_agent.html) shows each one as clickable
@@ -599,6 +668,8 @@ class GeneratePassportTokenCapability(MatchingCapability):
         # that ask_choice() below speaks/writes; the citizen can just as
         # easily tap a button, say the number out loud, or type it.
         province = await self.ask_choice("آپ کا تعلق کس صوبے سے ہے؟", PROVINCES)
+        if self.exit_requested:
+            return
         if not province:
             await self.capability_worker.speak(
                 "معذرت، صوبے کا انتخاب واضح نہیں ہو سکا۔ براہ کرم چیٹ باکس میں لکھ دیں۔"
@@ -612,6 +683,8 @@ class GeneratePassportTokenCapability(MatchingCapability):
         province_cities = PROVINCE_CITIES.get(province, COMMON_CITIES)
 
         city = await self.ask_choice("شہر کونسا ہے؟", province_cities)
+        if self.exit_requested:
+            return
         if not city:
             await self.capability_worker.speak(
                 "معذرت، شہر کا انتخاب واضح نہیں ہو سکا۔ براہ کرم چیٹ باکس میں لکھ دیں۔"
@@ -619,6 +692,8 @@ class GeneratePassportTokenCapability(MatchingCapability):
             return
 
         district = await self.ask_choice("ضلع کونسا ہے؟", province_cities)
+        if self.exit_requested:
+            return
         if not district:
             await self.capability_worker.speak(
                 "معذرت، ضلع کا انتخاب واضح نہیں ہو سکا۔ براہ کرم چیٹ باکس میں لکھ دیں۔"
@@ -628,6 +703,8 @@ class GeneratePassportTokenCapability(MatchingCapability):
         domicile = await self.ask_choice(
             "ڈومیسائل، یعنی آپ مستقل طور پر کس ضلع کے رہائشی ہیں؟", province_cities
         )
+        if self.exit_requested:
+            return
         if not domicile:
             await self.capability_worker.speak(
                 "معذرت، ڈومیسائل کا انتخاب واضح نہیں ہو سکا۔ براہ کرم چیٹ باکس میں لکھ دیں۔"
@@ -637,6 +714,8 @@ class GeneratePassportTokenCapability(MatchingCapability):
         # Branch list is narrowed down to the chosen city first, so we only
         # ever read out branches that are actually relevant to the user.
         branch = await self.ask_branch(city)
+        if self.exit_requested:
+            return
         if not branch:
             await self.capability_worker.speak(
                 "معذرت، برانچ کا نام آواز سے نہیں مل سکا۔ براہ کرم چیٹ باکس میں صحیح برانچ کا نام ٹائپ کر دیں۔"
@@ -653,11 +732,15 @@ class GeneratePassportTokenCapability(MatchingCapability):
                 self.build_number_prompt("والد کا شناختی کارڈ نمبر", 13),
                 fast_digits=True, expected_length=13,
             )
+            if self.exit_requested:
+                return
             mother_cnic = await self.ask_llm_field(
                 "والدہ کا شناختی کارڈ نمبر بتائیں۔",
                 self.build_number_prompt("والدہ کا شناختی کارڈ نمبر", 13),
                 fast_digits=True, expected_length=13,
             )
+            if self.exit_requested:
+                return
 
         # ------------------------------------------------------------
         # Everything above happens - and is heard by the citizen - in
