@@ -62,3 +62,4 @@ Format: - **@username** — ability-name ([ability-name](community/ability-name/
 - **[@milliyin](https://github.com/milliyin)** — orbit ([orbit](community/orbit/))
 - **[@nida-akhtar](https://github.com/nida-akhtar)** — mnemo ([mnemo](community/mnemo/))
 - **[@muj25](https://github.com/muj25)** — rehnuma-bill-reader ([rehnuma-bill-reader](community/rehnuma-bill-reader/))
+- **[@Huzaifa-Abdurahman](https://github.com/Huzaifa-Abdurahman)** — housemate ([housemate](community/housemate/))
