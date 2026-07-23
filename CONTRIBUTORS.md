@@ -55,3 +55,4 @@ Format: - **@username** — ability-name ([ability-name](community/ability-name/
 - **[@u-faizan](https://github.com/u-faizan)** — voice-interpreter ([voice-interpreter](community/voice-interpreter/))
 - **[@KDJ-Malik](https://github.com/KDJ-Malik)** — KindMind ([KindMind](community/KindMind/))
 - **[@Asad-NCS](https://github.com/Asad-NCS)** — hot-take-machine ([hot-take-machine](community/hot-take-machine/))
+- **[@ShayanKhan183](https://github.com/ShayanKhan183)** — CareXpert-Voice-Desk ([CareXpert-Voice-Desk](community/CareXpert-Voice-Desk/))
