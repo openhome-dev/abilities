@@ -56,3 +56,6 @@ Format: - **@username** — ability-name ([ability-name](community/ability-name/
 - **[@KDJ-Malik](https://github.com/KDJ-Malik)** — KindMind ([KindMind](community/KindMind/))
 - **[@Asad-NCS](https://github.com/Asad-NCS)** — hot-take-machine ([hot-take-machine](community/hot-take-machine/))
 - **[@ShayanKhan183](https://github.com/ShayanKhan183)** — CareXpert-Voice-Desk ([CareXpert-Voice-Desk](community/CareXpert-Voice-Desk/))
+- **[@AhmedRaza-2](https://github.com/AhmedRaza-2)** — agentic-form-filler ([agentic-form-filler](community/agentic-form-filler/))
+- **[@Bilalkhan-cel](https://github.com/Bilalkhan-cel)** — generate-passport-token ([generate-passport-token](community/generate-passport-token/))
+- **[@MMEHDI0606](https://github.com/MMEHDI0606)** — CareXpert-Voice-Desk ([CareXpert-Voice-Desk](community/CareXpert-Voice-Desk/)), KindMind ([KindMind](community/KindMind/)), agentic-form-filler ([agentic-form-filler](community/agentic-form-filler/)), crush ([crush](community/crush/)), generate-passport-token ([generate-passport-token](community/generate-passport-token/)), hot-take-machine ([hot-take-machine](community/hot-take-machine/))
