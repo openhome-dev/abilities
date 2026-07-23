@@ -11,7 +11,7 @@ permissions:
   contents: read
 
 jobs:
-  validate:
+  ability-check:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
