@@ -3,6 +3,7 @@ import * as api from "./api";
 import * as templates from "./templates";
 import { ensureCli, runInTerminal, runCliOrNotify, initCli } from "./cli";
 import { AccountProvider, AbilitiesProvider, ActionsProvider, LocalProvider, Node } from "./trees";
+import { DevkitMonitor } from "./devkit";
 
 const MIN_TRIGGER_LETTERS = 4;
 
@@ -33,7 +34,9 @@ export function activate(context: vscode.ExtensionContext): void {
 
   const account = new AccountProvider();
   const abilities = new AbilitiesProvider();
-  const local = new LocalProvider();
+  const devkit = new DevkitMonitor();
+  const local = new LocalProvider(devkit);
+  context.subscriptions.push(devkit);
   const voice = new ActionsProvider([
     { label: "Voice call an agent", command: "openhome.call", icon: "unmute", color: "charts.blue", tooltip: "Mic + speakers (opens a terminal — needs the CLI)" },
     { label: "Chat with an agent", command: "openhome.chat", icon: "comment-discussion", color: "charts.blue", tooltip: "Interactive text session (opens a terminal — needs the CLI)" },
@@ -94,12 +97,14 @@ export function activate(context: vscode.ExtensionContext): void {
     await api.storeCredentials(apiKey.trim());
     vscode.window.showInformationMessage("OpenHome: signed in.");
     refreshData();
+    void devkit.reconnect(); // pick up the new key on the monitoring socket
   });
 
   reg("openhome.logout", async () => {
     await api.clearCredentials();
     vscode.window.showInformationMessage("OpenHome: signed out.");
     refreshData();
+    devkit.disconnect();
   });
 
   reg("openhome.refreshAccount", () => account.refresh());
@@ -490,35 +495,25 @@ export function activate(context: vscode.ExtensionContext): void {
     }
   });
 
-  // ── Local bridge (devkit, needs the CLI) ────────────────────────────────
-  reg("openhome.localStart", async () => {
-    if (!(await ensureCli())) {
+  // ── Devkit monitor (live socket, no CLI needed) ─────────────────────────
+  reg("openhome.devkitConnect", async () => {
+    if (!(await api.isConfigured())) {
+      vscode.window.showWarningMessage("OpenHome: sign in first to connect to your devkit.");
       return;
     }
-    if ((await runCliOrNotify(["local", "start"])) !== undefined) {
-      vscode.window.showInformationMessage("OpenHome: local bridge started.");
-    }
-    local.refresh();
+    await devkit.connect();
   });
 
-  reg("openhome.localStop", async () => {
-    if (!(await ensureCli())) {
-      return;
-    }
-    if ((await runCliOrNotify(["local", "stop"])) !== undefined) {
-      vscode.window.showInformationMessage("OpenHome: local bridge stopped.");
-    }
-    local.refresh();
-  });
+  reg("openhome.devkitDisconnect", () => devkit.disconnect());
 
-  reg("openhome.localStatus", () => local.refresh());
+  reg("openhome.devkitRefresh", () => devkit.reconnect());
 
-  reg("openhome.localLogs", async () => {
-    if (!(await ensureCli())) {
-      return;
+  // Start monitoring immediately if we're already signed in.
+  void (async () => {
+    if (await api.isConfigured()) {
+      await devkit.connect();
     }
-    await runInTerminal("OpenHome Bridge Logs", ["local", "logs"]);
-  });
+  })();
 }
 
 export function deactivate(): void {}
