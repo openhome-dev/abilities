@@ -204,8 +204,15 @@ class AwkwardCapability(MatchingCapability):
         self.worker.editor_logging_handler.info("[Awkward] %s" % msg)
 
     def is_exit(self, text):
-        low = text.lower()
-        return any(w in low for w in EXIT_WORDS)
+        # Short ambiguous words (e.g. "bas", "cut") only count as an exit when
+        # they're the WHOLE reply — "bas" is common Urdu filler ("anyway/just")
+        # inside a longer sentence like "Bas auntie, kaam se busy hoon", and a
+        # substring/word match would wrongly end the scene there. Distinctive
+        # multi-word phrases ("end scene", "that's enough") still match anywhere.
+        low = text.strip().lower().rstrip(".!?")
+        if low in EXIT_WORDS:
+            return True
+        return any(phrase in low for phrase in EXIT_WORDS if " " in phrase)
 
     def detect_scenario(self, text):
         low = (text or "").lower()
