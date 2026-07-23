@@ -30,8 +30,11 @@ MAX_FOLLOWUP_LOOPS = 5   # safety cap on detail/repeat loop
 
 SMTP_HOST = "smtp.gmail.com"
 SMTP_PORT = 465
-SENDER_EMAIL = ""
-SENDER_PASSWORD = ""
+# Not hardcoded - fetched at runtime via get_api_keys(). Add these two keys in
+# OpenHome Settings -> API Keys (names must match exactly) to enable the
+# optional email recap; without them, the recap offer is skipped entirely.
+SENDER_EMAIL_KEY = "mnemo_sender_email"
+SENDER_PASSWORD_KEY = "mnemo_sender_password"
 
 EXIT_WORDS = frozenset({
     "stop", "exit", "quit", "cancel", "bye", "leave", "bail", "later",
@@ -594,7 +597,9 @@ class MnemoCapability(MatchingCapability):
         await self._offer_email(mode, topic, score, weak)
 
     async def _offer_email(self, mode: str, topic: str, score: str, weak: list):
-        if not SENDER_EMAIL or not SENDER_PASSWORD:
+        sender_email = self.capability_worker.get_api_keys(SENDER_EMAIL_KEY)
+        sender_password = self.capability_worker.get_api_keys(SENDER_PASSWORD_KEY)
+        if not sender_email or not sender_password:
             return
 
         await self.capability_worker.speak(
@@ -617,7 +622,7 @@ class MnemoCapability(MatchingCapability):
 
         subject = f"Your Mnemo session on {topic}"
         body = self._compose_email(mode, topic, score, weak)
-        sent = self._try_send(recipient, subject, body)
+        sent = self._try_send(sender_email, sender_password, recipient, subject, body)
         if sent:
             await self.capability_worker.speak(f"Sent to {recipient}. Check your inbox.")
         else:
@@ -648,13 +653,13 @@ class MnemoCapability(MatchingCapability):
             "— Mnemo, your chill study buddy"
         )
 
-    def _try_send(self, recipient: str, subject: str, body: str) -> bool:
+    def _try_send(self, sender_email: str, sender_password: str, recipient: str, subject: str, body: str) -> bool:
         try:
             return bool(self.capability_worker.send_email(
                 host=SMTP_HOST,
                 port=SMTP_PORT,
-                sender_email=SENDER_EMAIL,
-                sender_password=SENDER_PASSWORD,
+                sender_email=sender_email,
+                sender_password=sender_password,
                 receiver_email=recipient,
                 cc_emails=[],
                 subject=subject,
@@ -695,11 +700,19 @@ class MnemoCapability(MatchingCapability):
         try:
             entry = json.dumps({"mode": mode, "topic": topic, "score": score, "weak_spots": weak})
             existing = ""
-            if await self.capability_worker.check_if_file_exists(STUDY_LOG_FILE, False):
+            file_exists = await self.capability_worker.check_if_file_exists(STUDY_LOG_FILE, False)
+            if file_exists:
                 existing = await self.capability_worker.read_file(STUDY_LOG_FILE, False) or ""
             lines = [ln for ln in existing.strip().split("\n") if ln.strip()]
             lines.append(entry)
             lines = lines[-MAX_HISTORY:]
+
+            # write_file APPENDS - since we already read the existing content above
+            # and are about to write it back out in full, the file must be deleted
+            # first or every session would duplicate all prior history on top of
+            # itself (rather than replace it).
+            if file_exists:
+                await self.capability_worker.delete_file(STUDY_LOG_FILE, False)
             await self.capability_worker.write_file(
                 STUDY_LOG_FILE, "\n".join(lines) + "\n", False
             )
@@ -719,10 +732,11 @@ class MnemoCapability(MatchingCapability):
 
     def _call_llm(self, user_prompt: str, fallback: str = "") -> str:
         try:
-            response = self.capability_worker.text_to_text_response(
-                user_prompt,
-                system_prompt=SYSTEM_PROMPT,
-            )
+            # text_to_text_response() rejects a "system"/"system_prompt" kwarg on
+            # this host build, so the system prompt is folded into the prompt text
+            # itself instead of passed as a separate argument.
+            full_prompt = SYSTEM_PROMPT + "\n\n" + user_prompt
+            response = self.capability_worker.text_to_text_response(full_prompt)
             return (response or "").strip()
         except Exception as e:
             self._log_error("llm_call", e)
