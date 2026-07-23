@@ -1,5 +1,6 @@
 import asyncio
 import requests
+from xml.sax.saxutils import escape as xml_escape
 
 from src.agent.capability import MatchingCapability
 from src.agent.capability_worker import CapabilityWorker
@@ -20,7 +21,10 @@ class PanicProtocolCapability(MatchingCapability):
     def trigger_twilio_call(self, account_sid: str, auth_token: str, from_number: str, to_number: str, emergency_message: str) -> bool:
         """Runs the HTTP POST request to Twilio API to initiate a phone call using requests."""
         url = f"https://api.twilio.com/2010-04-01/Accounts/{account_sid}/Calls.json"
-        twiml = f"<Response><Say>{emergency_message}</Say></Response>"
+        # emergency_message can embed live speech-to-text (e.g. the caller's own words),
+        # which may contain &, <, or > - escape before embedding in TwiML or Twilio
+        # will reject/mis-render the call on those characters.
+        twiml = f"<Response><Say>{xml_escape(emergency_message)}</Say></Response>"
 
         try:
             response = requests.post(
@@ -136,7 +140,8 @@ class PanicProtocolCapability(MatchingCapability):
                     f"Keep each tip very brief, under 10 words, and formatted as a single sentence without bullet points."
                 )
                 safety_tips = self.capability_worker.text_to_text_response(tips_prompt)
-                await self.capability_worker.speak(f"While help is on the way, please follow these safety measures: {safety_tips}")
+                if safety_tips:
+                    await self.capability_worker.speak(f"While help is on the way, please follow these safety measures: {safety_tips}")
 
                 # Step 7: Context-aware follow-up question
                 followup_prompt = (
@@ -147,13 +152,21 @@ class PanicProtocolCapability(MatchingCapability):
                     f"for general: 'Is there anything else I can do for you?')."
                 )
                 helper_question = self.capability_worker.text_to_text_response(followup_prompt)
-                await self.capability_worker.speak(helper_question)
+                if helper_question:
+                    await self.capability_worker.speak(helper_question)
 
                 # Step 8: Interactive Assist Loop (Keep checking until exit is triggered)
+                empty_streak = 0
                 while True:
                     followup_response = await self.capability_worker.user_response()
                     if not followup_response:
-                        break
+                        empty_streak += 1
+                        if empty_streak >= 3:
+                            await self.capability_worker.speak("Understood. Stay safe. Resuming normal agent flow. Goodbye.")
+                            break
+                        await self.capability_worker.speak("Are you still there? Let me know if you need anything else.")
+                        continue
+                    empty_streak = 0
 
                     # Normalize input
                     response_lower = followup_response.lower()
@@ -172,7 +185,8 @@ class PanicProtocolCapability(MatchingCapability):
                         f"End by asking: 'Is there any other help you need, or should we exit?'"
                     )
                     assistant_reply = self.capability_worker.text_to_text_response(assistant_prompt)
-                    await self.capability_worker.speak(assistant_reply)
+                    if assistant_reply:
+                        await self.capability_worker.speak(assistant_reply)
 
         finally:
             # CRITICAL EXIT REQUIREMENT: Smoothly hand control back to the core OpenHome Agent
