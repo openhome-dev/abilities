@@ -1,3 +1,4 @@
+import asyncio
 import random
 import requests
 import string
@@ -13,10 +14,9 @@ from src.main import AgentWorker
 # Constants
 # -----------------------------------------------------------------------------
 
-N2YO_API_KEY = "<Your N2YO API Key>"
-
-if N2YO_API_KEY.startswith("<"):
-    N2YO_API_KEY = "YXVQZF-UC67PQ-7XSN7V-5STU"
+# N2YO key is fetched at runtime via get_api_keys("n2yo_api_key") — see
+# _handle_location. Register it in the OpenHome dashboard under Settings ->
+# API Keys; without it, location queries fall back to the cached demo data.
 N2YO_URL = "https://api.n2yo.com/rest/v1/satellite/positions/25544/0/0/0/1/?apiKey="
 
 SPACEDEVS_ASTRONAUTS = "https://ll.thespacedevs.com/2.2.0/astronaut/"
@@ -97,11 +97,6 @@ ISS_FACTS_ALL = [
     ISS_FACTS_GENERAL,
 ]
 
-# Session memory
-LAST_RESPONSE: str = ""
-USER_CITY: Optional[str] = None
-
-
 # -----------------------------------------------------------------------------
 # Capability
 # -----------------------------------------------------------------------------
@@ -110,6 +105,10 @@ USER_CITY: Optional[str] = None
 class OrbitCapability(MatchingCapability):
     worker: AgentWorker = None
     capability_worker: CapabilityWorker = None
+    # Per-instance session memory (was module-level global — that shared state
+    # across every concurrent user of this ability in the same process).
+    last_response: str = ""
+    user_city: Optional[str] = None
 
     # {{register capability}}
 
@@ -127,9 +126,8 @@ class OrbitCapability(MatchingCapability):
     # -------------------------------------------------------------------------
 
     async def run_orbit_flow(self):
-        global LAST_RESPONSE, USER_CITY
-        LAST_RESPONSE = ""
-        USER_CITY = None
+        self.last_response = ""
+        self.user_city = None
 
         try:
             await self.capability_worker.speak(
@@ -142,7 +140,7 @@ class OrbitCapability(MatchingCapability):
                 if not user_input or not user_input.strip():
                     continue
 
-                if any(word in user_input.lower() for word in EXIT_WORDS):
+                if self._is_exit(user_input):
                     await self.capability_worker.speak("Orbit out.")
                     break
 
@@ -155,6 +153,21 @@ class OrbitCapability(MatchingCapability):
             )
         finally:
             self.capability_worker.resume_normal_flow()
+
+    # -------------------------------------------------------------------------
+    # Exit Detection
+    # -------------------------------------------------------------------------
+
+    def _is_exit(self, text: str) -> bool:
+        # Short ambiguous words ("over", "done") only count as an exit when
+        # they're the WHOLE reply — this ability is about ISS flyovers, so
+        # "when is the next flyover" or "is it done orbiting" would otherwise
+        # false-trigger on a substring match. Distinctive multi-word phrases
+        # ("that's all", "orbit out") still match anywhere in the reply.
+        low = text.strip().lower().rstrip(".!?")
+        if low in EXIT_WORDS:
+            return True
+        return any(phrase in low for phrase in EXIT_WORDS if " " in phrase)
 
     # -------------------------------------------------------------------------
     # Intent Routing
@@ -179,8 +192,8 @@ class OrbitCapability(MatchingCapability):
             return
 
         # Remembered city shortcut
-        if USER_CITY and any(word in lower for word in ("my city", "my location", "check again", "pass over me")):
-            await self._handle_pass(f"when will I see it from {USER_CITY}")
+        if self.user_city and any(word in lower for word in ("my city", "my location", "check again", "pass over me")):
+            await self._handle_pass(f"when will I see it from {self.user_city}")
             return
 
         if any(word in lower for word in ("where", "location", "is it now", "position", "over what")):
@@ -293,9 +306,12 @@ class OrbitCapability(MatchingCapability):
         location_name = DEMO_LOCATION["name"]
         is_eclipsed = False
 
+        n2yo_key = self.capability_worker.get_api_keys("n2yo_api_key")
         try:
-            url = f"{N2YO_URL}{N2YO_API_KEY}"
-            resp = requests.get(url, timeout=5)
+            if not n2yo_key:
+                raise ValueError("n2yo_api_key not set in dashboard")
+            url = f"{N2YO_URL}{n2yo_key}"
+            resp = await asyncio.to_thread(requests.get, url, timeout=5)
             resp.raise_for_status()
             data = resp.json()
 
@@ -325,14 +341,14 @@ class OrbitCapability(MatchingCapability):
         await self.capability_worker.speak(response)
 
     async def _handle_crew(self) -> None:
-        global LAST_RESPONSE
         await self._speak_filler()
 
         number = DEMO_CREW["number"]
         names = DEMO_CREW["names"][:]
 
         try:
-            resp = requests.get(
+            resp = await asyncio.to_thread(
+                requests.get,
                 SPACEDEVS_ASTRONAUTS,
                 params={"format": "json", "limit": 50, "in_space": "true"},
                 timeout=5,
@@ -356,7 +372,7 @@ class OrbitCapability(MatchingCapability):
         except Exception as e:
             self.worker.editor_logging_handler.error(f"[Orbit] SpaceDevs crew error: {e}")
             try:
-                resp = requests.get(OPEN_NOTIFY_CREW, timeout=2)
+                resp = await asyncio.to_thread(requests.get, OPEN_NOTIFY_CREW, timeout=2)
                 resp.raise_for_status()
                 data = resp.json()
                 number = data["number"]
@@ -369,7 +385,7 @@ class OrbitCapability(MatchingCapability):
 
         if not names:
             response = f"There are {number} people in space right now, but I cannot identify the ISS crew at the moment."
-            LAST_RESPONSE = response
+            self.last_response = response
             await self.capability_worker.speak(response)
             return
 
@@ -378,11 +394,10 @@ class OrbitCapability(MatchingCapability):
             name_str += f", and {len(names) - 3} others"
 
         response = f"There are {number} people in space right now. On the ISS: {name_str}."
-        LAST_RESPONSE = response
+        self.last_response = response
         await self.capability_worker.speak(response)
 
     async def _handle_pass(self, user_input: str) -> None:
-        global LAST_RESPONSE, USER_CITY
         prompt = (
             f'The user said: "{user_input}". '
             'Extract the city they want to see the ISS from. '
@@ -397,20 +412,20 @@ class OrbitCapability(MatchingCapability):
             location = await self.capability_worker.user_response()
 
         # Remember city for next time
-        USER_CITY = location
+        self.user_city = location
 
         await self._speak_filler()
 
         try:
-            lat, lon = self._resolve_coordinates(location)
-            pass_time_str, duration_min = self._get_pass_time(lat, lon, location)
+            lat, lon = await asyncio.to_thread(self._resolve_coordinates, location)
+            pass_time_str, duration_min = await asyncio.to_thread(self._get_pass_time, lat, lon, location)
 
             response = (
                 f"The ISS will pass over {location} on {pass_time_str}. "
                 f"Visible for {duration_min} minutes. Look west, about 20 degrees above the horizon. "
                 "It will look like a bright star moving fast."
             )
-            LAST_RESPONSE = response
+            self.last_response = response
             await self.capability_worker.speak(response)
 
         except Exception as e:
@@ -418,17 +433,15 @@ class OrbitCapability(MatchingCapability):
             await self._speak_synthetic_pass(location)
 
     async def _handle_speed(self) -> None:
-        global LAST_RESPONSE
         await self._speak_filler()
         response = (
             "The space station travels at 5 miles per second. "
             "That is 17,500 miles per hour, fast enough to circle Earth in 90 minutes."
         )
-        LAST_RESPONSE = response
+        self.last_response = response
         await self.capability_worker.speak(response)
 
     async def _handle_orbit_count(self) -> None:
-        global LAST_RESPONSE
         await self._speak_filler()
         now = datetime.now()
         orbits_today = int((now.hour * 60 + now.minute) / 90) + 1
@@ -438,11 +451,10 @@ class OrbitCapability(MatchingCapability):
             f"and will make 16 total today. "
             f"That means the crew has seen {orbits_today} sunrises and sunsets so far."
         )
-        LAST_RESPONSE = response
+        self.last_response = response
         await self.capability_worker.speak(response)
 
     async def _handle_facts(self, user_input: str) -> None:
-        global LAST_RESPONSE
         await self._speak_filler()
 
         lower = user_input.lower()
@@ -458,11 +470,10 @@ class OrbitCapability(MatchingCapability):
         else:
             fact = random.choice(ISS_FACTS_ALL)
 
-        LAST_RESPONSE = fact
+        self.last_response = fact
         await self.capability_worker.speak(fact)
 
     async def _handle_sleep(self) -> None:
-        global LAST_RESPONSE
         await self._speak_filler()
 
         utc_now = datetime.now(timezone.utc)
@@ -486,11 +497,10 @@ class OrbitCapability(MatchingCapability):
                 "They do experiments, maintenance, and two hours of mandatory exercise."
             )
 
-        LAST_RESPONSE = response
+        self.last_response = response
         await self.capability_worker.speak(response)
 
     async def _handle_age(self) -> None:
-        global LAST_RESPONSE
         await self._speak_filler()
 
         first_module = datetime(1998, 11, 20, tzinfo=timezone.utc)
@@ -511,11 +521,10 @@ class OrbitCapability(MatchingCapability):
             f"The station is older than most smartphones, TikTok, and even some of the astronauts who visit it."
         )
 
-        LAST_RESPONSE = response
+        self.last_response = response
         await self.capability_worker.speak(response)
 
     async def _handle_food(self) -> None:
-        global LAST_RESPONSE
         await self._speak_filler()
 
         meals = [
@@ -536,11 +545,10 @@ class OrbitCapability(MatchingCapability):
         ]
 
         fact = random.choice(meals)
-        LAST_RESPONSE = fact
+        self.last_response = fact
         await self.capability_worker.speak(fact)
 
     async def _handle_help(self) -> None:
-        global LAST_RESPONSE
         response = (
             "You can ask me where the ISS is right now, who is on board, "
             "or when it will pass over your city. "
@@ -548,13 +556,12 @@ class OrbitCapability(MatchingCapability):
             "if they're asleep, how many orbits they've done today, or anything about life in space. "
             "Just say 'repeat that' if you miss something. What do you want to know?"
         )
-        LAST_RESPONSE = response
+        self.last_response = response
         await self.capability_worker.speak(response)
 
     async def _handle_repeat(self) -> None:
-        global LAST_RESPONSE
-        if LAST_RESPONSE:
-            await self.capability_worker.speak(f"I said: {LAST_RESPONSE}")
+        if self.last_response:
+            await self.capability_worker.speak(f"I said: {self.last_response}")
         else:
             await self.capability_worker.speak(
                 "I haven't said anything yet. Ask me where the ISS is, who is on board, or anything else."
@@ -644,12 +651,11 @@ class OrbitCapability(MatchingCapability):
         return pass_time_str, duration_min
 
     async def _speak_synthetic_pass(self, location: str) -> None:
-        global LAST_RESPONSE
         pass_time_str, duration_min = self._generate_synthetic_pass(location)
         response = (
             f"The ISS will pass over {location} on {pass_time_str}. "
             f"Visible for {duration_min} minutes. Look west, about 20 degrees above the horizon. "
             "It will look like a bright star moving fast."
         )
-        LAST_RESPONSE = response
+        self.last_response = response
         await self.capability_worker.speak(response)
