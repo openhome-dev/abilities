@@ -43,18 +43,16 @@ Smart entry also parses your full utterance — so `"quiz me on gravity"` or `"t
 4. Speak or type a trigger word — that's it.
 
 ### Email recap (optional)
-To enable the email recap feature, generate a Gmail app password and paste it in `main.py`:
+Nothing is hardcoded in `main.py` — the email recap reads its credentials at runtime from OpenHome's secure API Key store:
 
 1. Enable 2-Step Verification on your Google account: https://myaccount.google.com/security
 2. Generate an app password: https://myaccount.google.com/apppasswords
-3. Open `main.py` and set:
-   ```python
-   SENDER_EMAIL = "your-gmail@gmail.com"
-   SENDER_PASSWORD = "your-16-char-app-password"
-   ```
+3. In the OpenHome Dashboard, go to **Settings -> API Keys** and add two keys (names must match exactly):
+   - `mnemo_sender_email` — your Gmail address
+   - `mnemo_sender_password` — the 16-character app password
 4. Save. Now Mnemo will offer to email a recap at the end of each session.
 
-If you leave these empty, Mnemo simply skips the email step — everything else still works.
+If you leave these unset, Mnemo simply skips the email step — everything else still works.
 
 ---
 
