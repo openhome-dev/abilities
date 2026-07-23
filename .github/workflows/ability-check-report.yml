@@ -17,7 +17,7 @@ jobs:
     if: github.event.workflow_run.conclusion != 'cancelled'
     steps:
       - name: Download artifact
-        uses: actions/github-script@v7
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b  # v7
         with:
           script: |
             const artifacts = await github.rest.actions.listWorkflowRunArtifacts({
@@ -36,7 +36,7 @@ jobs:
 
       - name: Verify PR still at validated SHA
         id: verify
-        uses: actions/github-script@v7
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b  # v7
         with:
           script: |
             const meta = JSON.parse(require('fs').readFileSync('results/metadata.json', 'utf8'));
@@ -76,7 +76,7 @@ jobs:
 
       - name: Post comment and status
         if: steps.verify.outputs.stale == 'false'
-        uses: actions/github-script@v7
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b  # v7
         with:
           script: |
             const fs = require('fs');
