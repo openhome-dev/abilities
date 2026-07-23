@@ -1,12 +1,8 @@
-import logging
 import json
 import base64
-import asyncio
 from src.agent.capability import MatchingCapability
 from src.main import AgentWorker
 from src.agent.capability_worker import CapabilityWorker
-
-logger = logging.getLogger(__name__)
 
 
 class FormFillerCapability(MatchingCapability):
@@ -61,10 +57,10 @@ class FormFillerCapability(MatchingCapability):
 
                         # 1. Open browser in background to specific form
                         command_start = f"python local_runner.py start {target_form}"
-                        asyncio.create_task(self.capability_worker.exec_local_command(command_start))
+                        self.worker.session_tasks.create(self.capability_worker.exec_local_command(command_start))
 
                         # Wait a bit for the browser to launch
-                        await asyncio.sleep(2)
+                        await self.worker.session_tasks.sleep(2)
 
                         # 2. Inject data into the running browser
                         final_payload = json.dumps(extracted_data)
@@ -75,7 +71,7 @@ class FormFillerCapability(MatchingCapability):
                         await self.capability_worker.speak("Form submitted successfully. Let me know if you need anything else.")
                         break
                     except Exception as e:
-                        logger.error(f"JSON Parse error: {e}")
+                        self.worker.editor_logging_handler.error(f"[FormFiller] JSON parse error: {e}")
                         await self.capability_worker.speak("I got a bit confused. Let's start over.")
                         break
                 else:
@@ -84,7 +80,7 @@ class FormFillerCapability(MatchingCapability):
                     await self.capability_worker.speak(llm_response)
 
         except Exception as e:
-            logger.error(f"Error: {e}")
+            self.worker.editor_logging_handler.error(f"[FormFiller] Error: {e}")
             await self.capability_worker.speak("An error occurred.")
         finally:
             self.capability_worker.resume_normal_flow()
