@@ -61,3 +61,4 @@ Format: - **@username** — ability-name ([ability-name](community/ability-name/
 - **[@MMEHDI0606](https://github.com/MMEHDI0606)** — CareXpert-Voice-Desk ([CareXpert-Voice-Desk](community/CareXpert-Voice-Desk/)), KindMind ([KindMind](community/KindMind/)), agentic-form-filler ([agentic-form-filler](community/agentic-form-filler/)), crush ([crush](community/crush/)), generate-passport-token ([generate-passport-token](community/generate-passport-token/)), hot-take-machine ([hot-take-machine](community/hot-take-machine/)), awkward ([awkward](community/awkward/))
 - **[@milliyin](https://github.com/milliyin)** — orbit ([orbit](community/orbit/))
 - **[@nida-akhtar](https://github.com/nida-akhtar)** — mnemo ([mnemo](community/mnemo/))
+- **[@muj25](https://github.com/muj25)** — rehnuma-bill-reader ([rehnuma-bill-reader](community/rehnuma-bill-reader/))
