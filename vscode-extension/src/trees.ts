@@ -1,6 +1,6 @@
 import * as vscode from "vscode";
 import * as api from "./api";
-import { runCli } from "./cli";
+import { DevkitMonitor, DevkitStats } from "./devkit";
 
 /** A simple tree node — either a data row or a clickable action. */
 export class Node extends vscode.TreeItem {
@@ -126,20 +126,18 @@ function errorNode(e: unknown): Node {
 }
 
 /**
- * Local Bridge (Devkit) view: a colored status row on top, then the actions.
- * Today the status comes from `openhome local status`; this is the hook where a
- * live socket will later drive the green/red indicator.
+ * Devkit view: a colored status row driven by the live monitoring socket, the
+ * latest device stats when connected, and a single Connect/Disconnect action
+ * that flips with the connection state.
  */
 export class LocalProvider implements vscode.TreeDataProvider<Node> {
   private _onDidChange = new vscode.EventEmitter<void>();
   readonly onDidChangeTreeData = this._onDidChange.event;
 
-  private readonly actions = [
-    { label: "Start bridge", command: "openhome.localStart", icon: "play", color: "charts.green" },
-    { label: "Stop bridge", command: "openhome.localStop", icon: "debug-stop", color: "charts.red" },
-    { label: "Show status", command: "openhome.localStatus", icon: "pulse", color: "charts.blue" },
-    { label: "View logs", command: "openhome.localLogs", icon: "output", color: "charts.yellow" },
-  ];
+  constructor(private readonly monitor: DevkitMonitor) {
+    // Re-render whenever the socket state or stats change.
+    monitor.onDidChange(() => this._onDidChange.fire());
+  }
 
   refresh(): void {
     this._onDidChange.fire();
@@ -149,25 +147,70 @@ export class LocalProvider implements vscode.TreeDataProvider<Node> {
     return el;
   }
 
-  async getChildren(): Promise<Node[]> {
-    const res = await runCli(["local", "status"]);
-    const out = (res.stdout + res.stderr).toLowerCase();
-    const running = res.code === 0 && out.includes("running") && !out.includes("not running");
-    const status = new Node(running ? "Devkit: connected" : "Devkit: offline");
-    status.iconPath = new vscode.ThemeIcon(
-      running ? "circle-filled" : "circle-outline",
-      new vscode.ThemeColor(running ? "testing.iconPassed" : "testing.iconFailed")
+  getChildren(): Node[] {
+    const state = this.monitor.state;
+    const status = new Node(
+      state === "online" ? "Devkit: connected" : state === "connecting" ? "Devkit: connecting…" : "Devkit: offline"
     );
-    status.tooltip = (res.stdout || res.stderr || "").trim() || "openhome local status";
+    const icon =
+      state === "online"
+        ? { name: "circle-filled", color: "testing.iconPassed" }
+        : state === "connecting"
+        ? { name: "loading~spin", color: "charts.yellow" }
+        : { name: "circle-outline", color: "testing.iconFailed" };
+    status.iconPath = new vscode.ThemeIcon(icon.name, new vscode.ThemeColor(icon.color));
+    status.tooltip = this.monitor.detail;
 
-    const actionNodes = this.actions.map((a) => {
-      const n = new Node(a.label);
-      n.command = { command: a.command, title: a.label };
-      n.iconPath = new vscode.ThemeIcon(a.icon, new vscode.ThemeColor(a.color));
+    const rows: Node[] = [status, ...statRows(this.monitor.stats, state)];
+
+    // Connect when offline; Disconnect otherwise — never both.
+    if (state === "offline") {
+      const connect = new Node("Connect");
+      connect.command = { command: "openhome.devkitConnect", title: "Connect" };
+      connect.iconPath = new vscode.ThemeIcon("plug", new vscode.ThemeColor("charts.green"));
+      rows.push(connect);
+    } else {
+      const disconnect = new Node("Disconnect");
+      disconnect.command = { command: "openhome.devkitDisconnect", title: "Disconnect" };
+      disconnect.iconPath = new vscode.ThemeIcon("debug-disconnect", new vscode.ThemeColor("charts.red"));
+      rows.push(disconnect);
+    }
+    return rows;
+  }
+}
+
+/** Format a used/total metric like "9% (1215/3841 MB)". */
+function pct(m?: { used: number; total: number; unit: string }): string | undefined {
+  if (!m || !m.total) {
+    return undefined;
+  }
+  const p = Math.round((m.used / m.total) * 100);
+  const unit = m.unit === "%" ? "" : ` ${m.unit}`;
+  return m.unit === "%" ? `${m.used}%` : `${p}% (${m.used}/${m.total}${unit})`;
+}
+
+/** Read-only rows describing the current device, shown only when online. */
+function statRows(stats: DevkitStats | undefined, state: string): Node[] {
+  if (state !== "online" || !stats) {
+    return [];
+  }
+  const items: { label: string; value?: string; icon: string }[] = [
+    { label: "CPU", value: pct(stats.cpu), icon: "pulse" },
+    { label: "RAM", value: pct(stats.ram), icon: "server" },
+    { label: "Disk", value: pct(stats.disk), icon: "database" },
+    { label: "Firmware", value: stats.firmwareVersion, icon: "chip" },
+    { label: "IP", value: stats.ipAddress, icon: "globe" },
+    { label: "MQTT", value: stats.mqttRunning ? "running" : "stopped", icon: "broadcast" },
+    { label: "Agent", value: stats.agentConnected ? "connected" : "disconnected", icon: "hubot" },
+  ];
+  return items
+    .filter((i) => i.value !== undefined)
+    .map((i) => {
+      const n = new Node(i.label);
+      n.description = i.value;
+      n.iconPath = new vscode.ThemeIcon(i.icon, new vscode.ThemeColor("charts.blue"));
       return n;
     });
-    return [status, ...actionNodes];
-  }
 }
 
 interface Action {

@@ -58,11 +58,15 @@ jobs:
       - name: Comment on PR
         if: always()
         uses: actions/github-script@v7
+        env:
+          VIOLATION: ${{ steps.check.outputs.violation }}
+          ALLOWED: ${{ steps.check.outputs.allowed }}
+          BLOCKED: ${{ steps.check.outputs.blocked }}
         with:
           script: |
-            const violation = ${{ steps.check.outputs.violation }};
-            const allowed = ${{ steps.check.outputs.allowed }};
-            const blocked = ${{ steps.check.outputs.blocked }};
+            const violation = process.env.VIOLATION === 'true';
+            const allowed = JSON.parse(process.env.ALLOWED || '[]');
+            const blocked = JSON.parse(process.env.BLOCKED || '[]');
 
             let body = '';
 
