@@ -147,6 +147,20 @@ export async function isConfigured(): Promise<boolean> {
 }
 
 /**
+ * The devkit monitoring WebSocket URL for the signed-in account, or undefined
+ * if there's no API key. The cloud relays live device stats over this socket;
+ * the key travels in the path, mirroring the web dashboard.
+ */
+export async function getDevkitSocketUrl(): Promise<string | undefined> {
+  const c = await getCreds();
+  if (!c.apiKey) {
+    return undefined;
+  }
+  const wsBase = c.apiBase.replace(/^http/, "ws"); // https→wss, http→ws
+  return `${wsBase}/ws/devkit/${c.apiKey}/`;
+}
+
+/**
  * Environment variables to inject when launching the CLI, so it uses the same
  * credentials the extension is signed in with (the CLI can't read our
  * SecretStorage). Only includes what's set.
