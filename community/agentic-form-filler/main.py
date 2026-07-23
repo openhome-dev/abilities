@@ -4,6 +4,8 @@ from src.agent.capability import MatchingCapability
 from src.main import AgentWorker
 from src.agent.capability_worker import CapabilityWorker
 
+EXIT_WORDS = ("stop", "cancel", "exit", "quit", "goodbye", "bye", "never mind")
+
 
 class FormFillerCapability(MatchingCapability):
     worker: AgentWorker = None
@@ -14,6 +16,13 @@ class FormFillerCapability(MatchingCapability):
         self.worker = worker
         self.capability_worker = CapabilityWorker(self)
         self.worker.session_tasks.create(self.run())
+
+    def _is_exit(self, text: str) -> bool:
+        lowered = text.strip().lower()
+        if lowered in EXIT_WORDS:
+            return True
+        words = lowered.split()
+        return len(words) <= 3 and any(w in EXIT_WORDS for w in words)
 
     async def run(self):
         try:
@@ -26,6 +35,11 @@ class FormFillerCapability(MatchingCapability):
                     await self.capability_worker.speak("I didn't catch that. Goodbye!")
                     break
 
+                if self._is_exit(user_input):
+                    await self.capability_worker.speak("No problem, maybe another time!")
+                    break
+
+                history_so_far = list(conversation)
                 conversation.append({"role": "user", "content": user_input})
 
                 system_prompt = """
@@ -34,7 +48,7 @@ class FormFillerCapability(MatchingCapability):
                 1. "hackathon_registration.html" (Needs: Team, Email, Idea)
                 2. "bug_report.html" (Needs: Title, Priority, Description)
                 3. "feedback_survey.html" (Needs: Name, Rating, Comments)
-                
+
                 Rules:
                 1. If missing form/fields, ask briefly. NEVER confirm.
                 2. If you have ALL fields, output ONLY JSON:
@@ -42,7 +56,7 @@ class FormFillerCapability(MatchingCapability):
                 """
 
                 llm_response = self.capability_worker.text_to_text_response(
-                    user_input, conversation, system_prompt
+                    user_input, history_so_far, system_prompt
                 )
 
                 if "READY" in llm_response and "{" in llm_response:
