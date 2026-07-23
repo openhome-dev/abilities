@@ -39,7 +39,10 @@ class ImmersiveQuoteWatcherBackground(MatchingCapability):
     def call(self, worker: AgentWorker, background_daemon_mode: bool):
         self.worker = worker
         self.background_daemon_mode = background_daemon_mode
-        self.capability_worker = CapabilityWorker(self.worker)
+        # Daemons pass `self` (not self.worker) so the SDK can read
+        # background_daemon_mode off this capability — the documented
+        # convention for background abilities.
+        self.capability_worker = CapabilityWorker(self)
         self.worker.session_tasks.create(self.watch())
 
     def log(self, message: str):

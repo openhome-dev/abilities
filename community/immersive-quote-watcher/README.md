@@ -18,3 +18,22 @@ announces each one exactly once:
 Same as the other Immersive skills: save your deployed backend URL in
 OpenHome Settings → API Keys under `immersive_backend_url` (and optionally an
 auth key under `immersive_api_key`).
+
+## Backend & API contract
+
+The marketplace backend is a small Flask app hosted **in its own repository** (it is
+not an OpenHome ability, so it lives outside this repo):
+
+> Backend repo: `<ADD_BACKEND_REPO_URL_HERE>`
+
+The daemon reads its base URL from the `immersive_backend_url` API key and
+auto-detects an optional `/api` route prefix. It polls one endpoint:
+
+**`GET /requests?status=open`** — it announces any request whose `quote_count`
+is 1 or more, once per session.
+
+```jsonc
+{ "ok": true, "requests": [
+    { "id": "a1b2c3d4", "category": "plumbing", "status": "open",
+      "quote_count": 3 } ] }
+```

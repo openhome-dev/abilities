@@ -24,9 +24,38 @@ job by voice so the ranking backend can personalize future provider matches.
 
 ## Configuration
 
-- `BACKEND_URL` in `main.py` — point at your Immersive backend.
-- Optional API key: save it in OpenHome Settings → API Keys under `immersive_api_key`.
-- No backend? The skill still runs end to end on demo data.
+- Save your deployed backend URL in OpenHome Settings → API Keys under
+  `immersive_backend_url` (and optionally an auth key under `immersive_api_key`).
+- No backend? The skill still runs end to end on the shared file / demo data.
+
+## Backend & API contract
+
+The marketplace backend is a small Flask app hosted **in its own repository** (it is
+not an OpenHome ability, so it lives outside this repo):
+
+> Backend repo: `<ADD_BACKEND_REPO_URL_HERE>`
+
+Skills read its base URL from the `immersive_backend_url` API key and auto-detect an
+optional `/api` route prefix. This skill calls two endpoints:
+
+**`GET /requests?status=booked`** — list booked jobs awaiting a rating.
+
+```jsonc
+{ "ok": true, "requests": [
+    { "id": "a1b2c3d4", "category": "plumbing", "status": "booked",
+      "booked_provider": "Ahmed Plumbing Services" } ] }
+```
+
+**`POST /feedback`** — submit a rating; the backend updates the provider's
+running-average score and reliability.
+
+```jsonc
+// request body
+{ "request_id": "a1b2c3d4", "provider": "Ahmed Plumbing Services",
+  "rating": 5, "comment": "fast and tidy" }
+// response
+{ "ok": true }
+```
 
 ## Shared-state contract
 

@@ -29,9 +29,46 @@ Set in the OpenHome dashboard (suggestions, mirrored in `config.json`):
 
 ## Configuration
 
-- `BACKEND_URL` in `main.py` — point at your Immersive backend.
-- Optional API key: save it in OpenHome Settings → API Keys under `immersive_api_key`.
-- No backend? The skill still runs end to end on demo data.
+- Save your deployed backend URL in OpenHome Settings → API Keys under
+  `immersive_backend_url` (and optionally an auth key under `immersive_api_key`).
+- No backend? The skill still runs end to end on the shared file / demo data.
+
+## Backend & API contract
+
+The marketplace backend is a small Flask app hosted **in its own repository** (it is
+not an OpenHome ability, so it lives outside this repo):
+
+> Backend repo: `<ADD_BACKEND_REPO_URL_HERE>`
+
+Skills read its base URL from the `immersive_backend_url` API key and auto-detect an
+optional `/api` route prefix. This skill calls three endpoints:
+
+**`GET /requests?status=open`** — list open requests.
+
+```jsonc
+{ "ok": true, "requests": [
+    { "id": "a1b2c3d4", "category": "plumbing", "description": "leaking pipe",
+      "status": "open", "booked_provider": null, "quote_count": 3 } ] }
+```
+
+**`GET /requests/{id}/quotes`** — quotes for a request.
+
+```jsonc
+{ "ok": true, "quotes": [
+    { "id": "q1", "request_id": "a1b2c3d4", "provider": "Ahmed Plumbing Services",
+      "price": 3500, "rating": 4.8, "reliability": 0.96,
+      "availability": "today at 5 PM", "status": "offered" } ] }
+```
+
+**`POST /quotes/{id}/accept`** — book a quote (declines the rest).
+
+```jsonc
+// request body
+{ "request_id": "a1b2c3d4" }
+// response
+{ "ok": true, "quote": { "id": "q1", "provider": "Ahmed Plumbing Services",
+    "status": "accepted" } }
+```
 
 ## Shared-state contract
 
