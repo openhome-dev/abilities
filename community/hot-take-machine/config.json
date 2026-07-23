@@ -1,8 +1,7 @@
 {
-    "unique_name":"advisor",
-    "matching_hotwords":[
-        "give me advise",
-        "advise me",
-        "advice time"
+    "unique_name": "hot-take-machine",
+    "matching_hotwords": [
+        "hot take",
+        "hot take machine"
     ]
 }
