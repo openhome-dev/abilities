@@ -34,26 +34,52 @@ jobs:
 
       - run: unzip -o artifact.zip -d results
 
-      - name: Verify PR still at validated SHA
+      - name: Verify PR at trusted SHA
         id: verify
         uses: actions/github-script@v7
         with:
           script: |
-            const meta = JSON.parse(require('fs').readFileSync('results/metadata.json', 'utf8'));
-            const pr = await github.rest.pulls.get({
-              owner: context.repo.owner, repo: context.repo.repo, pull_number: meta.pr_number,
-            });
-            if (pr.data.head.sha !== meta.head_sha) {
-              core.warning(`Stale artifact (${meta.head_sha} vs ${pr.data.head.sha}); skipping.`);
+            const fs = require('fs');
+            const run = context.payload.workflow_run;
+
+            const trustedSha    = run.head_sha;
+            const trustedBranch = run.head_branch;
+            const sameRepo      = run.head_repository.full_name === run.repository.full_name;
+
+            let meta;
+            try {
+              meta = JSON.parse(fs.readFileSync('results/metadata.json', 'utf8'));
+            } catch (e) {
+              core.warning('Unreadable metadata.json; skipping.');
               core.setOutput('stale', 'true');
               return;
             }
-            core.setOutput('stale', 'false');
-            core.setOutput('same_repo', String(meta.same_repo));
-            core.setOutput('head_ref', meta.head_ref);
 
-      # Push the rename commit — only possible/safe for same-repo branches.
-      # Fork branches can't be pushed to with this token regardless of intent.
+            let pr;
+            try {
+              pr = await github.rest.pulls.get({
+                owner: context.repo.owner, repo: context.repo.repo,
+                pull_number: Number(meta.pr_number),
+              });
+            } catch (e) {
+              core.warning(`Could not fetch PR #${meta.pr_number}; skipping.`);
+              core.setOutput('stale', 'true');
+              return;
+            }
+
+            // The PR's current head must match the SHA this run actually validated.
+            if (pr.data.head.sha !== trustedSha) {
+              core.warning(`Stale/mismatched (${trustedSha} vs ${pr.data.head.sha}); skipping.`);
+              core.setOutput('stale', 'true');
+              return;
+            }
+
+            core.setOutput('stale', 'false');
+            core.setOutput('same_repo', String(sameRepo));
+            core.setOutput('head_ref', trustedBranch);
+            core.setOutput('head_sha', trustedSha);
+            core.setOutput('pr_number', String(pr.data.number));
+            
       - name: Checkout branch for rename push
         if: steps.verify.outputs.stale == 'false' && steps.verify.outputs.same_repo == 'true'
         uses: actions/checkout@v4
@@ -77,9 +103,14 @@ jobs:
       - name: Post comment and status
         if: steps.verify.outputs.stale == 'false'
         uses: actions/github-script@v7
+        env:
+          HEAD_SHA: ${{ steps.verify.outputs.head_sha }}
+          PR_NUMBER: ${{ steps.verify.outputs.pr_number }}
         with:
           script: |
             const fs = require('fs');
+            const headSha = process.env.HEAD_SHA;
+            const prNumber = Number(process.env.PR_NUMBER);
             const meta = JSON.parse(fs.readFileSync('results/metadata.json', 'utf8'));
             const marker = '<!-- ability-validation-bot -->';
             let body = `${marker}\n`;
@@ -99,7 +130,6 @@ jobs:
                 body += `\`\`\`bash\ngit mv community/my_ability community/my-ability\n\`\`\`\n\n`;
               }
             }
-
             const output = fs.readFileSync('results/validation_output.txt', 'utf8').trim();
             const passed = meta.validate_outcome === 'success';
             body += passed ? `## ✅ Ability Validation Passed\n\n` : `## ❌ Ability Validation Failed\n\n`;
@@ -112,18 +142,18 @@ jobs:
             }
 
             const { data: comments } = await github.rest.issues.listComments({
-              owner: context.repo.owner, repo: context.repo.repo, issue_number: meta.pr_number,
+              owner: context.repo.owner, repo: context.repo.repo, issue_number: prNumber,
             });
             const existing = comments.find(c => c.body.includes(marker));
             if (existing) {
               await github.rest.issues.updateComment({ owner: context.repo.owner, repo: context.repo.repo, comment_id: existing.id, body });
             } else {
-              await github.rest.issues.createComment({ owner: context.repo.owner, repo: context.repo.repo, issue_number: meta.pr_number, body });
+              await github.rest.issues.createComment({ owner: context.repo.owner, repo: context.repo.repo, issue_number: prNumber, body });
             }
 
             await github.rest.repos.createCommitStatus({
               owner: context.repo.owner, repo: context.repo.repo,
-              sha: meta.head_sha,
+              sha: headSha,
               state: passed ? 'success' : 'failure',
               context: 'ability-check-report',
               description: passed ? 'Passed' : 'Failed',
