@@ -24,7 +24,7 @@ auth key under `immersive_api_key`).
 The marketplace backend is a small Flask app hosted **in its own repository** (it is
 not an OpenHome ability, so it lives outside this repo):
 
-> Backend repo: `<ADD_BACKEND_REPO_URL_HERE>`
+> Backend repo: https://github.com/AliZain330/immersive-backend
 
 The daemon reads its base URL from the `immersive_backend_url` API key and
 auto-detects an optional `/api` route prefix. It polls one endpoint:

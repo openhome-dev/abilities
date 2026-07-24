@@ -33,7 +33,7 @@ creates a service request the other Immersive skills act on.
 The marketplace backend is a small Flask app hosted **in its own repository** (it is
 not an OpenHome ability, so it lives outside this repo):
 
-> Backend repo: `<ADD_BACKEND_REPO_URL_HERE>`
+> Backend repo: https://github.com/AliZain330/immersive-backend
 
 Skills read its base URL from the `immersive_backend_url` API key and auto-detect an
 optional `/api` route prefix. This skill calls one endpoint:
