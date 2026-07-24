@@ -1,3 +1,4 @@
+import asyncio
 import hashlib
 import re
 import time
@@ -6,6 +7,7 @@ import requests
 
 from src.agent.capability import MatchingCapability
 from src.agent.capability_worker import CapabilityWorker
+from src.main import AgentWorker
 
 
 # ============================================================
@@ -494,12 +496,12 @@ def classify_http_response(response):
 # ============================================================
 
 class DevopsintrenchesCapability(MatchingCapability):
-    worker = None
-    capability_worker = None
+    worker: AgentWorker = None
+    capability_worker: CapabilityWorker = None
 
     # {{register capability}}
 
-    def call(self, worker):
+    def call(self, worker: AgentWorker):
         self.worker = worker
 
         # Important: pass the capability instance here.
@@ -813,7 +815,8 @@ class DevopsintrenchesCapability(MatchingCapability):
         current_state = "up" if is_up else "down"
 
         try:
-            existing = self.capability_worker.get_single_key(key)
+            result = self.capability_worker.get_single_key(key)
+            existing = result.get("value") if result else None
         except Exception as error:
             self.log_warning(
                 "Could not read state: " + repr(error)
@@ -1179,7 +1182,7 @@ class DevopsintrenchesCapability(MatchingCapability):
                 )
 
                 try:
-                    result = self.diagnose(user_input)
+                    result = await asyncio.to_thread(self.diagnose, user_input)
 
                     duration = self.track_duration(
                         result.get("target") or user_input,
