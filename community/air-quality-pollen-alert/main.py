@@ -183,6 +183,25 @@ class AirQualityPollenAlertCapability(MatchingCapability):
     # API helpers
     # ------------------------------------------------------------------
 
+    def _region_city(self) -> str:
+        """Try the platform's own region data before falling back to asking
+        the user. get_region_data's exact field shape isn't documented or
+        verified live here, so this checks a few plausible key names and
+        degrades to empty (triggering the ask-the-user fallback) on anything
+        unexpected rather than guessing wrong."""
+        try:
+            region = self.capability_worker.get_region_data()
+        except Exception as e:
+            self.worker.editor_logging_handler.error(f"[AQAlert] get_region_data failed: {e!r}")
+            return ""
+        if not isinstance(region, dict):
+            return ""
+        for key in ("city", "city_name", "name", "location", "region"):
+            value = region.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+        return ""
+
     def _geocode(self, city: str) -> dict:
         try:
             resp = requests.get(
@@ -318,6 +337,10 @@ class AirQualityPollenAlertCapability(MatchingCapability):
             ).strip()
             if extracted.upper() != "NONE" and 1 <= len(extracted.split()) <= 4:
                 city_reply = extracted
+
+        if not city_reply:
+            # Try the platform's own region data before asking the user.
+            city_reply = self._region_city()
 
         if not city_reply:
             await self.capability_worker.speak(
