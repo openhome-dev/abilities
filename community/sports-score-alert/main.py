@@ -105,21 +105,43 @@ class SportsScoreAlertCapability(MatchingCapability):
             return _empty_data()
 
     def _save_data(self, data: dict):
+        def ok(resp):
+            return isinstance(resp, dict) and resp.get("success")
         try:
-            self.capability_worker.update_key(STORAGE_KEY, data)
-        except Exception:
-            try:
-                self.capability_worker.create_key(STORAGE_KEY, data)
-            except Exception as e:
-                self.worker.editor_logging_handler.error(f"[Sports] Save error: {e!r}")
+            if ok(self.capability_worker.create_key(STORAGE_KEY, data)):
+                return
+            if ok(self.capability_worker.update_key(STORAGE_KEY, data)):
+                return
+        except Exception as e:
+            self.worker.editor_logging_handler.error(f"[Sports] Save error: {e!r}")
+            return
+        self.worker.editor_logging_handler.error("[Sports] Save failed")
 
     # ------------------------------------------------------------------
     # LLM helpers
     # ------------------------------------------------------------------
 
+    @staticmethod
+    def _is_exit(text: str) -> bool:
+        # Short ambiguous words ("stop", "done") only count as an exit when
+        # they're the WHOLE reply. In sports commentary "stop" and "done" are
+        # frequently real, standalone words ("what a stop by the goalie",
+        # "is it done yet", "stop following the Yankees" -> UNFOLLOW below) —
+        # a plain word-boundary check still matches those, since the word
+        # genuinely is "stop"/"done" there. Only requiring the entire
+        # utterance to be the exit word avoids false-exiting on them, at the
+        # minor cost of not catching "yeah, stop" with filler words attached.
+        # Distinctive multi-word phrases ("that's all") still match anywhere.
+        lower = (text or "").lower().strip().rstrip(".!?")
+        if not lower:
+            return False
+        if lower in EXIT_WORDS:
+            return True
+        return any(phrase in lower for phrase in EXIT_WORDS if " " in phrase)
+
     def _classify_intent(self, text: str) -> str:
         t = text.lower()
-        if any(w in t for w in EXIT_WORDS):
+        if self._is_exit(text):
             return "EXIT"
         if any(w in t for w in ("unfollow", "stop following", "remove")):
             return "UNFOLLOW"
@@ -533,7 +555,7 @@ class SportsScoreAlertCapability(MatchingCapability):
             intent = self._classify_intent(trigger or "")
             self.worker.editor_logging_handler.info(f"[Sports] Intent: {intent}")
 
-            if intent == "EXIT" or (trigger and any(w in trigger.lower() for w in EXIT_WORDS)):
+            if intent == "EXIT" or (trigger and self._is_exit(trigger)):
                 await self.capability_worker.speak("Enjoy the game.")
                 return
 
@@ -545,7 +567,7 @@ class SportsScoreAlertCapability(MatchingCapability):
 
             while True:
                 reply = await self.capability_worker.user_response()
-                if not reply or any(w in reply.lower() for w in EXIT_WORDS):
+                if not reply or self._is_exit(reply):
                     break
                 # Use in-memory data — _handle_follow/_handle_unfollow mutate it in-place.
                 # Re-reading from storage within the same session returns stale data
