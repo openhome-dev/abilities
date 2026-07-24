@@ -70,21 +70,40 @@ class BedtimeStoriesCapability(MatchingCapability):
         return {}
 
     def _save_data(self, data: dict):
+        def ok(resp):
+            return isinstance(resp, dict) and resp.get("success")
         try:
-            self.capability_worker.update_key(STORAGE_KEY, data)
-        except Exception:
-            try:
-                self.capability_worker.create_key(STORAGE_KEY, data)
-            except Exception as e:
-                self.worker.editor_logging_handler.error(f"[BedtimeStories] Save error: {e!r}")
+            if ok(self.capability_worker.create_key(STORAGE_KEY, data)):
+                return
+            if ok(self.capability_worker.update_key(STORAGE_KEY, data)):
+                return
+        except Exception as e:
+            self.worker.editor_logging_handler.error(f"[BedtimeStories] Save error: {e!r}")
+            return
+        self.worker.editor_logging_handler.error("[BedtimeStories] Save failed")
 
     # ------------------------------------------------------------------
     # Intent classification
     # ------------------------------------------------------------------
 
+    @staticmethod
+    def _is_exit(text: str) -> bool:
+        # Short ambiguous words ("stop", "done", "end", "finish") only count
+        # as an exit when they're the WHOLE reply — a child might genuinely
+        # say things like "he should stop and think" or "at the end of the
+        # story" where the word is real but not an exit request. Distinctive
+        # multi-word phrases ("that's enough", "no more") still match
+        # anywhere in the reply.
+        lower = (text or "").lower().strip().rstrip(".!?")
+        if not lower:
+            return False
+        if lower in EXIT_WORDS:
+            return True
+        return any(phrase in lower for phrase in EXIT_WORDS if " " in phrase)
+
     def _classify_intent(self, text: str) -> str:
         t = text.lower()
-        if any(w in t for w in EXIT_WORDS):
+        if self._is_exit(text):
             return "EXIT"
         if any(w in t for w in NEW_WORDS):
             return "NEW"
@@ -266,7 +285,7 @@ class BedtimeStoriesCapability(MatchingCapability):
                 await self.capability_worker.speak(choice_q)
                 reply = await self.capability_worker.user_response()
 
-                if not reply or any(w in reply.lower() for w in EXIT_WORDS):
+                if not reply or self._is_exit(reply):
                     await self.capability_worker.speak(
                         f"We'll pick up right here tomorrow night. Sweet dreams, {child_name}."
                     )
