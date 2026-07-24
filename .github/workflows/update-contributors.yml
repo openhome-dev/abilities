@@ -1,17 +1,14 @@
 name: Update Contributors
-
 on:
   pull_request_target:
     branches: [dev]
     types: [closed]
     paths:
       - 'community/**'
-
 jobs:
   update-contributors:
     if: github.event.pull_request.merged == true
     runs-on: ubuntu-latest
-
     steps:
       - uses: actions/checkout@v4
         with:
@@ -19,49 +16,96 @@ jobs:
           token: ${{ secrets.PAT_TOKEN }}
           fetch-depth: 0
 
-      - name: Add contributor
+      - name: Add contributor to CONTRIBUTORS.md
         run: |
           USERNAME="${{ github.event.pull_request.user.login }}"
-
           ABILITY_DIRS=$(git diff --name-only ${{ github.event.pull_request.base.sha }}...${{ github.event.pull_request.merge_commit_sha }} \
             | grep -E '^community/' \
             | cut -d'/' -f1-2 \
             | sort -u)
-
           if [ -z "$ABILITY_DIRS" ]; then
             echo "⚠️ No community ability directories found in diff"
             exit 0
           fi
-
           # Remove placeholder line if present
           sed -i '/\*Be the first!/d' CONTRIBUTORS.md
-
           for ABILITY_DIR in $ABILITY_DIRS; do
             ABILITY_NAME=$(basename "$ABILITY_DIR")
             ABILITY_ENTRY="$ABILITY_NAME ([$ABILITY_NAME]($ABILITY_DIR/))"
-
             if grep -q "@$USERNAME" CONTRIBUTORS.md; then
-              # User exists — check if this specific ability is already listed
               USER_LINE=$(grep "@$USERNAME" CONTRIBUTORS.md)
-
               if echo "$USER_LINE" | grep -qF "$ABILITY_NAME ([$ABILITY_NAME]"; then
                 echo "✅ $USERNAME already has $ABILITY_NAME — skipping"
                 continue
               fi
-
-              # Append new ability to existing user line
               sed -i "/@${USERNAME}/s|\$|, ${ABILITY_ENTRY}|" CONTRIBUTORS.md
               echo "✅ Added $ABILITY_NAME to $USERNAME's existing entry"
             else
-              # New user — add fresh line
               echo "- **[@$USERNAME](https://github.com/$USERNAME)** — $ABILITY_ENTRY" >> CONTRIBUTORS.md
               echo "✅ Added new contributor $USERNAME with $ABILITY_NAME"
             fi
           done
-
           echo ""
           echo "📄 Final CONTRIBUTORS.md:"
           cat CONTRIBUTORS.md
+
+      - name: Add contributor avatar to README.md
+        env:
+          USERNAME: ${{ github.event.pull_request.user.login }}
+          USER_ID: ${{ github.event.pull_request.user.id }}
+        run: |
+          python3 - << 'EOF'
+          import os
+
+          username = os.environ["USERNAME"]
+          user_id = os.environ["USER_ID"]
+          readme_path = "README.md"
+
+          with open(readme_path, "r", encoding="utf-8") as f:
+              lines = f.readlines()
+
+          avatar_href = f'https://github.com/{username}"'
+          # Skip entirely if this user's avatar is already present anywhere in the file
+          if any(avatar_href in line for line in lines):
+              print(f"✅ {username} already has an avatar in README.md — skipping")
+              exit(0)
+
+          new_avatar_line = (
+              f'  <a href="https://github.com/{username}">'
+              f'<img src="https://avatars.githubusercontent.com/u/{user_id}?v=4&s=64" '
+              f'width="56" height="56" alt="{username}" /></a>\n'
+          )
+
+          # Find the "Want to contribute? Start here" marker -- the avatar block's
+          # closing </p> is the nearest preceding line matching exactly "</p>"
+          marker_idx = None
+          for i, line in enumerate(lines):
+              if "Want to contribute?" in line and 'id="contributing"' not in line:
+                  marker_idx = i
+                  break
+
+          if marker_idx is None:
+              print("⚠️ Could not find the 'Want to contribute?' marker in README.md — skipping")
+              exit(0)
+
+          # Walk backwards from the marker to find the preceding closing </p>
+          close_idx = None
+          for i in range(marker_idx - 1, -1, -1):
+              if lines[i].strip() == "</p>":
+                  close_idx = i
+                  break
+
+          if close_idx is None:
+              print("⚠️ Could not find the avatar block's closing </p> — skipping")
+              exit(0)
+
+          lines.insert(close_idx, new_avatar_line)
+
+          with open(readme_path, "w", encoding="utf-8") as f:
+              f.writelines(lines)
+
+          print(f"✅ Added {username}'s avatar to README.md")
+          EOF
 
       - name: Commit and push
         run: |
@@ -69,6 +113,6 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git restore --staged .        # unstage everything first
           git checkout -- .gitignore    # never let a PR's .gitignore change bleed in
-          git add CONTRIBUTORS.md       # stage only what we intend
+          git add CONTRIBUTORS.md README.md
           git diff --cached --quiet || git commit -m "docs: add @${{ github.event.pull_request.user.login }} to contributors"
           git push origin dev
