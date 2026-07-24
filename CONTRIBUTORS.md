@@ -67,3 +67,4 @@ Format: - **@username** — ability-name ([ability-name](community/ability-name/
 - **[@BerryBlaast](https://github.com/BerryBlaast)** — sentry-soc ([sentry-soc](community/sentry-soc/))
 - **[@AliZain330](https://github.com/AliZain330)** — immersive-diagnosis ([immersive-diagnosis](community/immersive-diagnosis/)), immersive-feedback ([immersive-feedback](community/immersive-feedback/)), immersive-provider ([immersive-provider](community/immersive-provider/)), immersive-quote-watcher ([immersive-quote-watcher](community/immersive-quote-watcher/))
 - **[@MariyamShams-malik](https://github.com/MariyamShams-malik)** — SentinelRed ([SentinelRed](community/SentinelRed/))
+- **[@abdullahjan007](https://github.com/abdullahjan007)** — DevOpsInTrenches ([DevOpsInTrenches](community/DevOpsInTrenches/))
