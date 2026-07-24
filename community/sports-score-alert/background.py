@@ -50,13 +50,17 @@ class SportsScoreAlertBackground(MatchingCapability):
             return {"followed_teams": [], "alert_prefs": {}, "fired_alerts": []}
 
     def _save_data(self, data: dict):
+        def ok(resp):
+            return isinstance(resp, dict) and resp.get("success")
         try:
-            self.capability_worker.update_key(STORAGE_KEY, data)
-        except Exception:
-            try:
-                self.capability_worker.create_key(STORAGE_KEY, data)
-            except Exception as e:
-                self.worker.editor_logging_handler.error(f"[SportsBG] Save error: {e!r}")
+            if ok(self.capability_worker.create_key(STORAGE_KEY, data)):
+                return
+            if ok(self.capability_worker.update_key(STORAGE_KEY, data)):
+                return
+        except Exception as e:
+            self.worker.editor_logging_handler.error(f"[SportsBG] Save error: {e!r}")
+            return
+        self.worker.editor_logging_handler.error("[SportsBG] Save failed")
 
     # ------------------------------------------------------------------
     # Deduplication
@@ -383,6 +387,6 @@ class SportsScoreAlertBackground(MatchingCapability):
 
     def call(self, worker: AgentWorker, background_daemon_mode: bool = True):
         self.worker = worker
-        self.capability_worker = CapabilityWorker(self.worker)
-        self.background_daemon_mode = background_daemon_mode
+        self.background_daemon_mode = background_daemon_mode  # set BEFORE constructing the worker
+        self.capability_worker = CapabilityWorker(self)  # daemon: pass self, not self.worker
         self.worker.session_tasks.create(self.watch_loop())
