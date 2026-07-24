@@ -171,13 +171,17 @@ class AirQualityPollenAlertCapability(MatchingCapability):
             return _empty_data()
 
     def _save_data(self, data: dict):
+        def ok(resp):
+            return isinstance(resp, dict) and resp.get("success")
         try:
-            self.capability_worker.update_key(STORAGE_KEY, data)
-        except Exception:
-            try:
-                self.capability_worker.create_key(STORAGE_KEY, data)
-            except Exception as e:
-                self.worker.editor_logging_handler.error(f"[AQAlert] Save error: {e!r}")
+            if ok(self.capability_worker.create_key(STORAGE_KEY, data)):
+                return
+            if ok(self.capability_worker.update_key(STORAGE_KEY, data)):
+                return
+        except Exception as e:
+            self.worker.editor_logging_handler.error(f"[AQAlert] Save error: {e!r}")
+            return
+        self.worker.editor_logging_handler.error("[AQAlert] Save failed")
 
     # ------------------------------------------------------------------
     # API helpers
