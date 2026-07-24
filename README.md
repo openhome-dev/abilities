@@ -350,6 +350,18 @@ Built by an incredible community. Thank you to everyone who has shipped an Abili
   <a href="https://github.com/brianchilders"><img src="https://avatars.githubusercontent.com/u/1120465?v=4&s=64" width="56" height="56" alt="brianchilders" /></a>
   <a href="https://github.com/azazrashid"><img src="https://avatars.githubusercontent.com/u/75885216?v=4&s=64" width="56" height="56" alt="azazrashid" /></a>
   <a href="https://github.com/crunchdomo"><img src="https://avatars.githubusercontent.com/u/55187002?v=4&s=64" width="56" height="56" alt="crunchdomo" /></a>
+  <a href="https://github.com/u-faizan"><img src="https://github.com/u-faizan.png?size=64" width="56" height="56" alt="u-faizan" /></a>
+  <a href="https://github.com/KDJ-Malik"><img src="https://github.com/KDJ-Malik.png?size=64" width="56" height="56" alt="KDJ-Malik" /></a>
+  <a href="https://github.com/Asad-NCS"><img src="https://github.com/Asad-NCS.png?size=64" width="56" height="56" alt="Asad-NCS" /></a>
+  <a href="https://github.com/ShayanKhan183"><img src="https://github.com/ShayanKhan183.png?size=64" width="56" height="56" alt="ShayanKhan183" /></a>
+  <a href="https://github.com/AhmedRaza-2"><img src="https://github.com/AhmedRaza-2.png?size=64" width="56" height="56" alt="AhmedRaza-2" /></a>
+  <a href="https://github.com/Bilalkhan-cel"><img src="https://github.com/Bilalkhan-cel.png?size=64" width="56" height="56" alt="Bilalkhan-cel" /></a>
+  <a href="https://github.com/MMEHDI0606"><img src="https://github.com/MMEHDI0606.png?size=64" width="56" height="56" alt="MMEHDI0606" /></a>
+  <a href="https://github.com/milliyin"><img src="https://github.com/milliyin.png?size=64" width="56" height="56" alt="milliyin" /></a>
+  <a href="https://github.com/nida-akhtar"><img src="https://github.com/nida-akhtar.png?size=64" width="56" height="56" alt="nida-akhtar" /></a>
+  <a href="https://github.com/muj25"><img src="https://github.com/muj25.png?size=64" width="56" height="56" alt="muj25" /></a>
+  <a href="https://github.com/Huzaifa-Abdurahman"><img src="https://github.com/Huzaifa-Abdurahman.png?size=64" width="56" height="56" alt="Huzaifa-Abdurahman" /></a>
+  <a href="https://github.com/mibrahim-khalil"><img src="https://github.com/mibrahim-khalil.png?size=64" width="56" height="56" alt="mibrahim-khalil" /></a>
 </p>
 
 <p align="center"><sub>Want to contribute? <a href="#contributing">Start here</a>.</sub></p>
