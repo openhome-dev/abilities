@@ -162,7 +162,7 @@ class LegistarCitySource(CivicSource):
             })
 
         # newest first
-        legislation.sort(key=lambda l: l.get('intro_date') or '', reverse=True)
+        legislation.sort(key=lambda item: item.get('intro_date') or '', reverse=True)
         self._recent_legislation = legislation
         return legislation
 
@@ -333,7 +333,9 @@ class LegistarCitySource(CivicSource):
             if len(filtered) > display_count:
                 lines.append(f"\n...plus {len(filtered) - display_count} more meetings")
 
-            lines.append(f"\nSay 'details on meeting [number]' or 'tell me about [body name]'")
+            lines.append(
+                "\nSay 'details on meeting [number]' or 'tell me about [body name]'"
+            )
 
             leg_summary = self._get_legislation_summary()
             if leg_summary:
@@ -374,8 +376,11 @@ class LegistarCitySource(CivicSource):
         lines.append(f"\n{len(legislation)} items introduced in the last 60 days:\n")
 
         if topics:
-            topic_hits = [l for l in legislation if self._legislation_matches_topics(l, topics)]
-            others = [l for l in legislation if l not in topic_hits]
+            topic_hits = [
+                item for item in legislation
+                if self._legislation_matches_topics(item, topics)
+            ]
+            others = [item for item in legislation if item not in topic_hits]
 
             if topic_hits:
                 topic_list = ", ".join(topics)
@@ -392,11 +397,17 @@ class LegistarCitySource(CivicSource):
                 if len(others) > 10:
                     lines.append(f"\n...plus {len(others) - 10} more items")
         else:
-            ordinances = [l for l in legislation if 'ordinance' in (l.get('type') or '').lower()]
-            resolutions = [l for l in legislation if 'resolution' in (l.get('type') or '').lower()]
+            ordinances = [
+                item for item in legislation
+                if 'ordinance' in (item.get('type') or '').lower()
+            ]
+            resolutions = [
+                item for item in legislation
+                if 'resolution' in (item.get('type') or '').lower()
+            ]
             other = [
-                l for l in legislation
-                if l not in ordinances and l not in resolutions
+                item for item in legislation
+                if item not in ordinances and item not in resolutions
             ]
 
             if ordinances:
@@ -484,8 +495,8 @@ class LegistarCitySource(CivicSource):
         item_lower = item_ref.lower()
 
         should_search_legislation = (
-            any(kw in item_lower for kw in leg_keywords) or
-            (self._recent_legislation and not item_ref.isdigit() and len(item_ref) > 4)
+            any(kw in item_lower for kw in leg_keywords)
+            or (self._recent_legislation and not item_ref.isdigit() and len(item_ref) > 4)
         )
 
         if should_search_legislation:

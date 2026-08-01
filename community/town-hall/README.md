@@ -251,7 +251,8 @@ community/town-hall/
 ├── sources/
 │   ├── base.py              # CivicSource abstract base class — start here to contribute
 │   ├── legistar.py          # LegistarCitySource parent for Granicus Legistar cities
-│   ├── __init__.py          # register your source here (discover_sources)
+│   ├── __init__.py          # must stay empty (repo lint rule)
+│   ├── registry.py          # register your source here (discover_sources)
 │   ├── virginia_state.py    # reference: Virginia General Assembly (state legislature)
 │   ├── richmond_va.py       # Richmond City Council (Legistar)
 │   ├── seattle_wa.py        # …and other thin Legistar city subclasses
@@ -312,7 +313,7 @@ We welcome sources for any city, county, state, or federal body. The pattern is 
            return "### Your City Council\n- ..."
    ```
 
-3. Register your source in `sources/__init__.py` by importing it and appending an instance to the list returned by `discover_sources()`. (OpenHome forbids dynamic imports, so registration is explicit.)
+3. Register your source in `sources/registry.py` by importing it and appending an instance to the list returned by `discover_sources()`. (OpenHome forbids dynamic imports, so registration is explicit. Keep `sources/__init__.py` empty.)
 
 4. If your source needs an API key, follow the same pattern as `virginia_state.py` — accept the key via `set_api_key()` and document the label name in your source's docstring and in this README.
 

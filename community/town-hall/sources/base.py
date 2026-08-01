@@ -44,7 +44,6 @@ class CivicSource(ABC):
         briefing section parsing lives in main.py (_extract_section)."""
         return True
 
-
     @abstractmethod
     def get_name(self) -> str:
         pass

@@ -5,7 +5,7 @@ from src.agent.capability import MatchingCapability
 from src.main import AgentWorker
 from src.agent.capability_worker import CapabilityWorker
 
-from .sources import discover_sources
+from .sources.registry import discover_sources
 from .sources.base import CivicSource
 
 BRIEFING_FILE = "townhall_meetings.md"  # meetings only — never legislation
@@ -86,7 +86,7 @@ class TownHallCapability(MatchingCapability):
     capability_worker: CapabilityWorker = None
     sources: list = []
 
-    #{{register capability}}
+    # {{register capability}}
 
     def _resolve_api_key(self, key_name: str) -> str | None:
         # try exact name plus common casing variants
