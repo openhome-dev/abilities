@@ -5,7 +5,7 @@
 
 A voice-activated civic briefing ability for OpenHome. Ask your agent what's happening in local and state government and get a spoken summary of upcoming meetings, active legislation, and public agendas — pulled live from official government sources.
 
-**Town Hall is designed to be extended.** Virginia and Richmond, VA are the reference implementations. The architecture is built so any developer can add a source for their city, county, state, or federal body by implementing a single Python class.
+**Town Hall is designed to be extended.** Virginia (LIS) and Legistar cities (Richmond plus major U.S. cities) are the reference implementations. Add another city, county, state, or federal body by implementing a single Python class.
 
 ---
 
@@ -17,8 +17,7 @@ A voice-activated civic briefing ability for OpenHome. Ask your agent what's hap
 | `"state of virginia"` | same meetings briefing |
 | `"virginia legislature"` | same meetings briefing |
 | `"virginia legislation"` | Virginia **bills** list (LIS API, CSV fallback) |
-| `"richmond city"` | Richmond City Council meetings briefing |
-| `"richmond city council"` | same meetings briefing |
+| `"richmond city"` / `"richmond city council"` | Richmond City Council meetings |
 | `"richmond legislation"` | pending Richmond ordinances and resolutions |
 | `"seattle city"` / `"seattle legislation"` | Seattle City Council (Legistar) |
 | `"oakland city"` / `"oakland legislation"` | Oakland City Council (Legistar) |
@@ -29,11 +28,8 @@ A voice-activated civic briefing ability for OpenHome. Ask your agent what's hap
 | `"pittsburgh city"` / `"pittsburgh legislation"` | Pittsburgh City Council (Legistar) |
 | `"san jose city"` / `"san jose legislation"` | San Jose City Council (Legistar) |
 | `"town hall"` | asks which briefing you want, then delivers it |
-| `"configure topics"` | opens interactive topic preference configuration |
-| `"set topics"` | opens interactive topic preference configuration |
-| `"remove topics"` | remove specific topics (or clear all) from preferences |
-| `"delete topics"` | same as remove topics |
-| `"clear topics"` | same as remove topics |
+| `"configure topics"` / `"set topics"` | add topic preferences (shared across sources) |
+| `"remove topics"` / `"delete topics"` / `"clear topics"` | remove topics or clear the list |
 
 Naming a jurisdiction in the trigger skips straight to that briefing — no confirmation step. The generic `"town hall"` trigger is the only one that asks which source you want. Topic configuration runs **only** when you use the topic trigger words (never prompted automatically after a briefing).
 
@@ -84,176 +80,201 @@ The Virginia source prefers the LIS REST API for meetings and bills. Without a k
    - **Label:** `LIS_API_KEY`
    - **Value:** your key (`XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX`)
 
-The ability logs `LIS_API_KEY resolved successfully` on startup if the key is found.
+The ability logs when `LIS_API_KEY` is resolved on startup.
 
 ---
 
 ## Usage Examples
 
-- *"Virginia state."* → upcoming GA / committee meetings, then optional meeting-details offer
-- *"Virginia legislation."* → active bills, then optional bill-details offer
-- *"Richmond city."* → Richmond meetings, then optional meeting-details offer
-- *"Richmond legislation."* → ordinances/resolutions, then optional item-details offer
-- *"Town hall."* → *"Which briefing would you like?"*
-- *"Configure topics."* / *"Remove topics."* → topic preference management (trigger-only)
-- *"Get details on meeting 1."* / *"Tell me about HB 1234."* → direct details lookup
+| You say | What you get |
+| --- | --- |
+| *"Virginia state."* | Upcoming GA / committee meetings, then optional details follow-ups |
+| *"Virginia legislation."* | Active bills, then optional bill-details follow-ups |
+| *"Richmond city."* | Richmond meetings (Legistar), then optional details follow-ups |
+| *"Richmond legislation."* | Ordinances / resolutions, then optional item details |
+| *"Seattle city."* / *"Boston legislation."* | Same pattern for any registered Legistar city |
+| *"Town hall."* | *"Which briefing would you like?"* → name a jurisdiction |
+| *"Configure topics."* / *"Set topics."* | Add free-form topic preferences |
+| *"Remove topics."* / *"Clear topics."* | Remove some or all saved topics |
+| *"Details on meeting 1."* / *"Tell me about HB 1234."* | Direct details when a jurisdiction is in the phrase or session |
+
+After a meetings or legislation briefing, the agent offers details, then may ask *"Anything else?"* for a few short follow-ups (or say *"done"* to exit). You can also name another jurisdiction in that window to switch briefings.
 
 ---
 
 ## How It Works
 
-### Scenario 1: Direct Trigger with Keyword
+### Scenario 1: City meetings briefing (Legistar)
 
-**User says:** *"Richmond city"*
+**User says:** *"Richmond city"* (or Seattle, Oakland, Boston, Denver, Baltimore, Phoenix, Pittsburgh, San Jose)
 
 **What happens:**
 
-1. **Trigger routing** — "richmond" routes to the Richmond City Council source
-2. **Fetch live data** — Legistar Web API for upcoming meetings
-3. **Format briefing** — Numbered meetings with date/time
-4. **Cache** — Writes `townhall_briefing.md`
-5. **LLM summarization** — 4–6 spoken sentences
-6. **One-turn details offer** — *"Would you like details on a meeting? Say the meeting number, or say no."* One listen, then exit (no multi-turn loop)
+1. **Trigger routing** — keyword matches the city source (e.g. `"richmond"` → Richmond City Council)
+2. **Fetch meetings** — Legistar Web API `/events` (with cache warm via watchdog)
+3. **Spoken summary** — short list from numbered meeting lines (no LLM for meetings)
+4. **Details offer** — *"Would you like details on a meeting? Say the meeting number or name, or say done."*
+5. **Short follow-ups** — up to a few turns; after each lookup, *"Anything else?"* or say *"done"*
 
-**Example spoken output:**
-> "There are 8 upcoming meetings this week. The City Council meets Monday…"  
-> **Agent:** "Would you like details on a meeting? Say the meeting number, or say no."  
+**Example:**
+> **Agent:** "Here are upcoming meetings for Richmond City Council. City Council, Monday…"  
+> **Agent:** "Would you like details on a meeting? Say the meeting number or name, or say done."  
 > **User:** "Meeting 1"  
-> **Agent:** *(agenda highlights)*  
-> *(session ends)*
+> **Agent:** *(agenda highlights from Legistar event items)*  
+> **Agent:** "Anything else? Say another meeting number or name, or say done."  
+> **User:** "Done."  
+> **Agent:** "Okay."
 
 **Behind the scenes:**
 ```
 User: "richmond city"
   ↓
-RichmondCitySource.fetch_updates()
+RichmondCitySource.fetch_meetings()  (via LegistarCitySource)
   ↓
-Cache → townhall_briefing.md → spoken summary
+Cache → townhall_meetings.md → spoken summary
   ↓
-One-turn details offer → get_details() or exit
+Details offer → get_details() → optional "anything else?" → exit
 ```
 
 ---
 
-### Scenario 2: Virginia meetings (town-hall style)
+### Scenario 2: Virginia meetings
 
 **User says:** *"Virginia state"*
 
 **What happens:**
 
-1. **Meetings first** — `fetch_updates()` tries `GetPartnerScheduleListAsync` with `LIS_API_KEY`
+1. **Meetings first** — `GetPartnerScheduleListAsync` when `LIS_API_KEY` is available
 2. **ICS fallback** — If the API fails or returns nothing usable, parse `https://liscdn.blob.core.windows.net/cdn/meetings.ics`
 3. **Numbered list** — Upcoming committee / commission meetings
-4. **Cue** — Mentions `virginia legislation` for bills
-5. **One-turn details offer** — same meeting-details pattern as Richmond
+4. **Cue** — Briefing text mentions `virginia legislation` for bills
+5. **Details offer + follow-ups** — same pattern as city meetings; Virginia details use schedule/ICS fields (and partner-by-id when key + id exist)
 
 **Example:**
-> **Agent:** "There are several upcoming General Assembly committee meetings…"  
-> **Agent:** "Would you like details on a meeting? Say the meeting number, or say no."  
-> **User:** "No."  
+> **Agent:** "Here are upcoming meetings for Virginia General Assembly…"  
+> **Agent:** "Would you like details on a meeting? Say the meeting number or name, or say done."  
+> **User:** "No." / *"Done."*  
 > **Agent:** "Okay."
 
 ---
 
-### Scenario 3: Virginia legislation
+### Scenario 3: Legislation (Virginia or Legistar city)
 
-**User says:** *"Virginia legislation"*
+**User says:** *"Virginia legislation"* or *"Seattle legislation"* / *"Richmond legislation"*
 
 **What happens:**
 
-1. **Bills list** — LIS legislation API for the current session; on key/API failure uses public `BILLS.CSV` for that session code
-2. **Topic filter** — Prioritizes user topics (or housing/education/zoning defaults), caps at 8
-3. **One-turn details offer** — *"Want details on a specific item? Say the bill or ordinance name, or say no."*
-4. **Bill details** — `get_details("HB 1234")` from the cached list (description, status, patron, summary fields when present)
+1. **List** — Virginia: LIS bills API (CSV fallback). Legistar cities: `/matters` filtered by that city's ordinance/resolution types
+2. **Topic filter** — Prioritizes the user's saved topics when present
+3. **Spoken summary** — LLM summary grounded in the fetched list
+4. **Details offer** — *"Want details on a specific item? Say the bill or ordinance name, or say done."*
+5. **Follow-ups** — e.g. `"HB 1234"`, `"ORD. 2026-172"`, or another item; then *"Anything else?"*
 
 ---
 
-### Scenario 4: Generic Trigger (No Keyword)
+### Scenario 4: Generic trigger (no jurisdiction)
 
 **User says:** *"Town hall"*
 
 1. Agent asks: *"Which briefing would you like?"*
-2. User names a jurisdiction → same flow as Scenarios 1–3
-3. Unknown locality → graceful gap message
+2. User names a supported jurisdiction → same flow as Scenarios 1–3
+3. Unknown locality → graceful message (try a supported city/state, or try again later as sources are added)
 
 ---
 
-### Scenario 5: Missing / rejected LIS API key
+### Scenario 5: Empty calendar
 
-Meetings and legislation still attempt public fallbacks:
+If the live feed has no upcoming meetings in the briefing window:
+
+> **Agent:** "There are no upcoming meetings on the calendar for Seattle City Council right now."
+
+Session ends (no details offer).
+
+---
+
+### Scenario 6: Missing / rejected LIS API key
+
+Virginia meetings and legislation still attempt public fallbacks:
 
 - Meetings → ICS
 - Legislation → `https://lis.blob.core.windows.net/lisfiles/{SessionCode}/BILLS.CSV`
 
-If both API and fallback fail, the agent speaks a short unavailable message (no crash).
+If both API and fallback fail, the agent speaks a short unavailable message (no crash). Legistar cities do not need a key.
 
 ---
 
-### Scenario 6: Setting Topic Preferences
+### Scenario 7: Topic preferences (trigger-only)
 
-**User says:** *"Configure topics"* (or *"set topics"*)
+**Add / configure** — *"Configure topics"* or *"Set topics"*
 
-Topic setup is **trigger-only** — the agent does **not** ask to set topics after a normal briefing.
+1. Agent reads any existing list, then asks for free-form topics (e.g. housing, zoning, parks)
+2. New topics are **appended** to the user-level list
+3. Preferences apply across sources that support filtering
 
-1. Ask for free-form topics (or what to add if some already exist)
-2. Append to the user-level list
-3. Apply across sources that support filtering
+**Remove** — *"Remove topics"* / *"Delete topics"* / *"Clear topics"*
 
-**Remove topics** / **delete topics** / **clear topics** remain separate triggers.
+1. Agent lists current topics
+2. User names topics to drop, or clears all
+3. Remaining list is saved and pushed to sources
+
+Topics are **never** prompted after a normal briefing — only via these triggers.
 
 ---
 
-### Scenario 7: Getting Meeting Details
+### Scenario 8: Meeting or item details
 
-After a meetings briefing, accept the one-turn offer **or** start a new utterance:
+**After a briefing** (accept the details offer), **or** in a new utterance that includes a jurisdiction:
 
-- `"Get details on meeting 1"`
-- `"Tell me about City Council"` (Richmond)
+- `"Details on meeting 1"`
+- `"Tell me about City Council"` (Legistar body name)
 - `"Tell me about House Appropriations"` (Virginia, when that title was listed)
+- `"ORD. 2026-172"` / `"HB 1234"` (legislation)
 
-Richmond uses Legistar event items. Virginia uses cached schedule/ICS fields, and `GetPartnerSchedulebyIdAsync` when an id and API key are available.
+Legistar cities use event items from the Web API. Virginia uses cached schedule/ICS fields, and `GetPartnerSchedulebyIdAsync` when an id and API key are available.
 
 ---
 
-### Scenario 8: Richmond Legislation Tracking
+### Scenario 9: Switch jurisdiction mid-follow-up
 
-**User says:** *"Richmond legislation"*
+During the details / "anything else?" window, naming another registered source starts that briefing instead of answering against the wrong document:
 
-Same Legistar matters flow as before, then the **one-turn details offer** for a specific ORD/RES (not a multi-turn “anything else?” loop).
+> **User:** *(after a Virginia briefing)* "What about Seattle?"  
+> **Agent:** *(Seattle meetings flow)*
+
+---
 
 ### Caching and Watchdog Loop
 
 **Background process (runs automatically on startup):**
 
-1. **Warm cache immediately** — 3 seconds after the ability loads, fetch all sources once
-2. **Refresh daily** — Every 24 hours, re-fetch all sources and update `townhall_briefing.md`
-3. **Cache validation** — Before serving a cached briefing, each source validates its section isn't all error messages
+1. **Warm cache** — a few seconds after the ability loads, fetch all sources once
+2. **Refresh daily** — every 24 hours, re-fetch and write `townhall_meetings.md` (meetings only; never legislation)
+3. **Cache validation** — before serving a cached section, each source must have a usable (non-error) section
 
 **Why cache?**
-- Government APIs can be slow (1–3 seconds per call)
-- Voice interactions need instant responses
-- Briefings are time-insensitive (hourly changes are fine)
+- Government APIs can be slow
+- Voice interactions need quick responses
+- Meeting calendars do not need second-by-second freshness
 
 **Cache invalidation:**
-- If a source's cached section contains only error lines, it's considered invalid
-- Invalid cache → fresh fetch is triggered
-- Otherwise, cached briefing is served immediately
+- Legacy `townhall_briefing.md` is deleted on fetch so old shared cache cannot poison results
+- Invalid / error-only sections force a fresh fetch for that source
 
 ---
 
 ## Architecture
 
-Town Hall is built around a `CivicSource` base class. Each source is an independent module that knows how to fetch and format updates from one government body. The core ability just loops over registered sources and aggregates their output.
+Town Hall is built around a `CivicSource` base class. Each source is an independent module that knows how to fetch and format updates from one government body. The core ability loops over registered sources and aggregates their output.
 
 ```
 community/town-hall/
-├── main.py                  # ability entry point, watchdog loop, LIS key resolution
+├── main.py                  # ability entry point, watchdog, routing, details offer
 ├── sources/
 │   ├── base.py              # CivicSource abstract base class — start here to contribute
 │   ├── legistar.py          # LegistarCitySource parent for Granicus Legistar cities
 │   ├── __init__.py          # must stay empty (repo lint rule)
 │   ├── registry.py          # register your source here (discover_sources)
-│   ├── virginia_state.py    # reference: Virginia General Assembly (state legislature)
+│   ├── virginia_state.py    # Virginia General Assembly (LIS)
 │   ├── richmond_va.py       # Richmond City Council (Legistar)
 │   ├── seattle_wa.py        # …and other thin Legistar city subclasses
 │   └── …
@@ -280,7 +301,7 @@ HTTP helpers (`_http_get`, `_http_post`) are available on the base class via the
 
 ### Watchdog loop
 
-On startup, Town Hall warms the briefing cache immediately, then refreshes daily. Briefings are written to `townhall_briefing.md` in the agent's context directory so responses are instant even when sources are slow.
+On startup, Town Hall warms the meetings cache immediately, then refreshes daily. Briefings are written to `townhall_meetings.md` in the agent's context directory so responses stay fast when sources are slow.
 
 ---
 
@@ -295,34 +316,30 @@ We welcome sources for any city, county, state, or federal body. The pattern is 
    git checkout -b add-your-source-name dev
    ```
 
-2. Create `sources/your_source.py` and subclass `CivicSource`:
+2. Create `sources/your_source.py` and subclass `CivicSource` (or `LegistarCitySource` for Granicus Legistar):
    ```python
-   from .base import CivicSource
+   from .legistar import LegistarCitySource
 
-   class YourCitySource(CivicSource):
-       def get_name(self) -> str:
-           return "Your City Council"
-
-       def get_source_url(self) -> str:
-           return "https://yourcity.gov/calendar"
-
-       async def fetch_updates(self) -> str:
-           # http calls are synchronous, but fetch_updates must stay async
-           resp = self._http_get(self.get_source_url())
-           # parse resp.text, return a markdown string
-           return "### Your City Council\n- ..."
+   class YourCitySource(LegistarCitySource):
+       def __init__(self):
+           super().__init__(
+               client_id="yourclient",
+               display_name="Your City Council",
+               trigger_keywords=("yourcity",),
+               priority_bodies=("City Council",),
+           )
    ```
 
 3. Register your source in `sources/registry.py` by importing it and appending an instance to the list returned by `discover_sources()`. (OpenHome forbids dynamic imports, so registration is explicit. Keep `sources/__init__.py` empty.)
 
-4. If your source needs an API key, follow the same pattern as `virginia_state.py` — accept the key via `set_api_key()` and document the label name in your source's docstring and in this README.
+4. If your source needs an API key, follow the same pattern as `virginia_state.py` — declare `required_api_key_name()`, accept the key via `set_api_key()`, and document the label in this README.
 
 5. Open a PR against `dev` on `openhome-dev/abilities`. See the [contribution guide](https://docs.openhome.com/community/contributing) for the full checklist.
 
 ### Source guidelines
 
-- Return a markdown string from `fetch_updates()` — the agent's LLM converts it to speech.
-- Keep the output concise: 5–10 bullet points max. This is a voice briefing, not a report.
+- Return a markdown string from `fetch_updates()` / `fetch_meetings()` — the ability turns it into speech.
+- Keep the output concise: a short numbered list. This is a voice briefing, not a report.
 - Use `self._http_get()` for all HTTP calls — the base class routes through the OpenHome SDK (`worker.session_tasks`) and returns response-like objects with `.text` and `.status_code`.
 - Surface errors as strings in the return value (e.g. `"Error fetching ... HTTP 403"`) rather than raising — the briefing aggregator will include them so the agent can report and debug.
 - No `print()` — logging is available via the platform when needed.
@@ -333,5 +350,5 @@ We welcome sources for any city, county, state, or federal body. The pattern is 
 ## Developer Notes
 
 - **Adding a federal source** — U.S. Congress data is available via the [congress.gov API](https://api.congress.gov/) (free key). A `FederalCongressSource` following the same pattern is on the roadmap.
-- **Adding more city sources** — Subclass `LegistarCitySource` in `sources/legistar.py` with a city `client_id` (the subdomain before `.legistar.com`), then register it in `sources/__init__.py`.
+- **Adding more city sources** — Subclass `LegistarCitySource` in `sources/legistar.py` with a city `client_id` (the subdomain before `.legistar.com`), then register it in `sources/registry.py`.
 - **Knowledge gaps** — when a source returns no usable data, it is logged to `knowledge_gaps.json` in the ability directory. Review this to see which jurisdictions are failing and prioritize fixes.
