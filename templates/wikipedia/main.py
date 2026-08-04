@@ -1,4 +1,3 @@
-import requests
 import re
 from src.agent.capability import MatchingCapability
 from src.main import AgentWorker
@@ -35,7 +34,7 @@ class WikipediaCapability(MatchingCapability):
         formatted_topic = topic.replace(" ", "_")
 
         try:
-            response = requests.get(
+            response = self.worker.session_tasks.get(
                 f"{self.WIKIPEDIA_API_URL}{formatted_topic}",
                 headers={"User-Agent": "BrainSkillBot/1.0"}
             )

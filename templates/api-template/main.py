@@ -1,5 +1,4 @@
 import asyncio
-import requests
 
 from src.agent.capability import MatchingCapability
 from src.agent.capability_worker import CapabilityWorker
@@ -36,7 +35,7 @@ class ApiTemplateCapability(MatchingCapability):
         failure. Runs in a worker thread (see run) so the blocking request never
         stalls the event loop."""
         try:
-            response = requests.get(
+            response = self.worker.session_tasks.get(
                 API_URL,
                 headers={"Authorization": f"Bearer {api_key}"},
                 params={"q": query},

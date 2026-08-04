@@ -1,5 +1,4 @@
 import json
-import requests
 from src.agent.capability import MatchingCapability
 from src.main import AgentWorker
 from src.agent.capability_worker import CapabilityWorker
@@ -51,7 +50,7 @@ class MusicPlayerCapability(MatchingCapability):
 
             # Option 1: Download and play from URL
             self.worker.editor_logging_handler.info("[Music] Downloading audio...")
-            response = requests.get(SAMPLE_MUSIC_URL)
+            response = await self.worker.session_tasks.get_async(SAMPLE_MUSIC_URL)
 
             if response.status_code == 200:
                 await self.capability_worker.play_audio(response.content)
