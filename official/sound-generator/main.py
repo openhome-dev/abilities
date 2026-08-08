@@ -1,6 +1,5 @@
 import json
 import re
-import os
 import requests
 from src.agent.capability import MatchingCapability
 from src.main import AgentWorker

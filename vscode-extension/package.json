@@ -1,0 +1,312 @@
+{
+  "name": "openhome-abilities",
+  "displayName": "OpenHome Abilities",
+  "description": "Manage OpenHome agents, abilities and voice calls, and monitor your devkit live, from a sidebar.",
+  "version": "0.1.9",
+  "publisher": "openhome",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [],
+  "main": "./out/extension.js",
+  "contributes": {
+    "configuration": {
+      "title": "OpenHome",
+      "properties": {
+        "openhome.cliPath": {
+          "type": "string",
+          "default": "openhome",
+          "description": "Command used to invoke the OpenHome CLI. Use an absolute path (e.g. the venv's bin/openhome) if it isn't on your PATH."
+        },
+        "openhome.cwd": {
+          "type": "string",
+          "default": "",
+          "description": "Working directory for CLI commands. Defaults to the first workspace folder."
+        },
+        "openhome.templatesRepo": {
+          "type": "string",
+          "default": "openhome-dev/abilities",
+          "description": "GitHub owner/repo to fetch ability templates from."
+        },
+        "openhome.templatesRef": {
+          "type": "string",
+          "default": "main",
+          "description": "Git ref (branch/tag) to fetch templates from."
+        }
+      }
+    },
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "openhome",
+          "title": "OpenHome",
+          "icon": "media/activitybar.png"
+        }
+      ]
+    },
+    "views": {
+      "openhome": [
+        {
+          "id": "openhome.account",
+          "name": "Personalities"
+        },
+        {
+          "id": "openhome.abilities",
+          "name": "Abilities"
+        },
+        {
+          "id": "openhome.voice",
+          "name": "Voice"
+        },
+        {
+          "id": "openhome.local",
+          "name": "Devkit"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "openhome.login",
+        "title": "OpenHome: Sign In",
+        "icon": "$(sign-in)"
+      },
+      {
+        "command": "openhome.logout",
+        "title": "OpenHome: Sign Out",
+        "icon": "$(sign-out)"
+      },
+      {
+        "command": "openhome.openDashboard",
+        "title": "OpenHome: Open Dashboard",
+        "icon": "$(globe)"
+      },
+      {
+        "command": "openhome.refreshAccount",
+        "title": "OpenHome: Refresh Account",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "openhome.refreshAbilities",
+        "title": "OpenHome: Refresh Abilities",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "openhome.create",
+        "title": "OpenHome: Create Ability",
+        "icon": "$(add)"
+      },
+      {
+        "command": "openhome.sync",
+        "title": "OpenHome: Sync Abilities",
+        "icon": "$(cloud-download)"
+      },
+      {
+        "command": "openhome.push",
+        "title": "OpenHome: Push Ability",
+        "icon": "$(cloud-upload)"
+      },
+      {
+        "command": "openhome.openAbility",
+        "title": "OpenHome: Open Ability Code",
+        "icon": "$(go-to-file)"
+      },
+      {
+        "command": "openhome.pushDraft",
+        "title": "OpenHome: Save to Cloud (draft)",
+        "icon": "$(cloud-upload)"
+      },
+      {
+        "command": "openhome.pushCommit",
+        "title": "OpenHome: Commit Version to Cloud",
+        "icon": "$(git-commit)"
+      },
+      {
+        "command": "openhome.enable",
+        "title": "OpenHome: Enable",
+        "icon": "$(check)"
+      },
+      {
+        "command": "openhome.disable",
+        "title": "OpenHome: Disable",
+        "icon": "$(circle-slash)"
+      },
+      {
+        "command": "openhome.setTriggers",
+        "title": "OpenHome: Set Triggers",
+        "icon": "$(edit)"
+      },
+      {
+        "command": "openhome.delete",
+        "title": "OpenHome: Delete",
+        "icon": "$(trash)"
+      },
+      {
+        "command": "openhome.call",
+        "title": "OpenHome: Voice Call",
+        "icon": "$(unmute)"
+      },
+      {
+        "command": "openhome.chat",
+        "title": "OpenHome: Chat",
+        "icon": "$(comment-discussion)"
+      },
+      {
+        "command": "openhome.callAgent",
+        "title": "OpenHome: Call this agent",
+        "icon": "$(unmute)"
+      },
+      {
+        "command": "openhome.chatAgent",
+        "title": "OpenHome: Chat with this agent",
+        "icon": "$(comment-discussion)"
+      },
+      {
+        "command": "openhome.endCall",
+        "title": "OpenHome: End Call / Session",
+        "icon": "$(debug-stop)"
+      },
+      {
+        "command": "openhome.devkitConnect",
+        "title": "OpenHome: Connect Devkit",
+        "icon": "$(plug)"
+      },
+      {
+        "command": "openhome.devkitDisconnect",
+        "title": "OpenHome: Disconnect Devkit",
+        "icon": "$(debug-disconnect)"
+      },
+      {
+        "command": "openhome.devkitRefresh",
+        "title": "OpenHome: Reconnect Devkit",
+        "icon": "$(refresh)"
+      }
+    ],
+    "menus": {
+      "editor/title": [
+        {
+          "command": "openhome.pushDraft",
+          "when": "resourceFilename == main.py",
+          "group": "navigation@1"
+        },
+        {
+          "command": "openhome.pushCommit",
+          "when": "resourceFilename == main.py",
+          "group": "navigation@2"
+        }
+      ],
+      "view/title": [
+        {
+          "command": "openhome.login",
+          "when": "view == openhome.account",
+          "group": "navigation@1"
+        },
+        {
+          "command": "openhome.openDashboard",
+          "when": "view == openhome.account",
+          "group": "navigation@2"
+        },
+        {
+          "command": "openhome.refreshAccount",
+          "when": "view == openhome.account",
+          "group": "navigation@3"
+        },
+        {
+          "command": "openhome.logout",
+          "when": "view == openhome.account",
+          "group": "overflow@1"
+        },
+        {
+          "command": "openhome.create",
+          "when": "view == openhome.abilities",
+          "group": "navigation@1"
+        },
+        {
+          "command": "openhome.sync",
+          "when": "view == openhome.abilities",
+          "group": "navigation@2"
+        },
+        {
+          "command": "openhome.refreshAbilities",
+          "when": "view == openhome.abilities",
+          "group": "navigation@3"
+        },
+        {
+          "command": "openhome.endCall",
+          "when": "view == openhome.voice && openhome.inCall",
+          "group": "navigation@1"
+        },
+        {
+          "command": "openhome.devkitRefresh",
+          "when": "view == openhome.local",
+          "group": "navigation@1"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "openhome.callAgent",
+          "when": "view == openhome.account && viewItem == agent",
+          "group": "inline@1"
+        },
+        {
+          "command": "openhome.chatAgent",
+          "when": "view == openhome.account && viewItem == agent",
+          "group": "inline@2"
+        },
+        {
+          "command": "openhome.pushDraft",
+          "when": "view == openhome.abilities && viewItem == ability",
+          "group": "inline@1"
+        },
+        {
+          "command": "openhome.pushCommit",
+          "when": "view == openhome.abilities && viewItem == ability",
+          "group": "inline@2"
+        },
+        {
+          "command": "openhome.enable",
+          "when": "view == openhome.abilities && viewItem == ability",
+          "group": "inline@3"
+        },
+        {
+          "command": "openhome.disable",
+          "when": "view == openhome.abilities && viewItem == ability",
+          "group": "inline@4"
+        },
+        {
+          "command": "openhome.setTriggers",
+          "when": "view == openhome.abilities && viewItem == ability",
+          "group": "inline@5"
+        },
+        {
+          "command": "openhome.delete",
+          "when": "view == openhome.abilities && viewItem == ability",
+          "group": "inline@6"
+        }
+      ]
+    }
+  },
+  "icon": "media/icon.png",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/openhome-dev/abilities"
+  },
+  "scripts": {
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "package": "vsce package",
+    "vscode:prepublish": "npm run compile"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "@types/vscode": "^1.85.0",
+    "@types/ws": "^8.18.1",
+    "@vscode/vsce": "^2.24.0",
+    "typescript": "^5.4.0"
+  },
+  "dependencies": {
+    "ws": "^8.21.1"
+  }
+}

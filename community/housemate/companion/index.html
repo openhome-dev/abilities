@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>HouseMate Dashboard</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-slate-950 text-slate-100 min-h-screen">
+  <div class="max-w-5xl mx-auto p-6 space-y-6">
+    <header class="flex items-center justify-between">
+      <div>
+        <h1 class="text-3xl font-semibold tracking-tight">HouseMate</h1>
+        <p class="text-slate-400 text-sm">Live mirror of your OpenHome Ability</p>
+      </div>
+      <div class="flex items-center gap-2 text-sm">
+        <span id="dot" class="h-3 w-3 rounded-full bg-red-500"></span>
+        <span id="status">offline</span>
+      </div>
+    </header>
+
+    <section class="grid md:grid-cols-3 gap-4">
+      <div class="rounded-2xl bg-slate-900 ring-1 ring-slate-800 p-4">
+        <p class="text-slate-400 text-xs uppercase">Last action</p>
+        <p id="last_action" class="text-2xl mt-2">—</p>
+      </div>
+      <div class="rounded-2xl bg-slate-900 ring-1 ring-slate-800 p-4">
+        <p class="text-slate-400 text-xs uppercase">Weather</p>
+        <p id="weather" class="text-2xl mt-2">—</p>
+      </div>
+      <div class="rounded-2xl bg-slate-900 ring-1 ring-slate-800 p-4">
+        <p class="text-slate-400 text-xs uppercase">SOS</p>
+        <p id="sos" class="text-2xl mt-2">—</p>
+      </div>
+    </section>
+
+    <section class="grid md:grid-cols-2 gap-4">
+      <div class="rounded-2xl bg-slate-900 ring-1 ring-slate-800 p-4">
+        <h2 class="text-lg mb-2">Prayer times</h2>
+        <pre id="prayer" class="text-sm text-slate-300 whitespace-pre-wrap">—</pre>
+      </div>
+      <div class="rounded-2xl bg-slate-900 ring-1 ring-slate-800 p-4">
+        <h2 class="text-lg mb-2">Brief</h2>
+        <p id="brief" class="text-sm text-slate-300">—</p>
+      </div>
+    </section>
+
+    <section class="grid md:grid-cols-2 gap-4">
+      <div class="rounded-2xl bg-slate-900 ring-1 ring-slate-800 p-4">
+        <h2 class="text-lg mb-2">Plans</h2>
+        <pre id="plans" class="text-sm text-slate-300 whitespace-pre-wrap">—</pre>
+      </div>
+      <div class="rounded-2xl bg-slate-900 ring-1 ring-slate-800 p-4">
+        <h2 class="text-lg mb-2">Reminders</h2>
+        <pre id="reminders" class="text-sm text-slate-300 whitespace-pre-wrap">—</pre>
+      </div>
+    </section>
+  </div>
+  <script>
+    async function tick() {
+      try {
+        const res = await fetch('/api/state');
+        const s = await res.json();
+        const age = s.last_update ? (Date.now()/1000 - s.last_update) : 9999;
+        const online = age < 20;
+        document.getElementById('dot').className = 'h-3 w-3 rounded-full ' + (online ? 'bg-emerald-400' : 'bg-red-500');
+        document.getElementById('status').textContent = online ? 'online' : 'offline';
+        document.getElementById('last_action').textContent = s.last_action || '—';
+        const w = s.weather || {};
+        document.getElementById('weather').textContent = w.temp != null
+          ? `${w.temp}° · ${w.condition || ''}` : '—';
+        document.getElementById('sos').textContent = s.sos_ok
+          ? `sent → ${(s.sos_sent_to||[]).join(', ')}` : (s.last_action === 'sos' ? 'failed' : '—');
+        const p = s.prayer || {};
+        document.getElementById('prayer').textContent = Object.keys(p).length
+          ? Object.entries(p).map(([k,v]) => `${k}: ${v}`).join('\n') : '—';
+        document.getElementById('brief').textContent = s.brief || '—';
+        document.getElementById('plans').textContent = (s.plans||[]).length
+          ? s.plans.map(e => `${e.title} @ ${e.human_time||e.when_text}`).join('\n') : '—';
+        document.getElementById('reminders').textContent = (s.reminders||[]).length
+          ? s.reminders.map(r => `${r.label} @ ${r.human_time}`).join('\n') : '—';
+      } catch (e) {
+        document.getElementById('status').textContent = 'offline';
+      }
+    }
+    tick();
+    setInterval(tick, 2000);
+  </script>
+</body>
+</html>

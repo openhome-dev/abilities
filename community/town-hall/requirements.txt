@@ -1,0 +1,2 @@
+# no external dependencies
+# all data comes from public web apis via the openhome sdk (worker.session_tasks)

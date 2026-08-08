@@ -55,6 +55,7 @@ templates/
 ├── SendEmail/             ← Fire-and-forget SDK method call.
 ├── Local/                 ← LLM as translator; execute on local machine.
 ├── OpenClaw/              ← Escape the sandbox via OpenClaw.
+├── smart-home/            ← Voice-control MQTT devices; LLM picks the device + command.
 ├── PhilipsHueLightControl/← Local + persistent BLE daemon. Real hardware example.
 ├── devkit_led_lights_control/ ← Local + onboard NeoPixel LED ring control.
 │
@@ -148,6 +149,19 @@ self.capability_worker.resume_normal_flow()
 > No routing logic, error handling, or timeout handling is included. A real implementation would parse the response structure and handle unmatched skills gracefully.
 
 **Build on top:** smart home hub via HomeAssistant, code execution, app control (`"Open Spotify"`), multi-agent orchestration for complex workflows.
+
+---
+
+#### [`smart-home`](./templates/smart-home) — Voice-Controlled Smart Home
+**Type:** Skill · **Pattern:** LLM-as-orchestrator · **Complexity:** Medium
+
+Voice control for MQTT smart-home devices. You say `"turn on the bedroom light"`, `"set the lamp to 30 percent"`, or `"make it blue"`, and an LLM reads your configured device list, picks the device you mean, and decides the exact MQTT command to send — then publishes it via `send_devkit_mqtt_action`. There is **no per-device-type code**: the LLM is the orchestrator. Supporting a new device means adding it to the dashboard registry (name, topic, description, optional commands), not writing code. When the request is ambiguous or several devices match, the ability asks one clarifying question, then acts on the answer.
+
+**Key SDK methods:** `wait_for_complete_transcription()`, `text_to_text_response()`, `send_devkit_mqtt_action()`, `run_io_loop()`, `speak()`, `resume_normal_flow()`
+
+> Devices live in `self.worker.mqtt_devices`, configured in the **OpenHome DevKit → MQTT** section. The ability sends commands only — it can't read a device's current state — and handles one device per request (no group commands yet). Tune `ORCHESTRATOR_PROMPT` to change behaviour.
+
+**Build on top:** group commands (`"turn off all lights"`), scenes and routines, sensor-driven automations, presence-based auto-on daemons, multi-room control.
 
 ---
 
@@ -247,6 +261,7 @@ self.capability_worker.write_file("state.json", json.dumps(data))
 | `SendEmail` | Skill | `send_email()`, `speak()`, `resume_normal_flow()` |
 | `Local` | Skill | `text_to_text_response()`, `exec_local_command()` |
 | `OpenClaw` | Skill | `exec_local_command()`, `speak()` |
+| `smart-home` | Skill | `text_to_text_response()`, `send_devkit_mqtt_action()`, `speak()` |
 | `PhilipsHueLightControl` | Local | `send_devkit_capability_action()`, `text_to_text_response()`, `speak()` |
 | `devkit_led_lights_control` | Local | `send_devkit_capability_action()`, `send_devkit_action()`, `text_to_text_response()` |
 | `Background` | Background Daemon | `get_full_message_history()`, `session_tasks.sleep()` |

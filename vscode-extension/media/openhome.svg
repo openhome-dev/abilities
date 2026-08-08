@@ -1,0 +1,5 @@
+<svg width="24" height="24" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+  <!-- OpenHome "OM" mark, monochrome so VS Code can theme the activity bar icon -->
+  <circle cx="7.6" cy="12" r="4.7" fill="currentColor"/>
+  <path d="M20 7.3 C15.9 7.3 13.2 8.5 16.1 12 C13.2 15.5 15.9 16.7 20 16.7 Z" fill="currentColor"/>
+</svg>

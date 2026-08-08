@@ -1,0 +1,140 @@
+name: Ability Check
+
+on:
+  pull_request:
+    branches: [dev, main]
+    paths:
+      - 'community/**'
+      - 'official/**'
+
+permissions:
+  contents: read
+
+jobs:
+  ability-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+
+      - run: git fetch origin ${{ github.base_ref }}
+
+      - name: Check if same-repo branch
+        id: origin_check
+        run: |
+          if [ "${{ github.event.pull_request.head.repo.full_name }}" = "${{ github.repository }}" ]; then
+            echo "same_repo=true" >> $GITHUB_OUTPUT
+          else
+            echo "same_repo=false" >> $GITHUB_OUTPUT
+          fi
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Find changed abilities
+        id: changed
+        run: |
+          CHANGED_DIRS=$(git diff --name-only origin/${{ github.base_ref }}...HEAD \
+            | grep -E '^(community|official)/' \
+            | cut -d'/' -f1-2 \
+            | sort -u)
+          if [ -z "$CHANGED_DIRS" ]; then
+            echo "skip=true" >> $GITHUB_OUTPUT
+            echo "No ability directories changed — skipping"
+            exit 0
+          fi
+          echo "skip=false" >> $GITHUB_OUTPUT
+          EOF_MARKER=$(dd if=/dev/urandom bs=15 count=1 2>/dev/null | base64)
+          echo "dirs<<$EOF_MARKER" >> $GITHUB_OUTPUT
+          echo "$CHANGED_DIRS" >> $GITHUB_OUTPUT
+          echo "$EOF_MARKER" >> $GITHUB_OUTPUT
+          echo "Changed ability directories:"
+          echo "$CHANGED_DIRS"
+
+      # ── Auto-fix community folder names (working tree only — no push here) ──
+      - name: Fix community folder names
+        if: steps.changed.outputs.skip == 'false'
+        id: fix_names
+        run: |
+          has_renames=false
+          FIXED_DIRS=""
+          RENAME_LOG=""
+          while IFS= read -r dir; do
+            [ -z "$dir" ] && continue
+            if [[ "$dir" != community/* ]]; then
+              FIXED_DIRS="${FIXED_DIRS}${dir}"$'\n'
+              continue
+            fi
+            folder_name=$(basename "$dir")
+            fixed_name=$(echo "$folder_name" | sed 's/[_ ]\+/-/g')
+            if [ "$folder_name" != "$fixed_name" ]; then
+              old_path="$dir"
+              new_path="community/$fixed_name"
+              if [ -d "$old_path" ]; then
+                echo "🔧 Renaming: $old_path → $new_path"
+                git mv "$old_path" "$new_path"
+                FIXED_DIRS="${FIXED_DIRS}${new_path}"$'\n'
+                RENAME_LOG="${RENAME_LOG}${old_path} → ${new_path}"$'\n'
+                has_renames=true
+              else
+                FIXED_DIRS="${FIXED_DIRS}${dir}"$'\n'
+              fi
+            else
+              FIXED_DIRS="${FIXED_DIRS}${dir}"$'\n'
+            fi
+          done <<< "${{ steps.changed.outputs.dirs }}"
+          echo "has_renames=$has_renames" >> $GITHUB_OUTPUT
+          echo "$RENAME_LOG" > rename_log.txt
+          FIXED_DIRS_SPACE=$(echo "$FIXED_DIRS" | tr '\n' ' ' | xargs)
+          echo "dirs=$FIXED_DIRS_SPACE" >> $GITHUB_OUTPUT
+          echo "📁 Final dirs for validation: $FIXED_DIRS_SPACE"
+
+      - name: Save rename patch
+        if: steps.fix_names.outputs.has_renames == 'true'
+        run: git diff --binary HEAD > rename.patch
+
+      - name: Run validate_ability.py
+        if: steps.changed.outputs.skip == 'false'
+        id: validate
+        continue-on-error: true
+        run: |
+          DIRS="${{ steps.fix_names.outputs.dirs }}"
+          if [ -n "$DIRS" ] && [ -f "validate_ability.py" ]; then
+            python validate_ability.py $DIRS
+          fi
+
+      - name: Ensure output files exist
+        if: steps.changed.outputs.skip == 'false'
+        run: touch validation_output.txt rename_log.txt rename.patch
+
+      - name: Write metadata
+        if: steps.changed.outputs.skip == 'false'
+        run: |
+          cat > metadata.json <<EOF
+          {
+            "pr_number": ${{ github.event.pull_request.number }},
+            "head_sha": "${{ github.event.pull_request.head.sha }}",
+            "head_ref": "${{ github.event.pull_request.head.ref }}",
+            "same_repo": ${{ steps.origin_check.outputs.same_repo }},
+            "has_renames": ${{ steps.fix_names.outputs.has_renames || false }},
+            "validate_outcome": "${{ steps.validate.outcome }}"
+          }
+          EOF
+
+      - uses: actions/upload-artifact@v4
+        if: steps.changed.outputs.skip == 'false'
+        with:
+          name: ability-check-results
+          path: |
+            validation_output.txt
+            rename_log.txt
+            rename.patch
+            metadata.json
+          retention-days: 1
+
+      - name: Fail if validation failed
+        if: steps.validate.outcome == 'failure'
+        run: exit 1

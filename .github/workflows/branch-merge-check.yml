@@ -16,54 +16,55 @@ jobs:
     steps:
       - name: Validate branch merge direction
         id: check
+        env:
+          HEAD: ${{ github.head_ref }}
+          BASE: ${{ github.base_ref }}
         run: |
-          HEAD="${{ github.head_ref }}"
-          BASE="${{ github.base_ref }}"
-
-          echo "head=$HEAD" >> $GITHUB_OUTPUT
-          echo "base=$BASE" >> $GITHUB_OUTPUT
-
+          echo "head=$HEAD" >> "$GITHUB_OUTPUT"
+          echo "base=$BASE" >> "$GITHUB_OUTPUT"
           # Rule 1: Must target dev
           if [ "$BASE" != "dev" ]; then
-            echo "status=fail" >> $GITHUB_OUTPUT
-            echo "reason=Community PRs must target 'dev', not '$BASE'. Close this PR and re-open against 'dev'." >> $GITHUB_OUTPUT
+            echo "status=fail" >> "$GITHUB_OUTPUT"
+            echo "reason=Community PRs must target 'dev', not '$BASE'. Close this PR and re-open against 'dev'." >> "$GITHUB_OUTPUT"
             exit 0
           fi
-
           # Rule 2: Source cannot be dev or main
           if [ "$HEAD" = "dev" ] || [ "$HEAD" = "main" ]; then
-            echo "status=fail" >> $GITHUB_OUTPUT
-            echo "reason=Cannot merge '$HEAD' into '$BASE'. Use your feature branch (e.g. slow-music → dev)." >> $GITHUB_OUTPUT
+            echo "status=fail" >> "$GITHUB_OUTPUT"
+            echo "reason=Cannot merge '$HEAD' into '$BASE'. Use your feature branch (e.g. slow-music -> dev)." >> "$GITHUB_OUTPUT"
             exit 0
           fi
-
-          echo "status=pass" >> $GITHUB_OUTPUT
-          echo "reason=" >> $GITHUB_OUTPUT
+          echo "status=pass" >> "$GITHUB_OUTPUT"
+          echo "reason=" >> "$GITHUB_OUTPUT"
 
       - name: Comment on PR
         if: always() && steps.check.outcome == 'success'
         uses: actions/github-script@v7
+        env:
+          STATUS: ${{ steps.check.outputs.status }}
+          REASON: ${{ steps.check.outputs.reason }}
+          HEAD: ${{ steps.check.outputs.head }}
+          BASE: ${{ steps.check.outputs.base }}
         with:
           script: |
-            const status = '${{ steps.check.outputs.status }}';
-            const reason = `${{ steps.check.outputs.reason }}`;
-            const head = '${{ steps.check.outputs.head }}';
-            const base = '${{ steps.check.outputs.base }}';
+            const status = process.env.STATUS;
+            const reason = process.env.REASON || '';
+            const head = process.env.HEAD || '';
+            const base = process.env.BASE || '';
 
             let body = '<!-- branch-check-result -->\n';
             body += '## 🔀 Branch Merge Check\n\n';
             body += `**PR direction:** \`${head}\` → \`${base}\`\n\n`;
-
             if (status === 'pass') {
               body += `✅ **Passed** — \`${head}\` → \`${base}\` is a valid merge direction\n`;
             } else {
               body += '❌ **Failed** — ' + reason + '\n\n';
               body += '**Allowed for community contributors:**\n';
-              body += '```\nyour-ability-branch  →  dev     ✅\n```\n\n';
+              body += '```\nyour-ability-branch  ->  dev     ✅\n```\n\n';
               body += '**Blocked patterns:**\n';
-              body += '```\nanything             →  main    ❌\n';
-              body += 'dev                 →  dev     ❌\n';
-              body += 'main                →  dev     ❌\n```\n\n';
+              body += '```\nanything             ->  main    ❌\n';
+              body += 'dev                 ->  dev     ❌\n';
+              body += 'main                ->  dev     ❌\n```\n\n';
               body += '> Close this PR and re-open it with the correct branch direction.';
             }
 
@@ -72,11 +73,9 @@ jobs:
               repo: context.repo.repo,
               issue_number: context.issue.number
             });
-
             const existing = comments.find(c =>
               c.user.type === 'Bot' && c.body.includes('<!-- branch-check-result -->')
             );
-
             if (existing) {
               await github.rest.issues.updateComment({
                 owner: context.repo.owner,
@@ -95,8 +94,10 @@ jobs:
 
       - name: Fail if invalid
         if: steps.check.outputs.status == 'fail'
+        env:
+          REASON: ${{ steps.check.outputs.reason }}
         run: |
-          echo "❌ ${{ steps.check.outputs.reason }}"
+          echo "❌ $REASON"
           exit 1
 
   branch-check-member:

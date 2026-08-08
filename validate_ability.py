@@ -209,11 +209,11 @@ def main():
 
     full_output = "\n".join(output_lines)
 
-    with open(output_file, "w") as f:
+    with open(output_file, "w", encoding="utf-8") as f:
         f.write(full_output)
 
     if summary_file:
-        with open(summary_file, "a") as f:
+        with open(summary_file, "a", encoding="utf-8") as f:
             f.write("## 🔍 Ability Validation Results\n\n")
             f.write("```\n")
             f.write(full_output)

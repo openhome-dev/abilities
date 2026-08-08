@@ -1,6 +1,4 @@
 import json
-import os
-import requests
 from src.agent.capability import MatchingCapability
 from src.main import AgentWorker
 from src.agent.capability_worker import CapabilityWorker
@@ -40,7 +38,7 @@ class WeatherCapability(MatchingCapability):
 
         try:
             # Geocode the location
-            geo_resp = requests.get(
+            geo_resp = await self.worker.session_tasks.get_async(
                 GEOCODE_URL,
                 params={"q": location, "format": "json", "limit": 1},
                 headers={"User-Agent": "OpenHome-Weather-Ability"},
@@ -59,7 +57,7 @@ class WeatherCapability(MatchingCapability):
             display_name = geo_data[0].get("display_name", location)
 
             # Fetch weather
-            weather_resp = requests.get(
+            weather_resp = await self.worker.session_tasks.get_async(
                 WEATHER_URL,
                 params={
                     "latitude": lat,
