@@ -146,6 +146,19 @@ def _fmt(x: float) -> str:
     return str(int(x)) if abs(x - round(x)) < 1e-9 else f"{x:.2f}".rstrip("0").rstrip(".")
 
 
+_ROMAN = [(1000, "M"), (900, "CM"), (500, "D"), (400, "CD"), (100, "C"), (90, "XC"),
+          (50, "L"), (40, "XL"), (10, "X"), (9, "IX"), (5, "V"), (4, "IV"), (1, "I")]
+
+
+def _to_roman(n: int) -> str:
+    out = ""
+    for v, s in _ROMAN:
+        while n >= v:
+            out += s
+            n -= v
+    return out
+
+
 # ── unit conversion tables (to a base per dimension) ──────────────────────────
 _WEIGHT = {"gram": 1, "grams": 1, "g": 1, "kilogram": 1000, "kilograms": 1000, "kg": 1000,
            "kilo": 1000, "kilos": 1000, "pound": 453.592, "pounds": 453.592, "lb": 453.592,
@@ -158,7 +171,20 @@ _LENGTH = {"meter": 1, "meters": 1, "metre": 1, "m": 1, "centimeter": 0.01, "cen
 _VOLUME = {"liter": 1, "liters": 1, "litre": 1, "l": 1, "milliliter": 0.001, "ml": 0.001,
            "cup": 0.236588, "cups": 0.236588, "gallon": 3.78541, "gallons": 3.78541,
            "quart": 0.946353, "pint": 0.473176, "tablespoon": 0.0147868, "teaspoon": 0.00492892}
-_DIMS = {"weight": _WEIGHT, "length": _LENGTH, "volume": _VOLUME}
+# base = meters per second
+_SPEED = {"mph": 0.44704, "kph": 0.277778, "kmh": 0.277778, "knot": 0.514444, "knots": 0.514444,
+          "mps": 1}
+# base = square meters
+_AREA = {"square meter": 1, "square meters": 1, "sqm": 1, "square foot": 0.092903,
+         "square feet": 0.092903, "sqft": 0.092903, "acre": 4046.86, "acres": 4046.86,
+         "hectare": 10000, "hectares": 10000, "square kilometer": 1e6, "square kilometers": 1e6,
+         "square mile": 2.59e6, "square miles": 2.59e6}
+# base = seconds (time DURATION units, not the clock — those are mechanical.py)
+_TIME = {"second": 1, "seconds": 1, "minute": 60, "minutes": 60, "hour": 3600, "hours": 3600,
+         "day": 86400, "days": 86400, "week": 604800, "weeks": 604800}
+# area BEFORE length: "square meter" contains "meter", so area must win the match
+_DIMS = {"weight": _WEIGHT, "area": _AREA, "length": _LENGTH, "volume": _VOLUME,
+         "speed": _SPEED, "time": _TIME}
 
 
 def _find_units(text: str):
@@ -261,6 +287,23 @@ def calc_handle(text: str) -> str | None:
         return f"The square root of {_fmt(nums[0])} is {_fmt(nums[0] ** 0.5)}."
     if ("squared" in t) and nums:
         return f"{_fmt(nums[0])} squared is {_fmt(nums[0] ** 2)}."
+    if "cubed" in t and nums:
+        return f"{_fmt(nums[0])} cubed is {_fmt(nums[0] ** 3)}."
+    if "cube root of" in t and nums:
+        return f"The cube root of {_fmt(nums[0])} is {_fmt(round(nums[0] ** (1 / 3), 4))}."
+    if "to the power" in t and len(nums) >= 2:
+        return f"{_fmt(nums[0])} to the power of {_fmt(nums[1])} is {_fmt(nums[0] ** nums[1])}."
+    if "factorial" in t and nums:
+        n = int(nums[0])
+        if 0 <= n <= 20:
+            f = 1
+            for i in range(2, n + 1):
+                f *= i
+            return f"{n} factorial is {_fmt(f)}."
+    if "roman numeral" in t and nums:
+        n = int(nums[0])
+        if 0 < n < 4000:
+            return f"{_fmt(n)} in roman numerals is {_to_roman(n)}."
 
     # arithmetic: A <op> B
     if len(nums) >= 2:
