@@ -17,6 +17,7 @@ API_URL = "https://api.example.com/data"
 API_KEY_NAME = "your_api_key_name"   # the label your key is saved under in Settings -> API Keys
 REQUEST_TIMEOUT = 10
 
+
 class ApiTemplateCapability(MatchingCapability):
     worker: AgentWorker = None
     capability_worker: CapabilityWorker = None
@@ -26,7 +27,7 @@ class ApiTemplateCapability(MatchingCapability):
 
     def call(self, worker: AgentWorker):
         self.worker = worker
-        self.capability_worker = CapabilityWorker(self)
+        self.capability_worker = CapabilityWorker(self.worker)
         self.worker.session_tasks.create(self.run())
 
     def fetch_data(self, query: str, api_key: str) -> str | None:

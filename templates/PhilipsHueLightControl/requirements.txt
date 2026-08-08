@@ -1,4 +1,0 @@
-HueBLE
-bleak
-bleak-retry-connector
-dbus-fast
