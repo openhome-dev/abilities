@@ -175,7 +175,7 @@ Do not start from a blank file. Each template is a minimal, working scaffold for
 | [Send Email](templates/send-email) | Send email with attachments via `send_email()` | `main.py` |
 | [Read Write File](templates/read-write-file) | Persist data across sessions with file storage | `main.py` |
 | [OpenClaw](templates/openclaw) | Drive a local computer through OpenClaw | `main.py` |
-| [OpenHome Local Link](templates/openhome-local-link) | Turn speech into shell commands on a local machine | `main.py` |
+| ~~[OpenHome Local Link](templates/openhome-local-link)~~ _(deprecated, see below)_ | Turn speech into shell commands on a local machine | `main.py` |
 | [Smart Home](templates/smart-home) | Voice-control MQTT smart-home devices, an LLM picks the device and command | `main.py` |
 | [Alarm](templates/alarm) | A Skill and a daemon working together via shared files | `main.py` + `background.py` |
 
@@ -198,6 +198,11 @@ Do not start from a blank file. Each template is a minimal, working scaffold for
 | [DevKit Stats](templates/devkit-stats) | Report live DevKit telemetry by voice: CPU, memory, temperature, uptime | `main.py` + `devkit_functions.py` |
 
 > More detail on each template: [templates/README.md](templates/README.md)
+>
+> **Want shell commands on your own machine?** Skip the deprecated Local Link
+> template above — use the CLI's built-in bridge instead: `openhome local start`.
+> It auto-routes to a raw shell executor, Hermes, or OpenClaw, whichever you
+> have installed. See [cli/README.md](cli/README.md#local-link-run-requests-on-your-own-machine).
 
 ---
 
@@ -277,6 +282,17 @@ openhome delete my-skill                      # remove from account and local fo
 ```bash
 openhome push_to_community my-skill           # copy user/my-skill into community/, then validate
 ```
+
+**Run requests on your own machine.** The CLI also ships a Local Link bridge —
+this is the one bridge to use for local execution now, replacing the old
+[OpenHome Local Link template](templates/openhome-local-link):
+```bash
+openhome local start        # start the bridge in the background
+openhome local status       # is it running?
+openhome local logs         # stream requests and responses live
+```
+It auto-detects and routes each request to a raw shell executor, Hermes, or
+OpenClaw, whichever you have installed and running.
 
 Full command reference and the API contract: [cli/README.md](cli/README.md).
 

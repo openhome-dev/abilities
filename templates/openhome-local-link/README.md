@@ -2,6 +2,18 @@
 ![Community](https://img.shields.io/badge/OpenHome-Community-orange?style=flat-square)
 ![Template](https://img.shields.io/badge/Type-Template-blue?style=flat-square)
 
+> ⚠️ **Deprecated — use the CLI's built-in Local Link bridge instead.**
+> This template predates `openhome local` and asks you to download a standalone
+> `local_client.py` from an external link, which we no longer recommend running.
+> The [OpenHome CLI](../../cli) ships its own Local Link bridge — install the CLI
+> and run:
+> ```bash
+> openhome local start
+> ```
+> It auto-detects and routes to a raw shell executor, Hermes, or OpenClaw,
+> whichever you have available. See [cli/README.md](../../cli/README.md#local-link-run-requests-on-your-own-machine)
+> for the full guide. This template is kept for reference only and is not maintained.
+
 ## What This Is
 **This is a template ability** that connects OpenHome to your Mac terminal. Use voice commands to run terminal commands, check system status, manage files, and automate Mac workflows — all without OpenClaw.
 
