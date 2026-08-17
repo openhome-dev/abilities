@@ -204,7 +204,11 @@ def _fmt(x: float) -> str:
     # integer — 101.99999999999996 out of any ordinary division — printed as 101
     # while the guard above had already decided it was an integer. Off by one, out
     # loud, with full confidence.
-    if abs(x - round(x)) < 1e-9:
+    # "close enough to an integer" is also true of every number smaller than the
+    # tolerance, so 1e-10 was being called an integer and printed as 0 — the same
+    # say-zero-about-a-non-zero-number bug as below, one branch earlier. A genuinely
+    # tiny value is not an integer; it falls through to the spoken form.
+    if abs(x - round(x)) < 1e-9 and not (x and abs(x) < 1e-9):
         return str(int(round(x)))
     s = f"{x:.2f}".rstrip("0").rstrip(".")
     # Two decimals turn every non-zero value under 0.005 into "0", so "how many atoms
