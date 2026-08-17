@@ -1494,8 +1494,32 @@ _ROUTE = (
 )
 
 
+def normalize(text: str) -> str:
+    """Clean what speech-to-text actually hands over, not what a test types.
+
+    Whisper punctuates. It returns "What is 20% of 80?" and "What letter grade is an
+    87?", and a trailing question mark or a percent sign is enough to stop the number
+    patterns matching — so the engine answered both of those on clean text and neither
+    of them out loud. The cloud Skill had a normalizer; the device file never did, so
+    the two surfaces disagreed on the one input that actually occurs.
+
+    Deliberately gentle. An earlier version of this lowercased everything and stripped
+    every non-word character, which would take Ca(OH)2 apart — the chemistry parser
+    needs both the capitals and the parentheses. So this only touches the symbols
+    speech-to-text substitutes for words, and sentence-final punctuation.
+    """
+    text = (text or "").replace("%", " percent ").replace("$", " dollars ")
+    text = text.replace("°", " degrees ").replace("’", "'")
+    text = re.sub(r"[?!,;:]", " ", text)
+    text = re.sub(r"\.(?=\s|$)", " ", text)          # sentence dots, not decimal points
+    return re.sub(r"\s+", " ", text).strip()
+
+
 def astral_answer(text: str, now: datetime | None = None) -> str | None:
     if not text or not text.strip():
+        return None
+    text = normalize(text)
+    if not text:
         return None
     for _name, fn, takes_clock in _ROUTE:
         r = fn(text, now) if takes_clock else fn(text)
@@ -1513,15 +1537,6 @@ def domains() -> tuple:
 # ============================ Astral capability ============================
 
 
-def _normalize(msg: str) -> str:
-    """The agent's transcript can carry punctuation the parsers choke on ("155?", "20%").
-    Flatten to bare words and digits, keep apostrophes."""
-    msg = (msg or "").strip().lower()
-    msg = msg.replace("%", " percent ").replace("$", " dollars ").replace("\u00b0", " degrees ")
-    msg = re.sub(r"[^\w\s']", " ", msg)
-    return re.sub(r"\s+", " ", msg).strip()
-
-
 class AstralCapability(MatchingCapability):
     worker: AgentWorker = None
     capability_worker: CapabilityWorker = None
@@ -1535,7 +1550,11 @@ class AstralCapability(MatchingCapability):
 
     async def run(self):
         try:
-            msg = _normalize(await self.capability_worker.wait_for_complete_transcription())
+            # No local normalizer: astral_answer() cleans the transcript itself, so the
+            # device and the cloud agree on what a spoken sentence means. The one that
+            # used to live here lowercased and stripped every symbol, which turned
+            # Ca(OH)2 into 'ca oh 2' and broke every chemistry formula in this build.
+            msg = await self.capability_worker.wait_for_complete_transcription()
             if not msg:
                 return
             tz = self.capability_worker.get_timezone()
