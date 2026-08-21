@@ -38,11 +38,11 @@ hello → greet + fair-housing soft disclaimer
 
 **Visitor:** Okay.
 
-**PropertyPro:** You’re in the foyer — room dimensions 11 by 8. Original craftsman woodwork, opens into the living room.
+**PropertyPro:** You’re in the foyer — room dimensions 11 by 8. A classic craftsman entry with original oak trim, a built-in bench niche, and soft light from the sidelight windows. The hardwood continues straight into the living room ahead.
 
 **Visitor:** Living room.
 
-**PropertyPro:** You’re in the living room — room dimensions 16 by 14, working fireplace.
+**PropertyPro:** You’re in the living room — room dimensions 16 by 14. A bright gathering room with a working brick fireplace, original crown molding, and a wide bay window that pulls in afternoon light.
 
 **Visitor:** What’s the square footage of the whole house?
 
@@ -50,7 +50,7 @@ hello → greet + fair-housing soft disclaimer
 
 **Visitor:** Kitchen. Do the appliances stay?
 
-**PropertyPro:** You’re in the kitchen — room dimensions 12 by 14. Updated in 2021, quartz counters, gas range. Fridge, washer, and dryer convey. The seller’s freestanding bookshelf does not.
+**PropertyPro:** You’re in the kitchen — room dimensions 12 by 14. Remodeled in 2021 with quartz counters, shaker cabinets, a gas range, and a deep farmhouse sink. It opens through French doors to the deck. Fridge, washer, and dryer convey. The seller’s freestanding bookshelf does not.
 
 **Visitor:** When was the roof done?
 
@@ -82,9 +82,15 @@ On Pine (sparse): I don’t have the water heater age in my notes. I’ve added 
 
 **PropertyPro:** Sent.
 
-**Visitor:** We’re done.
+**Visitor:** “We’re done.”
 
-**PropertyPro:** That’s the main tour. I’ve saved two questions for the listing agent. Thanks for visiting — say hello anytime if you want to walk through again.
+**PropertyPro:** Closing the tour. I’ve saved two questions for the listing agent. Say hello to start again.
+
+*(device stays in PropertyPro — if they ask something else before hello:)*
+
+**Visitor:** What’s the square footage?
+
+**PropertyPro:** The tour is closed. Say hello to start again.
 
 ---
 
@@ -204,10 +210,11 @@ If Twilio/SMTP missing: speak contact + keep the file. Never pretend a send succ
 3. Property Q → answer from packet or append `tour_questions.md`
 4. Fair-housing topic → redirect/refuse snippets from KB
 5. Contact → confirm → Twilio / email / speak fallback
-6. Exit → summarize N saved questions → optional auto-email → `resume_normal_flow()`
-7. Schema/product gaps → `knowledge_gaps.json`
+6. Exit / idle → “Closing the tour. Say hello to start again.” → **wait lobby** (stay in PropertyPro; do not hand off to the regular agent)
+7. Hello in lobby → restart greet + tour
+8. Schema/product gaps → `knowledge_gaps.json`
 
-Reuse Town Hall patterns: `MatchingCapability`, short spoken turns, persistent files, gap logging.
+Reuse Town Hall patterns: `MatchingCapability`, short spoken turns, persistent files, gap logging. Showing-device default: keep the ability alive between tours.
 
 ---
 
@@ -227,6 +234,7 @@ Reuse Town Hall patterns: `MatchingCapability`, short spoken turns, persistent f
 
 ## 9. Next implementation slice
 
-1. Confirm this note + fixtures + `fair_housing.md`
-2. Scaffold `main.py` + `.openhome.json` with hello → tour → Q&A on Maple fixture only
-3. Add question logging, then email, then Twilio
+1. ~~Confirm this note + fixtures + `fair_housing.md`~~
+2. ~~Scaffold `main.py` + `.openhome.json` with hello → tour → Q&A on Maple fixture~~
+3. Add email (`send_email`) and Twilio SMS/call when configured
+4. Voice command to switch `active_listing_id` among fixtures

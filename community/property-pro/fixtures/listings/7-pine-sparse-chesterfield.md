@@ -32,23 +32,23 @@
 
 ### living
 - **dimensions:** 15 by 12
-- **note:** Front living room.
+- **note:** A comfortable front living room with a picture window to the street and an open pass-through to the kitchen. Simple, bright, and ready for everyday furniture.
 
 ### kitchen
 - **dimensions:** 11 by 10
-- **note:** Eat-in kitchen.
+- **note:** An eat-in kitchen with room for a small table, solid counter workspace, and a window over the sink. Practical one-level living without wasted space.
 
 ### bedrooms
 - **dimensions:** (unknown)
-- **note:** Three bedrooms on the main level.
+- **note:** Three bedrooms on the main level — a primary toward the back of the house and two secondary rooms that work for kids, guests, or an office. Exact sizes aren't in my notes yet.
 
 ### baths
 - **dimensions:** (unknown)
-- **note:** Two full baths.
+- **note:** Two full baths on the main floor, so the morning routine doesn't bottleneck. Fixture details aren't listed in this packet.
 
 ### garage
 - **dimensions:** 20 by 12
-- **note:** One-car garage.
+- **note:** An attached one-car garage with direct entry into the home, plus wall space for shelves or bikes. Handy for rainy-day unloading.
 
 ## Systems
 

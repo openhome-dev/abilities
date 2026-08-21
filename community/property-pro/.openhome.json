@@ -1,0 +1,15 @@
+{
+  "name": "propertypro",
+  "capability_id": "8344",
+  "category": "skill",
+  "description": "Voice showing tour guide for residential listings",
+  "trigger_words": [
+    "hello",
+    "start tour",
+    "begin tour",
+    "property pro"
+  ],
+  "release_id": 19081,
+  "version": "v2",
+  "is_committed": false
+}

@@ -34,31 +34,31 @@ Thanks for touring — make yourselves at home.
 
 ### foyer
 - **dimensions:** 11 by 8
-- **note:** Original craftsman woodwork; opens into the living room.
+- **note:** A classic craftsman entry with original oak trim, a built-in bench niche, and soft light from the sidelight windows. The hardwood continues straight into the living room ahead.
 
 ### living
 - **dimensions:** 16 by 14
-- **note:** Working fireplace.
+- **note:** A bright gathering room with a working brick fireplace, original crown molding, and a wide bay window that pulls in afternoon light. Plenty of wall space for art or a media setup without feeling crowded.
 
 ### kitchen
 - **dimensions:** 12 by 14
-- **note:** Updated in 2021; quartz counters; gas range; opens toward the deck.
+- **note:** Remodeled in 2021 with quartz counters, shaker cabinets, a gas range, and a deep farmhouse sink. It opens through French doors to the deck, so cooking and outdoor seating feel connected.
 
 ### primary
 - **dimensions:** 14 by 12
-- **note:** Main-floor primary bedroom with en-suite bath.
+- **note:** A quiet main-floor retreat with a walk-in closet and an en-suite bath featuring a walk-in shower and dual vanity. Morning light comes through two east-facing windows.
 
 ### upstairs
 - **dimensions:** 11 by 10
-- **note:** Two bedrooms and one full bath; each bedroom about 11 by 10.
+- **note:** Two flexible bedrooms under the craftsman eaves, each about 11 by 10, sharing a full hall bath with a tub-shower. Ideal for guests, kids, or a home office with dormer light.
 
 ### basement
 - **dimensions:** 28 by 18
-- **note:** Unfinished storage; laundry hookups.
+- **note:** A clean unfinished level with laundry hookups, solid ceiling height for storage or a future finish, and easy access to the mechanicals along the stair wall.
 
 ### backyard
 - **dimensions:** (none)
-- **note:** Fenced yard with wood deck off the kitchen.
+- **note:** A fully fenced yard with a wood deck right off the kitchen, mature shade trees, and room for a garden bed or outdoor dining. The lot is about two-tenths of an acre, so it feels private without being high-maintenance.
 
 ## Systems
 

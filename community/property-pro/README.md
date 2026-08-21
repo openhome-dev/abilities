@@ -62,16 +62,16 @@ A `fair_housing.md` knowledge base ships with the ability so the model stays on 
 
 ## Planned Features (Stage 1)
 
-- [ ] Hello → greet → room tour → Q&A → exit voice flow
-- [ ] Listing packet grounded answers
-- [ ] Fair-housing KB (redirects + hard refusals)
-- [ ] Unanswered questions → `tour_questions.md`
+- [x] Hello → greet → room tour → Q&A → exit voice flow
+- [x] Listing packet grounded answers (markdown fixtures)
+- [x] Fair-housing KB (redirects + hard refusals)
+- [x] Unanswered questions → `tour_questions.md`
 - [ ] Optional email of that file via `CapabilityWorker.send_email()`
 - [ ] Optional on-the-spot Twilio SMS / TTS outbound call (with confirmation)
-- [ ] Three mock listing fixtures for testing (see below)
-- [ ] `knowledge_gaps.json` for product/schema gaps
+- [x] Three mock listing fixtures for testing
+- [x] `knowledge_gaps.json` for product/schema gaps
 
-**Out of scope for Stage 1:** buyer search portal, seller CMA / pricing advice, live crime APIs spoken aloud, two-way call bridge, CRM / lead capture.
+**Out of scope for Stage 1:** buyer search portal, seller CMA / pricing advice, live crime APIs spoken aloud, two-way call bridge, CRM / lead capture, phone-app upload.
 
 ---
 
@@ -97,7 +97,7 @@ Add PropertyPro in the OpenHome Dashboard and set the trigger phrases above.
 
 ### 2. Load a listing packet
 
-Point the ability at the active listing (pref `active_listing_id`). Stage 1 packets are **markdown** files under `fixtures/listings/` (or a user-uploaded `.md` packet). MLS sync comes later.
+Default active listing is `1420-maple-richmond`. To switch fixtures, set `active_listing_id` in ability prefs file `propertypro_prefs.json` (created on first run), e.g. `88-canal-loft-richmond` or `7-pine-sparse-chesterfield`.
 
 ### 3. Optional delivery
 
@@ -118,7 +118,7 @@ Without those, PropertyPro still speaks the agent’s number and always writes `
 
 **Visitor:** “Okay.”
 
-**PropertyPro:** “You’re in the foyer — room dimensions 11 by 8. Original craftsman woodwork, opens into the living room.”
+**PropertyPro:** “You’re in the foyer — room dimensions 11 by 8. A classic craftsman entry with original oak trim, a built-in bench niche, and soft light from the sidelight windows.”
 
 **Visitor:** “What’s the square footage?”
 
@@ -143,12 +143,12 @@ Without those, PropertyPro still speaks the agent’s number and always writes `
 ```
 community/property-pro/
 ├── README.md
+├── .openhome.json
+├── main.py                   ← MatchingCapability tour guide
 ├── fair_housing.md
 ├── fixtures/LISTINGS.md
-├── fixtures/listings/*.md    ← listing packets (markdown)
-├── notes/PRODUCT_DISCOVERY.md
-├── main.py                   ← MatchingCapability (todo)
-└── .openhome.json            ← ability manifest (todo)
+├── fixtures/listings/*.md
+└── notes/PRODUCT_DISCOVERY.md
 ```
 
 ---
@@ -163,4 +163,4 @@ community/property-pro/
 
 ## Status
 
-Discovery scaffold in progress: README, `fair_housing.md`, markdown listing fixtures, and `notes/PRODUCT_DISCOVERY.md` are in place. Next: `main.py` for hello → tour → Q&A on the Maple fixture.
+Stage 1 core loop is implemented in `main.py`: hello → room beats with dimensions → visitor-driven Q&A → fair-housing redirects → `tour_questions.md` logging. After a tour ends, the device stays in PropertyPro and waits for hello again (does not hand visitors to the regular agent). Default listing: `1420-maple-richmond`. Email/Twilio send paths still speak contact info as a fallback.

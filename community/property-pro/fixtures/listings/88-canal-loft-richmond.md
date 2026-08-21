@@ -33,23 +33,23 @@ Welcome to 4B — enjoy the canal view.
 
 ### entry
 - **dimensions:** 6 by 5
-- **note:** Secure building entry; unit door opens to open loft plan.
+- **note:** You enter through the building's secure lobby, then into a compact foyer with coat hooks and a clean sightline into the open loft. The unit feels private the moment the door closes.
 
 ### living_kitchen
 - **dimensions:** 22 by 18
-- **note:** Open loft living with kitchen island; tall windows facing the canal.
+- **note:** A wide open loft with polished concrete floors, a kitchen island for seating, and floor-to-ceiling windows aimed at the canal. Daylight carries across the whole space, so living, dining, and cooking share one bright volume.
 
 ### bedroom
 - **dimensions:** 12 by 11
-- **note:** One bedroom with closet; partial privacy wall from living area.
+- **note:** A quiet sleeping alcove with a full closet and a partial privacy wall from the living area. Still close enough to feel connected to the loft, with room for a queen bed and a slim dresser.
 
 ### bath
 - **dimensions:** 8 by 5
-- **note:** Full bath with tub/shower combo.
+- **note:** A full bath with a tub-shower combo, modern tile, and a vanity with storage. Compact, but finished to match the rest of the unit.
 
 ### balcony
 - **dimensions:** 10 by 4
-- **note:** Private balcony with canal view.
+- **note:** Your own outdoor slice overlooking the canal — wide enough for two chairs and a small table, with evening light on the water. A natural spot for coffee or a quiet end to the day.
 
 ## Systems
 
