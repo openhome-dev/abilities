@@ -1,0 +1,16 @@
+{
+  "unique_name": "hermesconnector",
+  "description": "Sends your question to your own Hermes AI agent and speaks back its answer. Needs hermes_api_url and hermes_api_key set up first (see README).",
+  "category": "skill",
+  "matching_hotwords": [
+    "talk to hermes",
+    "hermes agent",
+    "relay to hermes",
+    "hermes relay",
+    "forward to hermes",
+    "ask my agent",
+    "tell my agent",
+    "my agent",
+    "call hermes"
+  ]
+}
