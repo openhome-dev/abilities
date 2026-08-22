@@ -1,8 +1,8 @@
 # PropertyPro — Voice Showing Tour Guide
 
 ![Community](https://img.shields.io/badge/OpenHome-Community-orange?style=flat-square)
-![Author](https://img.shields.io/badge/Author-@ileana--pr-lightgrey?style=flat-square)
-![Status](https://img.shields.io/badge/Status-Early-yellow?style=flat-square)
+![Author](https://img.shields.io/badge/Author-@adigitaltati-green?style=flat-square)
+![Status](https://img.shields.io/badge/Status-Stage%201-blue?style=flat-square)
 
 A voice-enabled residential showing companion for OpenHome. A visitor walks into a listed home, picks up the device on the table, and says **hello** to start a short room-by-room tour — with fair-housing-safe answers and unanswered questions saved for the listing agent.
 
@@ -12,10 +12,11 @@ Part of **Suite B** (Specialized Property Guides), alongside StayGuide and BizSp
 
 ## Scene
 
-**Visitor path (Stage 1 and beyond):**
+**Visitor path:**
 
 1. Buyer/renter walks in, reads the note, says **hello**, tours with the speaker.
-2. PropertyPro answers from the active listing packet; logs gaps; optional contact/email.
+2. PropertyPro answers from the active listing packet and logs unknowns to `tour_questions.md`.
+3. When the tour ends (idle or “done”), the device stays in PropertyPro: *“Closing the tour. Say hello to start again.”*
 
 **Agent setup — target (future app):**
 
@@ -24,52 +25,61 @@ Part of **Suite B** (Specialized Property Guides), alongside StayGuide and BizSp
 
 **Agent setup — Stage 1 stand-in:**
 
-1. Load a markdown packet (`fixtures/listings/…` or storage) and set `active_listing_id`.
-2. Same visitor path from hello onward.
+1. Ability ships with markdown fixtures under `fixtures/listings/`.
+2. Default active listing is `1420-maple-richmond` (`propertypro_prefs.json` → `active_listing_id`).
 
 ---
 
 ## Trigger Words
 
+Dashboard triggers must be **at least 4 letters** (OpenHome platform rule). Recommended:
+
 | Phrase | What it does |
 | --- | --- |
-| `"hello"` / `"hi"` | Start (or resume) the showing tour |
+| `"hello"` | Start the showing tour |
 | `"start tour"` / `"begin tour"` | Same as hello |
-| `"next room"` / `"go back"` | Move through the room path |
-| `"text the agent"` / `"call the agent"` | On-the-spot contact (Twilio when configured) |
-| `"email my questions"` / `"send questions to the agent"` | Email `tour_questions.md` to the listing agent |
-| `"what's the agent's number"` | Speak listing-agent contact from the packet |
+| `"property pro"` | Same as hello |
 
-Exact trigger list will be finalized in Dashboard config when `main.py` lands.
+**In-tour / lobby phrases** (work after the ability is already running; not all are valid dashboard triggers):
+
+| Phrase | What it does |
+| --- | --- |
+| `"hi"` / `"hello"` / `"start tour"` | Restart the tour from the first room (or leave the closed-tour lobby) |
+| room names (`"kitchen"`, `"living room"`, …) | Jump to that room |
+| `"next"` / `"go back"` | Move along the tour order |
+| `"what's the agent's number"` | Speak listing-agent name + phone |
+| `"text the agent"` / `"call the agent"` / `"email …"` | Stage 1: explain send isn’t wired yet; speak the agent’s number; questions stay on the list |
+| `"done"` / `"goodbye"` / `"end tour"` | Close this tour session → lobby |
 
 ---
 
 ## What It Answers (and what it won't)
 
-**From the listing packet (safe):** beds/baths, sq ft, price, HOA fee, inclusions, systems updates, room notes, school *assignment* (name only, no ratings), agent contact.
+**From the listing packet (safe):** beds/baths, sq ft, price, HOA fee, inclusions/exclusions, systems updates, room notes + dimensions, school *assignment* (name only, no ratings), agent contact.
 
 **Redirect (fair housing / customary practice):**
 
 - Crime / “is this neighborhood safe?” → point to official sources; do **not** recite crime stats or opinions.
-- School *quality* → assignment if known + public evaluation links; no “good/bad” rankings.
+- School *quality* → assignment if known + public evaluation guidance; no “good/bad” rankings.
 - Who lives here / protected-class suitability → hard refuse (no steering, no demographics).
 
-**Missing facts:** *“I don’t have that in my notes — I’ll add it for the listing agent.”* → append `tour_questions.md`.
+**Missing facts:** *“I don’t have that in my notes. I’ve added that to the agent’s question list.”* → append `tour_questions.md`.
 
-A `fair_housing.md` knowledge base ships with the ability so the model stays on the right side of FHA / steering rules. This is product guardrails, not legal advice to consumers or brokers.
+A `fair_housing.md` knowledge base ships with the ability. This is product guardrails, not legal advice to consumers or brokers.
 
 ---
 
-## Planned Features (Stage 1)
+## Stage 1 features
 
-- [x] Hello → greet → room tour → Q&A → exit voice flow
-- [x] Listing packet grounded answers (markdown fixtures)
-- [x] Fair-housing KB (redirects + hard refusals)
+- [x] Hello → greet → room tour → visitor-driven Q&A
+- [x] Richer room notes + dimensions from markdown listing packets
+- [x] Fair-housing redirects / hard refusals
 - [x] Unanswered questions → `tour_questions.md`
-- [ ] Optional email of that file via `CapabilityWorker.send_email()`
-- [ ] Optional on-the-spot Twilio SMS / TTS outbound call (with confirmation)
-- [x] Three mock listing fixtures for testing
-- [x] `knowledge_gaps.json` for product/schema gaps
+- [x] Closed-tour **lobby** (stay in PropertyPro; say hello to start again)
+- [x] Three mock listing fixtures
+- [x] `knowledge_gaps.json` for product/schema failures
+- [ ] Email `tour_questions.md` via `send_email()`
+- [ ] Twilio SMS / outbound TTS call
 
 **Out of scope for Stage 1:** buyer search portal, seller CMA / pricing advice, live crime APIs spoken aloud, two-way call bridge, CRM / lead capture, phone-app upload.
 
@@ -77,36 +87,31 @@ A `fair_housing.md` knowledge base ships with the ability so the model stays on 
 
 ## Mock listings (testing)
 
-Fictitious packets used while building and demoing:
-
 | ID | Property | Why it exists |
 | --- | --- | --- |
 | `1420-maple-richmond` | Full craftsman SFH | Happy-path tour with systems + inclusions |
-| `88-canal-loft-richmond` | Condo + HOA | Fees, inclusions, partial school data |
+| `88-canal-loft-richmond` | Condo + HOA | Fees, inclusions, no school assignment |
 | `7-pine-sparse-chesterfield` | Thin ranch packet | Forces question logging + contact demos |
 
-Listing packets are markdown under [`fixtures/listings/`](fixtures/listings/). Index: [`fixtures/LISTINGS.md`](fixtures/LISTINGS.md). Design detail: [`notes/PRODUCT_DISCOVERY.md`](notes/PRODUCT_DISCOVERY.md).
+Packets live under [`fixtures/listings/`](fixtures/listings/). Index: [`fixtures/LISTINGS.md`](fixtures/LISTINGS.md). Design notes: [`notes/PRODUCT_DISCOVERY.md`](notes/PRODUCT_DISCOVERY.md).
 
 ---
 
-## Setup (preview)
+## Setup
 
 ### 1. Install the ability
 
-Add PropertyPro in the OpenHome Dashboard and set the trigger phrases above.
+Push or install PropertyPro and set dashboard triggers to at least:
 
-### 2. Load a listing packet
+`hello`, `start tour`, `begin tour`, `property pro`
 
-Default active listing is `1420-maple-richmond`. To switch fixtures, set `active_listing_id` in ability prefs file `propertypro_prefs.json` (created on first run), e.g. `88-canal-loft-richmond` or `7-pine-sparse-chesterfield`.
+### 2. Active listing
 
-### 3. Optional delivery
+Default: `1420-maple-richmond`. To switch fixtures, set `active_listing_id` in `propertypro_prefs.json` (created on first run), e.g. `88-canal-loft-richmond` or `7-pine-sparse-chesterfield`.
 
-| Channel | Requirement |
-| --- | --- |
-| Email questions list | SMTP config + `agent_email` on the listing packet (`send_email()`) |
-| Text / call agent | Twilio prefs (same pattern as community Twilio-SMS) + agent phone on packet |
+### 3. Contact / delivery (Stage 1)
 
-Without those, PropertyPro still speaks the agent’s number and always writes `tour_questions.md`.
+Email and Twilio sends are **not** wired yet. Contact asks speak the listing agent’s phone (TTS-friendly) and keep `tour_questions.md` updated.
 
 ---
 
@@ -114,11 +119,9 @@ Without those, PropertyPro still speaks the agent’s number and always writes `
 
 **Visitor:** “Hello.”
 
-**PropertyPro:** “Hi — welcome to Maple Avenue Craftsman. I’ll walk you through the main spaces, and you can ask questions anytime. I’m here for facts about this property — for neighborhood topics like crime or demographics, I’ll point you to official sources rather than give opinions. We’ll begin in the foyer.”
+**PropertyPro:** “Hi — welcome to Maple Avenue Craftsman. I’ll walk you through the main spaces, and you can ask me questions anytime. I’m here for facts about this property — for neighborhood topics like crime or demographics, I’ll point you to official sources rather than give opinions. We’ll begin in the foyer.”
 
-**Visitor:** “Okay.”
-
-**PropertyPro:** “You’re in the foyer — room dimensions 11 by 8. A classic craftsman entry with original oak trim, a built-in bench niche, and soft light from the sidelight windows.”
+**PropertyPro:** “You’re in the foyer. Room dimensions 11 by 8. A classic craftsman entry with original oak trim, a built-in bench niche, and soft light from the sidelight windows. The hardwood continues straight into the living room ahead.”
 
 **Visitor:** “What’s the square footage?”
 
@@ -126,41 +129,47 @@ Without those, PropertyPro still speaks the agent’s number and always writes `
 
 **Visitor:** “Is this a safe neighborhood?”
 
-**PropertyPro:** “I don’t give crime opinions. You can check the city’s public safety open data and local police resources — I’ve got those links in my notes for this market.”
-
-**Visitor:** “When was the roof done?” *(on a sparse listing)*
-
-**PropertyPro:** “I don’t have the roof age in my notes. I’ve added that to the agent’s question list.”
+**PropertyPro:** “I don’t give crime opinions or stats. You can check the public safety open data and local police resources linked in my notes.”
 
 **Visitor:** “Text the agent.”
 
-**PropertyPro:** “I’ll text Avery Chen with three questions from today’s showing at 1420 Maple. Send it?”
+**PropertyPro:** “I can’t send messages from this device yet. Avery Chen’s number is 5 5 5, 0 1 0, 1 4 2 0. Your questions are saved on the agent’s list.”
+
+**Visitor:** “We’re done.”
+
+**PropertyPro:** “Closing the tour. Say hello to start again.”
+
+**Visitor:** “What’s the price?”
+
+**PropertyPro:** “The tour is closed. Say hello to start again.”
 
 ---
 
-## Project layout (target)
+## Project layout
 
 ```
 community/property-pro/
 ├── README.md
 ├── .openhome.json
-├── main.py                   ← MatchingCapability tour guide
+├── main.py
 ├── fair_housing.md
 ├── fixtures/LISTINGS.md
 ├── fixtures/listings/*.md
 └── notes/PRODUCT_DISCOVERY.md
 ```
 
+Runtime (gitignored): `propertypro_prefs.json`, `tour_questions.md`, `knowledge_gaps.json`
+
 ---
 
 ## Related
 
-- Suite A sibling: [`community/town-hall`](../town-hall/) — civic briefing patterns (voice flow, prefs, gap logging) we reuse here
-- OpenHome email template: [`templates/send-email`](../../templates/send-email/)
-- Twilio SMS / outbound call: [`community/Twilio-SMS`](../Twilio-SMS/)
+- Suite A sibling: [`community/town-hall`](../town-hall/) — voice flow, prefs, gap logging patterns
+- OpenHome email template (future): [`templates/send-email`](../../templates/send-email/)
+- Twilio SMS / outbound call (future): [`community/Twilio-SMS`](../Twilio-SMS/)
 
 ---
 
 ## Status
 
-Stage 1 core loop is implemented in `main.py`: hello → room beats with dimensions → visitor-driven Q&A → fair-housing redirects → `tour_questions.md` logging. After a tour ends, the device stays in PropertyPro and waits for hello again (does not hand visitors to the regular agent). Default listing: `1420-maple-richmond`. Email/Twilio send paths still speak contact info as a fallback.
+Stage 1 is implemented and live-testable: hello → room beats → Q&A → fair-housing redirects → question logging → lobby until hello. Default listing: Maple Avenue Craftsman. Email/Twilio still deferred.
