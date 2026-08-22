@@ -1,0 +1,6 @@
+{
+  "name": "pantrypro",
+  "capability_id": null,
+  "category": "skill",
+  "description": "Voice-guided pantry assistant. Tracks pantry and fridge inventory, suggests recipes from what you have (prioritizing items about to expire), alerts before food goes bad, and builds a shopping list from gaps."
+}
