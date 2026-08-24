@@ -4,67 +4,54 @@ This ability sends your question to your own **Hermes** AI agent. Hermes can ans
 
 [Hermes](https://github.com/NousResearch/hermes-agent) is a free, open-source AI agent you run yourself on your own computer.
 
+This ability uses **Local Link** — a small bridge program that runs on your computer. Nothing is made public on the internet. No tunnel. No API key to paste anywhere.
+
 ## What You Need
 
-Before you start, get these three things ready:
-
-1. A computer running Hermes.
-2. Hermes's "API server" turned on. This lets other apps, like this ability, talk to Hermes.
-3. A public web address for your Hermes computer, plus a secret password. Steps below show you how to make both.
+1. Hermes installed and set up on your computer. Run `hermes setup` once if you have not already.
+2. The OpenHome CLI installed on the same computer.
+3. Local Link running (`openhome local start`).
 
 ## Setup Steps
 
-### Step 1: Turn on Hermes's API server
+### Step 1: Make sure Hermes works
 
-On the computer running Hermes, open the file `~/.hermes/.env`. Add these two lines:
+In a terminal, run:
 
-```
-API_SERVER_ENABLED=true
-API_SERVER_KEY=your-own-secret-password-here
-```
-
-For `API_SERVER_KEY`, use a long, random password. Do not use a simple word like "password123". This password protects your Hermes agent — anyone who has it can send it commands.
-
-Restart Hermes so the change takes effect:
-
-```
-hermes gateway restart
+```bash
+hermes dump
 ```
 
-### Step 2: Give your Hermes computer a public web address
+If this shows version information, Hermes is ready. If not, run `hermes setup` first.
 
-Your Hermes computer is normally private — nothing outside your home network can reach it. A **tunnel** gives it a public web address safely. Pick one option:
+### Step 2: Install the OpenHome CLI
 
-**Option A: Tailscale Funnel** (free, needs a [Tailscale](https://tailscale.com) account)
+From the root of the [abilities repo](https://github.com/openhome-dev/abilities):
 
-```
-tailscale funnel --bg 8642
-```
-
-This prints a web address like `https://your-computer-name.ts.net`. Copy it — you will need it in Step 3.
-
-**Option B: Cloudflare Tunnel** (free, no account needed for quick testing)
-
-```
-cloudflared tunnel --url http://localhost:8642
+```bash
+python3 -m venv cli/.venv && source cli/.venv/bin/activate
+pip install -e cli
 ```
 
-This prints a web address like `https://random-words.trycloudflare.com`. Copy it.
+### Step 3: Log in and start Local Link
 
-> Both options are free. Tailscale Funnel gives you an address that stays the same each time. Cloudflare's free tunnel gives you a new address every time you start it — fine for testing, not for daily use.
+```bash
+openhome login
+openhome local start
+openhome local status
+```
 
-### Step 3: Add this ability's secrets in OpenHome
+Keep Local Link running. It needs to stay on while you use this ability.
+
+### Step 4: Add this ability
 
 1. Open the OpenHome dashboard.
-2. Go to **Abilities** and open **Hermes Connector**.
-3. Find the **API Keys** section.
-4. Add two keys:
-   - `hermes_api_url` — paste the web address from Step 2. (Example: `https://your-computer-name.ts.net` — no extra text, just the address.)
-   - `hermes_api_key` — paste the password you made in Step 1.
-5. Save your changes.
-6. Assign this ability to your agent.
+2. Add the **Hermes Connector** ability to your agent.
+3. Set your trigger words if you want to change them (see below for the defaults).
 
-### Step 4: Talk to Hermes
+No API keys. No secrets to set up. Local Link finds Hermes automatically.
+
+### Step 5: Talk to Hermes
 
 Say one of these to your OpenHome device:
 
@@ -73,11 +60,7 @@ Say one of these to your OpenHome device:
 - "Ask my agent"
 - "Call Hermes"
 
-Then ask your question. Your device sends it to Hermes and speaks back the answer.
-
-## Keep Your Password Safe
-
-Your `hermes_api_key` works like a key to your computer — whoever has it can send commands to your Hermes agent. Do not share it. Do not post it online, in chat, or in a screenshot. If you think someone else got it, make a new password in Step 1 and update it in Step 3.
+Then ask your question. Your device sends it to Hermes through Local Link and speaks back the answer.
 
 ## Trigger Words
 
@@ -95,13 +78,19 @@ Your `hermes_api_key` works like a key to your computer — whoever has it can s
 
 1. You say a trigger word, like "Hermes agent," followed by your question.
 2. This ability reads your question.
-3. It sends your question to your Hermes agent over the internet, using the web address and password you set up.
-4. Hermes agent thinks about your question and sends back an answer.
-5. Your OpenHome device speaks the answer out loud.
+3. It sends your question to Local Link, the bridge program running on your computer.
+4. Local Link runs `hermes -z "<your question>"` on your machine — a one-shot call to your own Hermes agent. This never leaves your computer.
+5. Hermes thinks about your question and sends back an answer.
+6. Your OpenHome device speaks the answer out loud.
+
+## Troubleshooting
+
+- **"Could not reach Hermes"**: check that `openhome local start` is running (`openhome local status`), and that `hermes dump` works in a terminal.
+- **Nothing happens**: confirm this ability is added to your agent and its trigger words are set.
 
 ## Key SDK Functions Used
 
-- `get_api_keys()` — reads the `hermes_api_url` and `hermes_api_key` secrets you set up.
+- `exec_local_command()` — sends the request to Local Link, targeting the built-in `hermes` backend.
 - `speak()` — talks back to you.
 - `wait_for_complete_transcription()` — waits for you to finish talking.
 - `editor_logging_handler.error()` — writes errors to the log if something goes wrong, without using `print()`.

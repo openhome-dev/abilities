@@ -1,4 +1,5 @@
-import requests
+import json
+
 from src.agent.capability import MatchingCapability
 from src.main import AgentWorker
 from src.agent.capability_worker import CapabilityWorker
@@ -10,20 +11,6 @@ TRIGGERS = (
 )
 
 REQUEST_TIMEOUT_S = 30
-
-
-def _key_value(raw):
-    """get_api_keys() is documented to return a plain string, but defends
-    against a dict shape (e.g. {"value": "..."}) just in case."""
-    if isinstance(raw, dict):
-        for field in ("value", "key", "secret", "api_key"):
-            if raw.get(field):
-                return str(raw[field])
-        for v in raw.values():
-            if isinstance(v, str) and v:
-                return v
-        return ""
-    return raw or ""
 
 
 class HermesConnector(MatchingCapability):
@@ -47,48 +34,42 @@ class HermesConnector(MatchingCapability):
             if not user_inquiry:
                 user_inquiry = "Hello"
 
-            api_url = _key_value(self.capability_worker.get_api_keys("hermes_api_url"))
-            api_key = _key_value(self.capability_worker.get_api_keys("hermes_api_key"))
-
-            if not api_url or not api_key:
-                await self.capability_worker.speak(
-                    "Hermes is not configured. Add hermes_api_url and hermes_api_key as secrets."
-                )
-                self.capability_worker.resume_normal_flow()
-                return
-
             await self.capability_worker.speak("Sending your message to Hermes")
 
             try:
-                resp = requests.post(
-                    f"{api_url.rstrip('/')}/v1/chat/completions",
-                    headers={
-                        "Authorization": f"Bearer {api_key}",
-                        "Content-Type": "application/json",
-                    },
-                    json={
-                        "model": "hermes-agent",
-                        "messages": [{"role": "user", "content": user_inquiry}],
-                        "stream": False,
-                    },
-                    timeout=REQUEST_TIMEOUT_S,
+                # Local Link's bridge (openhome local start) has a built-in
+                # "hermes" backend — it runs `hermes -z "<data>"` on the
+                # user's own machine and returns the reply. No tunnel, no
+                # API key, no public exposure: this never leaves localhost.
+                command = json.dumps({
+                    "type": "command",
+                    "target": "hermes",
+                    "data": user_inquiry,
+                    "timeout": REQUEST_TIMEOUT_S,
+                })
+                response = await self.capability_worker.exec_local_command(
+                    command, timeout=REQUEST_TIMEOUT_S,
                 )
-                resp.raise_for_status()
-                data = resp.json()
-                choices = data.get("choices") or []
-                answer = (
-                    choices[0].get("message", {}).get("content", "").strip()
-                    if choices
-                    else ""
-                )
+
+                answer = response
+                if isinstance(response, dict):
+                    answer = (
+                        response.get("data")
+                        or response.get("text")
+                        or response.get("result")
+                        or ""
+                    )
+                answer = str(answer).strip() if answer else ""
+
                 await self.capability_worker.speak(
                     answer or "Hermes didn't return a response."
                 )
 
             except Exception as exec_err:
-                self.worker.editor_logging_handler.error(f"Hermes API request failed: {exec_err}")
+                self.worker.editor_logging_handler.error(f"Hermes Local Link request failed: {exec_err}")
                 await self.capability_worker.speak(
-                    "Could not reach Hermes. Check that the gateway's API server is running and reachable."
+                    "Could not reach Hermes. Make sure `openhome local start` is running "
+                    "and `hermes doctor` reports no problems."
                 )
 
         except Exception as err:
