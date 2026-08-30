@@ -75,27 +75,38 @@ class PantryProBackground(MatchingCapability):
                 return threshold
         return -1
 
-    async def _load(self) -> dict:
+    async def _load(self):
+        # returns (data, load_ok). missing file is ok; a failed read is not.
         try:
-            if await self.capability_worker.check_if_file_exists(STORAGE_FILE, False):
-                raw = await self.capability_worker.read_file(STORAGE_FILE, False)
-                parsed = json.loads(raw)
-                if isinstance(parsed, dict):
-                    parsed.setdefault("items", [])
-                    parsed.setdefault("shopping", [])
-                    return parsed
+            exists = await self.capability_worker.check_if_file_exists(STORAGE_FILE, False)
+            if not exists:
+                return _empty_data(), True
+            raw = await self.capability_worker.read_file(STORAGE_FILE, False)
+            parsed = json.loads(raw)
+            if not isinstance(parsed, dict):
+                raise ValueError("inventory is not a json object")
+            parsed.setdefault("items", [])
+            parsed.setdefault("shopping", [])
+            return parsed, True
         except Exception as e:
             self.worker.editor_logging_handler.error(f"[PantryProBG] load failed: {e}")
-        return _empty_data()
+            return None, False
 
-    async def _save(self, data: dict):
+    async def _save(self, data: dict, *, load_ok: bool) -> bool:
+        if not load_ok:
+            self.worker.editor_logging_handler.error(
+                "[PantryProBG] save refused: inventory was not loaded cleanly"
+            )
+            return False
         try:
             await self.capability_worker.delete_file(STORAGE_FILE, False)
             await self.capability_worker.write_file(
                 STORAGE_FILE, json.dumps(data), False
             )
+            return True
         except Exception as e:
             self.worker.editor_logging_handler.error(f"[PantryProBG] save failed: {e}")
+            return False
 
     def _alert_line(self, item: dict, days: int) -> str:
         name = item.get("name", "food")
@@ -115,7 +126,11 @@ class PantryProBackground(MatchingCapability):
                     await self.worker.session_tasks.sleep(POLL_INTERVAL)
                     continue
 
-                data = await self._load()
+                data, load_ok = await self._load()
+                if not load_ok:
+                    await self.worker.session_tasks.sleep(POLL_INTERVAL)
+                    continue
+
                 items = data.get("items") or []
                 if not items:
                     await self.worker.session_tasks.sleep(POLL_INTERVAL)
@@ -139,7 +154,7 @@ class PantryProBackground(MatchingCapability):
                         changed = True
 
                 if changed:
-                    await self._save(data)
+                    await self._save(data, load_ok=True)
 
                 if not nudge_items:
                     await self.worker.session_tasks.sleep(POLL_INTERVAL)

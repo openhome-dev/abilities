@@ -83,7 +83,7 @@ Background, later that session:
 2. Inventory loads from persistent storage (`pantrypro_inventory.json`).
 3. A specific ask is handled immediately (quick mode). A bare “pantry pro” greets with what's on hand and offers recipes.
 4. Natural speech is classified by the LLM — add, used-up, list, recipes, shopping, tips.
-5. Recipe search hits TheMealDB using your soonest-to-expire ingredient, then compares the ingredient list to stock.
+5. Recipe search hits TheMealDB using your soonest-to-expire ingredient, then compares the ingredient list to stock. The LLM fallback also reads `user_profile.md` (diet, household size) — read-only, never written.
 6. Say **done** to hand control back. The background daemon keeps watching expiry dates for the rest of the session.
 
 ### Background daemon

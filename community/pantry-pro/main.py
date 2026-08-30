@@ -65,9 +65,12 @@ user said: "{input}"
 
 RECIPE_FALLBACK_PROMPT = """You are a concise home cook. Given this inventory, suggest 3 simple meals.
 prioritize items that expire soon. each meal should mostly use what's on hand.
+respect diet and household size from the user profile when present
+(for example vegetarian, vegan, gluten-free, or cooking for a family).
 return ONLY JSON: {{"meals":[{{"name":"","uses":["item"]}}]}}
 inventory: {inventory}
 expiring soon: {expiring}
+user profile: {profile}
 """
 
 INGREDIENT_MAP = {
@@ -120,6 +123,27 @@ def _norm(name: str) -> str:
     return re.sub(r"[^a-z0-9]+", " ", (name or "").lower()).strip()
 
 
+def _singularize(name: str) -> str:
+    # light singularization for eggs/egg, tomatoes/tomato, boxes/box
+    n = _norm(name)
+    if len(n) > 4 and n.endswith("ies"):
+        return n[:-3] + "y"
+    if len(n) > 4 and n.endswith(("oes", "ses", "xes", "ches", "shes")):
+        return n[:-2]
+    if len(n) > 2 and n.endswith("s") and not n.endswith("ss"):
+        return n[:-1]
+    return n
+
+
+def _names_match_strict(a: str, b: str) -> bool:
+    na, nb = _norm(a), _norm(b)
+    if not na or not nb:
+        return False
+    if na == nb:
+        return True
+    return _singularize(na) == _singularize(nb)
+
+
 def _parse_json(raw: str) -> dict:
     clean = raw.replace("```json", "").replace("```", "").strip()
     try:
@@ -156,6 +180,7 @@ class PantryProCapability(MatchingCapability):
     capability_worker: CapabilityWorker = None
     data: dict = None
     pending: dict = None
+    load_ok: bool = False
 
     # do not change following tag of register capability
     # {{register capability}}
@@ -169,6 +194,7 @@ class PantryProCapability(MatchingCapability):
         self.capability_worker = CapabilityWorker(self.worker)
         self.data = _empty_data()
         self.pending = None
+        self.load_ok = False
         self.worker.session_tasks.create(self.run())
 
     def _today(self):
@@ -186,28 +212,65 @@ class PantryProCapability(MatchingCapability):
 
     # storage
 
-    async def _load(self):
+    async def _load(self) -> bool:
+        # true = safe to save later. missing file is ok; a failed read is not.
         try:
-            if await self.capability_worker.check_if_file_exists(STORAGE_FILE, False):
-                raw = await self.capability_worker.read_file(STORAGE_FILE, False)
-                parsed = json.loads(raw)
-                if isinstance(parsed, dict):
-                    parsed.setdefault("items", [])
-                    parsed.setdefault("shopping", [])
-                    self.data = parsed
-                    return
+            exists = await self.capability_worker.check_if_file_exists(STORAGE_FILE, False)
+            if not exists:
+                self.data = _empty_data()
+                self.load_ok = True
+                return True
+
+            raw = await self.capability_worker.read_file(STORAGE_FILE, False)
+            parsed = json.loads(raw)
+            if not isinstance(parsed, dict):
+                raise ValueError("inventory is not a json object")
+            parsed.setdefault("items", [])
+            parsed.setdefault("shopping", [])
+            self.data = parsed
+            self.load_ok = True
+            return True
         except Exception as e:
             self._err(f"load failed: {e}")
-        self.data = _empty_data()
+            self.data = _empty_data()
+            self.load_ok = False
+            return False
 
-    async def _save(self):
+    async def _save(self) -> bool:
+        if not self.load_ok:
+            self._err("save refused: inventory was not loaded cleanly")
+            return False
         try:
             await self.capability_worker.delete_file(STORAGE_FILE, False)
             await self.capability_worker.write_file(
                 STORAGE_FILE, json.dumps(self.data), False
             )
+            return True
         except Exception as e:
             self._err(f"save failed: {e}")
+            return False
+
+    async def _persist(self) -> str:
+        # save after a mutation; return a short spoken warning on failure
+        if await self._save():
+            return ""
+        return " I couldn't save that right now, so it may not stick."
+
+    async def _read_user_profile(self) -> str:
+        # read-only — never write user_profile.md (platform-owned)
+        try:
+            if not await self.capability_worker.check_if_file_exists(
+                "user_profile.md", False
+            ):
+                return ""
+            raw = await self.capability_worker.read_file("user_profile.md", False)
+            text = (raw or "").strip()
+            if len(text) > 1200:
+                text = text[:1200]
+            return text
+        except Exception as e:
+            self._err(f"user_profile read skipped: {e}")
+            return ""
 
     # inventory helpers
 
@@ -220,24 +283,39 @@ class PantryProCapability(MatchingCapability):
         except Exception:
             return 9999
 
-    def _find_item(self, name: str, location: str = ""):
+    def _find_item(self, name: str, location: str = "", *, fuzzy: bool = False):
+        # merge/add: strict exact or singular/plural only.
+        # lookups (used/remove/update): fuzzy allowed, longest name wins.
         n = _norm(name)
         if not n:
             return None
-        matches = []
+
+        candidates = []
         for item in self.data.get("items", []):
-            iname = _norm(item.get("name", ""))
-            if n == iname or n in iname or iname in n:
-                if location and item.get("location") and item.get("location") != location:
-                    continue
-                matches.append(item)
-        if not matches:
+            if location and item.get("location") and item.get("location") != location:
+                continue
+            candidates.append(item)
+
+        for item in candidates:
+            if _norm(item.get("name", "")) == n:
+                return item
+
+        for item in candidates:
+            if _names_match_strict(item.get("name", ""), n):
+                return item
+
+        if not fuzzy:
             return None
-        if location:
-            loc_hits = [m for m in matches if m.get("location") == location]
-            if loc_hits:
-                return loc_hits[0]
-        return matches[0]
+
+        fuzzy_hits = []
+        for item in candidates:
+            iname = _norm(item.get("name", ""))
+            if n in iname or iname in n:
+                fuzzy_hits.append(item)
+        if not fuzzy_hits:
+            return None
+        fuzzy_hits.sort(key=lambda i: len(_norm(i.get("name", ""))), reverse=True)
+        return fuzzy_hits[0]
 
     def _expiring(self, within: int = 5) -> list:
         due = []
@@ -355,7 +433,7 @@ class PantryProCapability(MatchingCapability):
         return name
 
     def _remove_item(self, name: str, location: str = "") -> dict:
-        item = self._find_item(name, location)
+        item = self._find_item(name, location, fuzzy=True)
         if not item:
             return {}
         self.data["items"] = [
@@ -442,13 +520,15 @@ class PantryProCapability(MatchingCapability):
             self._err(f"mealdb lookup failed: {e}")
             return {}
 
-    def _llm_recipes(self) -> list:
+    async def _llm_recipes(self) -> list:
         items = [i.get("name", "") for i in self.data.get("items", [])]
         expiring = [i["name"] for i, _ in self._expiring(5)]
+        profile = await self._read_user_profile()
         raw = self.capability_worker.text_to_text_response(
             RECIPE_FALLBACK_PROMPT.format(
                 inventory=_join_and(items) or "empty",
                 expiring=_join_and(expiring) or "none",
+                profile=profile or "none",
             ),
             system_prompt="return only valid json. no markdown.",
         )
@@ -534,13 +614,13 @@ class PantryProCapability(MatchingCapability):
                 needs_date.append(name)
         if not added:
             return "I didn't catch what to add. Try 'add milk to the fridge, expires Friday'."
-        await self._save()
+        warn = await self._persist()
         msg = f"Added {_join_and(added)}."
         if needs_date:
             self.pending = {"type": "expiry", "names": needs_date}
             first = needs_date[0]
             msg += f" When does the {first} expire? Say a date, or skip."
-        return msg
+        return msg + warn
 
     async def _handle_used(self, specs: list) -> str:
         removed = []
@@ -550,9 +630,13 @@ class PantryProCapability(MatchingCapability):
                 removed.append(item.get("name"))
         if not removed:
             return "I couldn't find that in your pantry."
-        await self._save()
+        warn = await self._persist()
         self.pending = {"type": "shop_used", "names": removed}
-        return f"Removed {_join_and(removed)}. Add {_join_and(removed)} to the shopping list?"
+        return (
+            f"Removed {_join_and(removed)}. "
+            f"Add {_join_and(removed)} to the shopping list?"
+            + warn
+        )
 
     async def _handle_remove(self, specs: list) -> str:
         removed = []
@@ -563,18 +647,20 @@ class PantryProCapability(MatchingCapability):
                 removed.append(item.get("name"))
             else:
                 missing.append(_norm(spec.get("name", "")))
-        await self._save()
+        warn = await self._persist() if removed else ""
         parts = []
         if removed:
             parts.append(f"Stopped tracking {_join_and(removed)}.")
         if missing:
             parts.append(f"Couldn't find {_join_and([m for m in missing if m])}.")
-        return " ".join(parts) or "I didn't catch what to remove."
+        return (" ".join(parts) or "I didn't catch what to remove.") + warn
 
     async def _handle_update(self, specs: list) -> str:
         updated = []
         for spec in specs:
-            item = self._find_item(spec.get("name", ""), spec.get("location") or "")
+            item = self._find_item(
+                spec.get("name", ""), spec.get("location") or "", fuzzy=True
+            )
             if not item:
                 continue
             if spec.get("qty"):
@@ -591,8 +677,8 @@ class PantryProCapability(MatchingCapability):
             updated.append(item["name"])
         if not updated:
             return "I couldn't find that item to update."
-        await self._save()
-        return f"Updated {_join_and(updated)}."
+        warn = await self._persist()
+        return f"Updated {_join_and(updated)}." + warn
 
     async def _handle_recipes(self) -> str:
         items = self.data.get("items") or []
@@ -616,7 +702,7 @@ class PantryProCapability(MatchingCapability):
                 break
 
         if not meals:
-            meals = self._llm_recipes()
+            meals = await self._llm_recipes()
 
         if not meals:
             stock = self._headline_stock()
@@ -637,24 +723,24 @@ class PantryProCapability(MatchingCapability):
         names = [_norm(s.get("name", "")) for s in specs]
         added = self._shop_add(names)
         skipped = [n for n in names if n and n not in added]
-        await self._save()
+        warn = await self._persist() if added else ""
         parts = []
         if added:
             parts.append(f"Put {_join_and(added)} on the shopping list.")
         if skipped:
             parts.append(f"{_join_and(skipped)} already listed.")
-        return " ".join(parts) or "What should I add to the shopping list?"
+        return (" ".join(parts) or "What should I add to the shopping list?") + warn
 
     async def _handle_shop_build(self, specs: list) -> str:
-        # if they named ingredients, add those; else restock expired + empty staples from used list
+        # if they named ingredients, add those; else restock expired items onto the list
         if specs and any(s.get("name") for s in specs):
             return await self._handle_shop_add(specs)
         expired = [i.get("name") for i, d in self._expiring(0) if d < 0]
         added = self._shop_add(expired)
         shopping = self.data.get("shopping") or []
-        await self._save()
+        warn = await self._persist() if added else ""
         if added:
-            return f"Added expired items: {_join_and(added)}. {_shop_tail(shopping)}"
+            return f"Added expired items: {_join_and(added)}. {_shop_tail(shopping)}" + warn
         if shopping:
             return self._shop_speech()
         return "List is empty. Name items to buy, or pick a recipe and I'll add what's missing."
@@ -704,8 +790,8 @@ class PantryProCapability(MatchingCapability):
             )
             if confirmed:
                 self.data["shopping"] = []
-                await self._save()
-                return "Shopping list cleared."
+                warn = await self._persist()
+                return "Shopping list cleared." + warn
             return "Okay, keeping the list."
         if intent == "shop_build":
             return await self._handle_shop_build(specs)
@@ -744,22 +830,21 @@ class PantryProCapability(MatchingCapability):
             if not re.match(r"^\d{4}-\d{2}-\d{2}$", date):
                 return "I didn't catch the date. Try 'next Friday' or say skip."
             for name in names:
-                item = self._find_item(name)
+                item = self._find_item(name, fuzzy=True)
                 if item:
                     item["expires"] = date
-            await self._save()
+            warn = await self._persist()
             self.pending = None
             label = _join_and(names)
-            return f"Set {label} to expire {date}. Anything else?"
+            return f"Set {label} to expire {date}. Anything else?" + warn
 
         if ptype == "shop_used":
             names = pending.get("names") or []
-            lower = user_input.lower()
             if self._is_yes(user_input):
                 self.pending = None
                 added = self._shop_add(names)
-                await self._save()
-                return f"Added {_join_and(added or names)} to the shopping list."
+                warn = await self._persist()
+                return f"Added {_join_and(added or names)} to the shopping list." + warn
             if self._is_no(user_input):
                 self.pending = None
                 return "Okay, leaving the shopping list as is."
@@ -818,8 +903,8 @@ class PantryProCapability(MatchingCapability):
             if self._is_yes(user_input):
                 self.pending = None
                 added = self._shop_add(names)
-                await self._save()
-                return f"Added {_join_and(added or names)} to the shopping list."
+                warn = await self._persist()
+                return f"Added {_join_and(added or names)} to the shopping list." + warn
             if self._is_no(user_input):
                 self.pending = None
                 return "Okay, I won't add them."
@@ -864,7 +949,13 @@ class PantryProCapability(MatchingCapability):
 
     async def run(self):
         try:
-            await self._load()
+            if not await self._load():
+                await self.capability_worker.speak(
+                    "I couldn't load your pantry safely, so I won't change anything "
+                    "this session. Try again in a moment."
+                )
+                return
+
             trigger = self._trigger_text()
             self._log(f"started. trigger={trigger!r} items={len(self.data.get('items') or [])}")
 
