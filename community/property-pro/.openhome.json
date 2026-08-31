@@ -1,6 +1,0 @@
-{
-  "name": "propertypro",
-  "capability_id": null,
-  "category": "skill",
-  "description": "Voice showing tour guide for residential listings. Walks visitors room-by-room from a markdown listing packet, answers property facts, follows fair-housing redirects, and logs unanswered questions for the listing agent."
-}

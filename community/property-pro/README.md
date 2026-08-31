@@ -93,7 +93,7 @@ A `fair_housing.md` knowledge base ships with the ability. This is product guard
 | `88-canal-loft-richmond` | Condo + HOA | Fees, inclusions, no school assignment |
 | `7-pine-sparse-chesterfield` | Thin ranch packet | Forces question logging + contact demos |
 
-Packets live under [`fixtures/listings/`](fixtures/listings/). Index: [`fixtures/LISTINGS.md`](fixtures/LISTINGS.md). Design notes: [`notes/PRODUCT_DISCOVERY.md`](notes/PRODUCT_DISCOVERY.md).
+Packets live under [`fixtures/listings/`](fixtures/listings/). Index: [`fixtures/LISTINGS.md`](fixtures/LISTINGS.md).
 
 ---
 
@@ -150,12 +150,11 @@ Email and Twilio sends are **not** wired yet. Contact asks speak the listing age
 ```
 community/property-pro/
 ├── README.md
-├── .openhome.json
+├── .gitignore
 ├── main.py
 ├── fair_housing.md
 ├── fixtures/LISTINGS.md
-├── fixtures/listings/*.md
-└── notes/PRODUCT_DISCOVERY.md
+└── fixtures/listings/*.md
 ```
 
 Runtime (gitignored): `propertypro_prefs.json`, `tour_questions.md`, `knowledge_gaps.json`
