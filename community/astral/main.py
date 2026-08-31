@@ -13,8 +13,8 @@ fluently and sometimes wrongly. This computes them, in microseconds, offline.
 
 If nothing matches, it speaks nothing and hands the turn back so the agent takes it.
 """
-from __future__ import annotations
 from datetime import datetime
+from typing import Optional
 from zoneinfo import ZoneInfo
 import re
 
@@ -123,7 +123,7 @@ _NOT_NOW = re.compile(
     r"time ?zone|best (time|month|day)|of the)\b")
 
 
-def mech_handle(utterance: str, now: datetime | None = None) -> str | None:
+def mech_handle(utterance: str, now: Optional[datetime] = None) -> Optional[str]:
     """Return a spoken answer for a mechanical command, or None to fall through."""
     now = now or datetime.now()
     t = " " + utterance.lower().strip() + " "
@@ -414,7 +414,7 @@ def _convert(text: str, nums):
 # ── main ──────────────────────────────────────────────────────────────────────
 
 
-def calc_handle(text: str) -> str | None:
+def calc_handle(text: str) -> Optional[str]:
     t = " " + text.lower().strip() + " "
     nums = numbers(text)
 
@@ -557,7 +557,7 @@ def _gr_pairs(t: str):
     return pairs
 
 
-def study_handle(text: str) -> str | None:
+def study_handle(text: str) -> Optional[str]:
     t = " " + text.lower().strip() + " "
 
     # ── what do I need on the final ───────────────────────────────────────────
@@ -772,7 +772,7 @@ def _ch_find(text: str, t: str):
     return None, None, None
 
 
-def chem_handle(text: str) -> str | None:
+def chem_handle(text: str) -> Optional[str]:
     t = " " + text.lower().strip() + " "
     nums = numbers(text)
 
@@ -975,7 +975,7 @@ def _sci_secs(seconds: float) -> str:
     return _fmt_spoken(seconds / 3.15576e7) + " years"
 
 
-def sci_handle(text: str) -> str | None:
+def sci_handle(text: str) -> Optional[str]:
     t = " " + text.lower().strip() + " "
     nums = numbers(text)
     body = _sci_body(t)
@@ -1162,7 +1162,7 @@ def _st_said(vals: list[float]) -> str:
     return ", ".join(_fmt(v) for v in vals)
 
 
-def stats_handle(text: str) -> str | None:
+def stats_handle(text: str) -> Optional[str]:
     t = " " + text.lower().strip() + " "
 
     # ── z score (checked before the plain mean/deviation words) ───────────────
@@ -1317,7 +1317,7 @@ def _mx_said_factors(fs: list[int]) -> str:
     return " times ".join(out)
 
 
-def mathx_handle(text: str) -> str | None:
+def mathx_handle(text: str) -> Optional[str]:
     t = " " + text.lower().strip() + " "
 
     # ── number bases ──────────────────────────────────────────────────────────
@@ -1495,7 +1495,7 @@ _ROUTE = (
 
 
 def normalize(text: str) -> str:
-    """Clean what speech-to-text actually hands over, not what a test types.
+    """Clean what speech-to-text actually hands over, not what a test.
 
     Whisper punctuates. It returns "What is 20% of 80?" and "What letter grade is an
     87?", and a trailing question mark or a percent sign is enough to stop the number
@@ -1515,7 +1515,7 @@ def normalize(text: str) -> str:
     return re.sub(r"\s+", " ", text).strip()
 
 
-def astral_answer(text: str, now: datetime | None = None) -> str | None:
+def astral_answer(text: str, now: Optional[datetime] = None) -> Optional[str]:
     if not text or not text.strip():
         return None
     text = normalize(text)
@@ -1548,6 +1548,41 @@ class AstralCapability(MatchingCapability):
         self.capability_worker = CapabilityWorker(self.worker)
         self.worker.session_tasks.create(self.run())
 
+    def _now(self) -> datetime:
+        """The current time in the user's zone, falling back to the local clock.
+
+        Every step here is a failure someone has actually hit, and none of them may be
+        allowed to cost more than the timezone itself. `ZoneInfo` accepts ONLY an exact
+        IANA key: 'GMT+5', 'UTC+05:00', 'PST', 'Pacific Standard Time', a lowercased
+        'america/new_york' and even 'Asia/Karachi ' with one trailing space all raise
+        ZoneInfoNotFoundError. `get_timezone()` can also raise outright, or hand back
+        None or whitespace — the merged alarm-timer ability strips and try/excepts it
+        for exactly that reason. And on a runtime with no system tz database and no
+        `tzdata` wheel, EVERY key raises, including 'UTC'.
+
+        Unguarded, any one of those took the whole ability down: this runs before
+        astral_answer(), so a bad timezone silenced 'molar mass of water' and '20
+        percent of 80' too — questions with no clock in them at all. The error went to
+        editor_logging_handler and the user heard nothing, which is indistinguishable
+        from the ability never having triggered.
+        """
+        tz = ""
+        try:
+            tz = (self.capability_worker.get_timezone() or "").strip()
+        except Exception as error:                                   # noqa: BLE001
+            self.worker.editor_logging_handler.info(
+                f"Astral: get_timezone() failed ({error!r}); using the local clock")
+        if not tz:
+            return datetime.now()
+        try:
+            return datetime.now(ZoneInfo(tz))
+        except Exception as error:                                   # noqa: BLE001
+            # Not an IANA key, or no tzdata in this image. Only 7 of ~40 handlers read
+            # the clock; the rest must still answer.
+            self.worker.editor_logging_handler.info(
+                f"Astral: timezone {tz!r} unusable ({error!r}); using the local clock")
+            return datetime.now()
+
     async def run(self):
         try:
             # No local normalizer: astral_answer() cleans the transcript itself, so the
@@ -1557,8 +1592,7 @@ class AstralCapability(MatchingCapability):
             msg = await self.capability_worker.wait_for_complete_transcription()
             if not msg:
                 return
-            tz = self.capability_worker.get_timezone()
-            now = datetime.now(ZoneInfo(tz)) if tz else datetime.now()
+            now = self._now()
 
             # One router, same order as the device: time and date first (in the
             # agent's timezone), then grades, chemistry, physics, statistics, number
