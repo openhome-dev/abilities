@@ -22,14 +22,16 @@ EXIT_PATTERN = re.compile(
     re.IGNORECASE,
 )
 
-HOTWORDS = (
-    "hello",
-    "hi",
-    "start tour",
-    "begin tour",
-    "property pro",
-    "propertypro",
-    "showing tour",
+# In-tour restart phrases only -- NOT used to invoke the ability. Invocation is the
+# dashboard's job (trigger words are configured there, not in code); this is purely
+# for _is_restart() below, deciding mid-conversation whether the visitor just said
+# "start over" versus asking a real question. Word-boundary matched, same as
+# EXIT_PATTERN above -- a plain substring check on "hi" previously matched "this",
+# "which", and any other word containing it, so "is this room big?" mid-tour reset
+# the showing back to the foyer instead of answering.
+RESTART_PATTERN = re.compile(
+    r"\b(hello|hi|start tour|begin tour|property pro|propertypro|showing tour)\b",
+    re.IGNORECASE,
 )
 
 CLASSIFY_PROMPT = """Classify this showing-tour visitor utterance.
@@ -253,10 +255,6 @@ class PropertyProCapability(MatchingCapability):
 
     # {{register capability}}
 
-    def does_match(self, text: str) -> bool:
-        t = (text or "").lower().strip()
-        return any(hw in t for hw in HOTWORDS)
-
     def call(self, worker: AgentWorker):
         self.worker = worker
         self.capability_worker = CapabilityWorker(self.worker)
@@ -298,8 +296,7 @@ class PropertyProCapability(MatchingCapability):
         return bool(EXIT_PATTERN.search(text or ""))
 
     def _is_restart(self, text: str) -> bool:
-        t = (text or "").lower().strip()
-        return any(hw in t for hw in HOTWORDS)
+        return bool(RESTART_PATTERN.search(text or ""))
 
     async def _tour_loop(self):
         """run one showing until idle, exit words, or classified exit."""

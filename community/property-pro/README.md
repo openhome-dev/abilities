@@ -150,14 +150,13 @@ Email and Twilio sends are **not** wired yet. Contact asks speak the listing age
 ```
 community/property-pro/
 ├── README.md
-├── .gitignore
 ├── main.py
 ├── fair_housing.md
 ├── fixtures/LISTINGS.md
 └── fixtures/listings/*.md
 ```
 
-Runtime (gitignored): `propertypro_prefs.json`, `tour_questions.md`, `knowledge_gaps.json`
+Runtime files, written by the ability, not committed: `propertypro_prefs.json`, `tour_questions.md`, `knowledge_gaps.json`
 
 ---
 
