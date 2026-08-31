@@ -22,6 +22,19 @@ EXIT_PATTERN = re.compile(
     re.IGNORECASE,
 )
 
+# Room-navigation verbs. Word-boundary matched, not substring: a bare "back" in t
+# matched inside "backyard" and "background", so "is there a backyard?" -- one of
+# the most likely questions on any showing -- silently navigated the tour backward
+# instead of answering. Same class of bug as RESTART_PATTERN below.
+#
+# "next" still has one residual ambiguity this can't resolve with a plain pattern:
+# it's both the navigation command and an ordinary preposition ("next to the
+# park", "next door"), so "is the yard next to a park" is still read as
+# navigation. Narrowing further would need real intent understanding, not a
+# regex; flagged here rather than silently left as a solved problem.
+NEXT_ROOM_PATTERN = re.compile(r"\b(next|continue)\b", re.IGNORECASE)
+BACK_ROOM_PATTERN = re.compile(r"\b(back|previous)\b", re.IGNORECASE)
+
 # In-tour restart phrases only -- NOT used to invoke the ability. Invocation is the
 # dashboard's job (trigger words are configured there, not in code); this is purely
 # for _is_restart() below, deciding mid-conversation whether the visitor just said
@@ -545,9 +558,9 @@ class PropertyProCapability(MatchingCapability):
     def _match_room_nav(self, t: str) -> int | None:
         """return new room index or None if not navigation."""
         order = self.listing.get("tour_order") or []
-        if "next" in t or "continue" in t:
+        if NEXT_ROOM_PATTERN.search(t):
             return min(self.room_index + 1, max(len(order) - 1, 0))
-        if "back" in t or "previous" in t:
+        if BACK_ROOM_PATTERN.search(t):
             return max(self.room_index - 1, 0)
         for i, room_id in enumerate(order):
             label = room_id.replace("_", " ")

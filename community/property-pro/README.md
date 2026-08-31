@@ -85,15 +85,15 @@ A `fair_housing.md` knowledge base ships with the ability. This is product guard
 
 ---
 
-## Mock listings (testing)
+## Mock listing (testing)
 
 | ID | Property | Why it exists |
 | --- | --- | --- |
 | `1420-maple-richmond` | Full craftsman SFH | Happy-path tour with systems + inclusions |
-| `88-canal-loft-richmond` | Condo + HOA | Fees, inclusions, no school assignment |
-| `7-pine-sparse-chesterfield` | Thin ranch packet | Forces question logging + contact demos |
 
-Packets live under [`fixtures/listings/`](fixtures/listings/). Index: [`fixtures/LISTINGS.md`](fixtures/LISTINGS.md).
+Packet lives under [`fixtures/listings/`](fixtures/listings/). There's no voice command to
+switch which listing is active -- it's read once from `propertypro_prefs.json` at startup
+-- so only the one listing an install actually tours is included here.
 
 ---
 
@@ -107,7 +107,7 @@ Push or install PropertyPro and set dashboard triggers to at least:
 
 ### 2. Active listing
 
-Default: `1420-maple-richmond`. To switch fixtures, set `active_listing_id` in `propertypro_prefs.json` (created on first run), e.g. `88-canal-loft-richmond` or `7-pine-sparse-chesterfield`.
+The only listing shipped is `1420-maple-richmond`, set as `active_listing_id` in `propertypro_prefs.json` on first run. Add more fixtures under `fixtures/listings/` and edit that file to tour a different one -- there's no voice command for it yet.
 
 ### 3. Contact / delivery (Stage 1)
 
@@ -152,7 +152,6 @@ community/property-pro/
 ├── README.md
 ├── main.py
 ├── fair_housing.md
-├── fixtures/LISTINGS.md
 └── fixtures/listings/*.md
 ```
 
