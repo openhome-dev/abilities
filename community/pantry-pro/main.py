@@ -15,18 +15,6 @@ STORAGE_FILE = "pantrypro_inventory.json"
 MEALDB = "https://www.themealdb.com/api/json/v1/1"
 API_TIMEOUT = 10
 
-HOTWORDS = (
-    "pantry", "pantry pro", "pantrypro", "pantry assistant",
-    "what's in the fridge", "whats in the fridge",
-    "what's in my fridge", "whats in my fridge",
-    "what's in the pantry", "whats in the pantry",
-    "check the fridge", "check the pantry",
-    "food inventory", "what's expiring", "whats expiring",
-    "expiring soon", "use it up", "what can i cook",
-    "what can I cook", "recipe ideas", "grocery run",
-    "shopping list", "add to the pantry", "add to the fridge",
-)
-
 CANCEL_PHRASES = ("never mind", "cancel", "forget it", "skip")
 
 YES_WORDS = ("yes", "yeah", "yep", "sure", "ok", "okay", "please", "do it", "yup")
@@ -210,10 +198,6 @@ class PantryProCapability(MatchingCapability):
 
     # do not change following tag of register capability
     # {{register capability}}
-
-    def does_match(self, text: str) -> bool:
-        t = (text or "").lower()
-        return any(hw in t for hw in HOTWORDS)
 
     def call(self, worker: AgentWorker):
         self.worker = worker
