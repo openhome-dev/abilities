@@ -31,16 +31,26 @@ CANCEL_PHRASES = ("never mind", "cancel", "forget it", "skip")
 
 YES_WORDS = ("yes", "yeah", "yep", "sure", "ok", "okay", "please", "do it", "yup")
 
+FULL_LIST_PHRASES = (
+    "whole list", "full list", "entire list", "complete list",
+    "all of them", "all of it", "all items", "everything",
+    "the rest", "what's left", "whats left", "read them all",
+    "list them all", "every item", "don't truncate", "dont truncate",
+    "instead of", "no more", "not four more", "not 4 more",
+)
+
 INTENT_PROMPT = """Classify this pantry command. Today is {today}.
 Return ONLY JSON in this exact shape:
-{{"intent":"<intent>","items":[{{"name":"","qty":1,"unit":"","location":"","expires":""}}],"location_filter":"all"}}
+{{"intent":"<intent>","items":[{{"name":"","qty":1,"unit":"","location":"","expires":""}}],"location_filter":"all","full_list":false}}
 
 intents:
 - add — putting food into the pantry, fridge, or freezer
 - used — finished / threw out / used the last of something (restock later)
 - remove — stop tracking an item without restocking
 - list — hear what's in stock
-- expiring — what's going bad soon
+- expiring — what's going bad soon across the pantry (no specific item)
+- item_date — ask when a specific item expires / what date is on it
+  (e.g. "when does the ground beef expire", "what's the date on the milk")
 - recipes — meal ideas from current stock
 - shop_add — put items on the shopping list
 - shop_read — hear the shopping list
@@ -57,8 +67,12 @@ rules:
 - expires is YYYY-MM-DD if a date can be inferred, else empty
 - qty is a number (default 1). unit is optional (cans, gallons, leftovers)
 - location_filter is pantry, fridge, freezer, or all
+- full_list is true when the user wants the complete inventory read aloud
+  (whole list, full list, all items, everything, the rest, stop saying N more)
+- for item_date, put the named item in items
 - for list/expiring/recipes/exit/unknown, items may be empty
 - split multiples: "milk and eggs" → two items
+- "when does X expire" / "expiry date for X" / "tell me the date that X expires" → item_date, not expiring
 
 user said: "{input}"
 """
@@ -162,6 +176,18 @@ def _join_and(parts: list) -> str:
     if len(parts) == 2:
         return f"{parts[0]} and {parts[1]}"
     return ", ".join(parts[:-1]) + f", and {parts[-1]}"
+
+
+def _wants_full_list(text: str) -> bool:
+    lower = (text or "").lower()
+    if any(p in lower for p in FULL_LIST_PHRASES):
+        return True
+    # "give me all of them" / "read all eight"
+    if "all" in lower.split() and any(
+        w in lower for w in ("list", "item", "items", "them", "stock", "pantry", "fridge")
+    ):
+        return True
+    return False
 
 
 def _format_days(days: int) -> str:
@@ -382,8 +408,47 @@ class PantryProCapability(MatchingCapability):
         result.setdefault("intent", "unknown")
         result.setdefault("items", [])
         result.setdefault("location_filter", "all")
+        result.setdefault("full_list", False)
         if not isinstance(result["items"], list):
             result["items"] = []
+        return result
+
+    def _looks_like_item_date(self, text: str) -> bool:
+        lower = (text or "").lower()
+        asks_when = any(
+            p in lower
+            for p in (
+                "when does", "when do", "what date", "the date",
+                "expiry", "expiration", "best by", "use by",
+            )
+        )
+        mentions_expire = any(
+            p in lower for p in ("expire", "expires", "expiry", "expiration", "date")
+        )
+        return asks_when and mentions_expire
+
+    def _refine_result(self, result: dict, user_input: str) -> dict:
+        # fix common misroutes before dispatch
+        intent = (result.get("intent") or "unknown").lower()
+        if intent == "list" and _wants_full_list(user_input):
+            result["full_list"] = True
+
+        if self._looks_like_item_date(user_input) and intent in (
+            "expiring", "unknown", "list", "tips",
+        ):
+            result["intent"] = "item_date"
+            if not any((s.get("name") or "").strip() for s in (result.get("items") or [])):
+                # match a stocked item named in the utterance
+                lower = user_input.lower()
+                hits = []
+                for item in self.data.get("items") or []:
+                    name = _norm(item.get("name", ""))
+                    if name and name in lower:
+                        hits.append(name)
+                if hits:
+                    # longest name wins (ground beef over beef)
+                    hits.sort(key=len, reverse=True)
+                    result["items"] = [{"name": hits[0], "qty": 1, "unit": "", "location": "", "expires": ""}]
         return result
 
     # mutations
@@ -543,7 +608,7 @@ class PantryProCapability(MatchingCapability):
 
     # speak helpers
 
-    def _list_speech(self, location_filter: str = "all") -> str:
+    def _list_speech(self, location_filter: str = "all", *, full: bool = False) -> str:
         items = self.data.get("items", [])
         if location_filter in ("pantry", "fridge", "freezer"):
             items = [i for i in items if i.get("location") == location_filter]
@@ -559,19 +624,96 @@ class PantryProCapability(MatchingCapability):
 
         if location_filter in by_loc:
             names = by_loc[location_filter]
-            extra = f" and {len(names) - 5} more" if len(names) > 5 else ""
+            if full or len(names) <= 5:
+                return f"In the {location_filter}: {_join_and(names)}."
             shown = names[:5]
-            return f"In the {location_filter}: {_join_and(shown)}{extra}."
+            rest = len(names) - 5
+            return (
+                f"In the {location_filter}: {_join_and(shown)}. "
+                f"Plus {rest} more — want the whole list?"
+            )
+
+        total = len(items)
+        if full:
+            chunks = []
+            for loc in ("fridge", "pantry", "freezer"):
+                names = by_loc.get(loc) or []
+                if names:
+                    chunks.append(f"{loc}: {_join_and(names)}")
+            return f"{total} items. " + ". ".join(chunks) + "."
 
         chunks = []
-        total = len(items)
+        truncated = False
         for loc in ("fridge", "pantry", "freezer"):
             names = by_loc.get(loc) or []
             if not names:
                 continue
-            extra = f" and {len(names) - 4} more" if len(names) > 4 else ""
-            chunks.append(f"{loc} has {_join_and(names[:4])}{extra}")
-        return f"{total} items. " + ". ".join(chunks) + "."
+            if len(names) > 4:
+                truncated = True
+                chunks.append(f"{loc} has {_join_and(names[:4])}")
+            else:
+                chunks.append(f"{loc} has {_join_and(names)}")
+        speech = f"{total} items. " + ". ".join(chunks) + "."
+        if truncated:
+            speech += " Want the whole list?"
+        return speech
+
+    def _spoken_date(self, expires: str) -> str:
+        try:
+            exp = datetime.strptime(expires[:10], "%Y-%m-%d").date()
+            return f"{exp.strftime('%B')} {exp.day}, {exp.year}"
+        except Exception:
+            return expires
+
+    def _should_ask_expiry(self, name: str, location: str) -> bool:
+        # ask dates for fridge/freezer and obvious perishables; skip dry goods
+        loc = (location or "").lower()
+        n = _norm(name)
+        if loc in ("fridge", "freezer"):
+            return True
+        perishable = (
+            "milk", "cream", "yogurt", "cheese", "butter", "egg",
+            "beef", "chicken", "pork", "turkey", "fish", "salmon", "shrimp",
+            "meat", "leftover", "deli", "ham", "bacon", "sausage",
+            "spinach", "lettuce", "berries", "strawberry", "tofu",
+        )
+        shelf_stable = (
+            "pasta", "spaghetti", "rice", "bean", "sauce", "flour", "sugar",
+            "oil", "vinegar", "cereal", "oat", "spice", "salt", "pepper",
+            "can", "canned", "broth", "stock", "honey", "peanut butter",
+        )
+        if any(p in n for p in perishable):
+            return True
+        if any(s in n for s in shelf_stable):
+            return False
+        return False
+
+    def _item_expiry_speech(self, specs: list) -> str:
+        parts = []
+        for spec in specs:
+            name = (spec.get("name") or "").strip()
+            if not name:
+                continue
+            item = self._find_item(name, fuzzy=True)
+            if not item:
+                parts.append(f"I don't have {_norm(name)} tracked.")
+                continue
+            label = item.get("name", name)
+            expires = item.get("expires") or ""
+            if not expires:
+                parts.append(f"No expiry date set for {label}.")
+                continue
+            days = self._days_until(expires)
+            spoken = self._spoken_date(expires)
+            if days < 0:
+                parts.append(f"{label} expired on {spoken}.")
+            elif days == 0:
+                parts.append(f"{label} expires today — {spoken}.")
+            else:
+                parts.append(
+                    f"{label} expires {spoken} — that's {_format_days(days)}."
+                )
+        return " ".join(parts) or "Which item's expiry date do you want?"
 
     def _expiring_speech(self) -> str:
         due = self._expiring(5)
@@ -610,16 +752,23 @@ class PantryProCapability(MatchingCapability):
                 continue
             added.append(name)
             item = self._find_item(name, (spec.get("location") or ""))
-            if item and not item.get("expires"):
+            if not item or item.get("expires"):
+                continue
+            loc = item.get("location") or (spec.get("location") or "")
+            if self._should_ask_expiry(name, loc):
                 needs_date.append(name)
         if not added:
             return "I didn't catch what to add. Try 'add milk to the fridge, expires Friday'."
         warn = await self._persist()
         msg = f"Added {_join_and(added)}."
         if needs_date:
-            self.pending = {"type": "expiry", "names": needs_date}
-            first = needs_date[0]
-            msg += f" When does the {first} expire? Say a date, or skip."
+            # ask one item at a time — never apply one date to the whole batch
+            self.pending = {
+                "type": "expiry",
+                "name": needs_date[0],
+                "remaining": needs_date[1:],
+            }
+            msg += f" When does the {needs_date[0]} expire? Say a date, or skip."
         return msg + warn
 
     async def _handle_used(self, specs: list) -> str:
@@ -773,8 +922,17 @@ class PantryProCapability(MatchingCapability):
         if intent == "remove":
             return await self._handle_remove(specs)
         if intent == "list":
-            return self._list_speech(loc)
+            full = bool(result.get("full_list"))
+            speech = self._list_speech(loc, full=full)
+            if not full and "want the whole list" in speech.lower():
+                self.pending = {"type": "list_full", "location_filter": loc}
+            return speech
+        if intent == "item_date":
+            return self._item_expiry_speech(specs)
         if intent == "expiring":
+            # "when does the milk expire" sometimes lands here with an item name
+            if any((s.get("name") or "").strip() for s in specs):
+                return self._item_expiry_speech(specs)
             return self._expiring_speech()
         if intent == "recipes":
             return await self._handle_recipes()
@@ -816,27 +974,64 @@ class PantryProCapability(MatchingCapability):
 
         ptype = pending.get("type")
 
+        if ptype == "list_full":
+            loc = pending.get("location_filter") or "all"
+            if self._is_yes(user_input) or _wants_full_list(user_input):
+                self.pending = None
+                return self._list_speech(loc, full=True)
+            if self._is_no(user_input):
+                self.pending = None
+                return "Okay."
+            self.pending = None
+            return ""
+
         if ptype == "expiry":
-            names = pending.get("names") or []
+            name = pending.get("name") or ""
+            remaining = list(pending.get("remaining") or [])
+
             if self._is_yes(user_input) or "skip" in user_input.lower():
+                if remaining:
+                    self.pending = {
+                        "type": "expiry",
+                        "name": remaining[0],
+                        "remaining": remaining[1:],
+                    }
+                    return (
+                        f"Okay, no date for {name}. "
+                        f"When does the {remaining[0]} expire? Say a date, or skip."
+                    )
                 self.pending = None
                 return "Got it, no date. Anything else?"
+
             raw = self.capability_worker.text_to_text_response(
                 f"Today is {self._today().isoformat()}. Extract an expiry date as YYYY-MM-DD "
-                f"from: '{user_input}'. Return ONLY the date or UNKNOWN.",
+                f"from: '{user_input}'. "
+                "If only a month and year are given, use the first day of that month. "
+                "Return ONLY the date or UNKNOWN.",
                 system_prompt="return only a date or UNKNOWN.",
             )
             date = (raw or "").strip()[:10]
             if not re.match(r"^\d{4}-\d{2}-\d{2}$", date):
                 return "I didn't catch the date. Try 'next Friday' or say skip."
-            for name in names:
-                item = self._find_item(name, fuzzy=True)
-                if item:
-                    item["expires"] = date
+
+            item = self._find_item(name, fuzzy=True)
+            if item:
+                item["expires"] = date
             warn = await self._persist()
+            spoken = self._spoken_date(date)
+            if remaining:
+                self.pending = {
+                    "type": "expiry",
+                    "name": remaining[0],
+                    "remaining": remaining[1:],
+                }
+                return (
+                    f"Set {name} to expire {spoken}. "
+                    f"When does the {remaining[0]} expire? Say a date, or skip."
+                    + warn
+                )
             self.pending = None
-            label = _join_and(names)
-            return f"Set {label} to expire {date}. Anything else?" + warn
+            return f"Set {name} to expire {spoken}. Anything else?" + warn
 
         if ptype == "shop_used":
             names = pending.get("names") or []
@@ -961,7 +1156,7 @@ class PantryProCapability(MatchingCapability):
 
             handled_up_front = False
             if trigger and not self._is_generic_trigger(trigger) and not self._is_exit(trigger):
-                result = self.classify(trigger)
+                result = self._refine_result(self.classify(trigger), trigger)
                 intent = (result.get("intent") or "unknown").lower()
                 if intent not in ("unknown", "exit", ""):
                     reply = await self._dispatch(result)
@@ -1008,8 +1203,11 @@ class PantryProCapability(MatchingCapability):
                         await self.capability_worker.speak(self._signoff())
                         break
 
-                    result = self.classify(user_input)
-                    self._log(f"intent={result.get('intent')} items={result.get('items')}")
+                    result = self._refine_result(self.classify(user_input), user_input)
+                    self._log(
+                        f"intent={result.get('intent')} items={result.get('items')} "
+                        f"full_list={result.get('full_list')}"
+                    )
                     reply = await self._dispatch(result)
                     if reply == "__exit__":
                         await self.capability_worker.speak(self._signoff())
