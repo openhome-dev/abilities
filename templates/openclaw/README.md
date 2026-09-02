@@ -35,6 +35,12 @@ handler. Its built-in **`openclaw`** handler detects your running OpenClaw gatew
 forwards tasks to it. This ability sends its request to that handler and speaks the
 reply.
 
+The bridge holds a single persistent connection to OpenClaw's Gateway for as long as
+it's running, rather than starting OpenClaw fresh for every command. Requests share a
+session, so OpenClaw retains context across calls the same way the `hermes` handler
+retains context across turns: no per-command cold start, and no need to repeat context
+you've already given it.
+
 ---
 
 ## Setup
@@ -159,7 +165,12 @@ response = await self.capability_worker.exec_local_command(json.dumps(payload), 
   `openhome local stop && openhome local start`.
 - **"Local Link isn't connected":** the bridge isn't running (`openhome local start`),
   or you're logged out (`openhome login`).
-- **Tasks time out:** raise the timeout in the payload, and watch `openhome local logs`.
+- **Tasks time out:** OpenClaw requests already get an automatic 120-second floor,
+  regardless of the timeout you pass, so this is rarely a plain timeout issue,
+  commands with several tool calls can genuinely take a while. If a request does
+  time out, it's properly cancelled on the Gateway side rather than just abandoned
+  locally. Watch `openhome local logs` for what actually happened, and raise the
+  timeout further only if you're seeing genuinely longer runs.
 
 ---
 
