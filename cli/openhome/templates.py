@@ -9,17 +9,20 @@ uploaded here — that's :func:`openhome.abilities` territory.
 
 from __future__ import annotations
 
+import json
 import re
 import shutil
 from dataclasses import dataclass
 from pathlib import Path
 
+from .abilities import VALID_CATEGORIES
 from .errors import OpenHomeError
 
 # Locate the repo root (…/abilities) relative to this file: cli/openhome/templates.py
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 TEMPLATES_DIR = _REPO_ROOT / "templates"
 OFFICIAL_DIR = _REPO_ROOT / "official"
+CATEGORIES_FILE = TEMPLATES_DIR / "categories.json"
 
 _NAME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9-]*$")
 
@@ -87,6 +90,11 @@ def promote_to_community(name: str, *, overwrite: bool = False) -> Path:
     return dest
 
 
+# background_daemon abilities run as a persistent process, not a per-request
+# main.py - background.py is their entry point instead.
+_ENTRY_POINT_FILES = ("main.py", "background.py")
+
+
 def list_templates() -> list[Template]:
     """All available starting points: ``templates/*`` plus ``official/*`` examples."""
     found: list[Template] = []
@@ -94,9 +102,26 @@ def list_templates() -> list[Template]:
         if not base.is_dir():
             continue
         for child in sorted(base.iterdir()):
-            if child.is_dir() and (child / "main.py").is_file():
+            if child.is_dir() and any((child / f).is_file() for f in _ENTRY_POINT_FILES):
                 found.append(Template(name=child.name, path=child, source=source))
     return found
+
+
+def template_category(template_name: str) -> str | None:
+    """The marketplace category abilities from this template belong to, or None.
+
+    Read from ``templates/categories.json`` so the category doesn't have to be
+    guessed when creating an ability. Returns None when the template isn't
+    listed, or the file is missing or unreadable, leaving the caller's default
+    in place.
+    """
+    try:
+        with open(CATEGORIES_FILE, encoding="utf-8") as f:
+            categories = json.load(f)
+    except (OSError, ValueError):
+        return None
+    category = categories.get(template_name)
+    return category if category in VALID_CATEGORIES else None
 
 
 def find_template(name: str) -> Template:
@@ -152,7 +177,11 @@ def create_from_template(
         shutil.rmtree(target)
 
     shutil.copytree(tpl.path, target)
-    _rename_capability_class(target / "main.py", name)
+    entry_point = next(
+        (target / f for f in _ENTRY_POINT_FILES if (target / f).is_file()), None
+    )
+    if entry_point:
+        _rename_capability_class(entry_point, name)
     return target
 
 
