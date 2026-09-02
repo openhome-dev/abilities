@@ -161,12 +161,15 @@ class OpenHomeClient:
         commit: bool = False,
         message: str = "",
         capability_id: str | None = None,
+        category: str | None = None,
     ) -> dict:
         """Update an existing ability's code **in place** (keeps the capability_id).
 
         Resolves the ability's current release from its manifest/account, uploads
         a flat zip to ``validate/release-code``, and refreshes the local manifest.
         Use ``commit=True`` + ``message`` to commit a version (default saves a draft).
+        Pass ``category`` to also change the marketplace category; left untouched
+        when omitted.
         """
         folder = Path(folder)
         manifest = _workspace.read_manifest(folder)
@@ -205,6 +208,15 @@ class OpenHomeClient:
             }
         )
         _workspace.write_manifest(folder, manifest)
+
+        # Category is separate metadata from the code release, so it's its own
+        # request. Done last, and only when asked: the code is already saved by
+        # this point, so a metadata failure must not fail the whole push.
+        if category is not None:
+            _abilities.set_category(self.transport, cap_id, category)
+            manifest["category"] = category
+            _workspace.write_manifest(folder, manifest)
+
         return result
 
     def list_abilities(self) -> list[Ability]:

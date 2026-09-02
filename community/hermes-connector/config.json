@@ -1,0 +1,16 @@
+{
+  "unique_name": "hermesconnector",
+  "description": "Sends your question to your own Hermes AI agent through Local Link and speaks back its answer. Needs `openhome local start` running and Hermes installed and set up.",
+  "category": "local",
+  "matching_hotwords": [
+    "talk to hermes",
+    "hermes agent",
+    "relay to hermes",
+    "hermes relay",
+    "forward to hermes",
+    "ask my agent",
+    "tell my agent",
+    "my agent",
+    "call hermes"
+  ]
+}

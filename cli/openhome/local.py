@@ -1,38 +1,7 @@
-"""OpenHome Local Link — a persistent WebSocket worker on the user's machine.
-
-It connects to the user's OpenHome agent, receives requests, runs each against a
-local agent (raw shell, Hermes, or OpenClaw), and returns the reply.
-
-Exposed through ``openhome local``:
-
-    openhome local start     start Local Link in the background
-    openhome local stop      stop it
-    openhome local status    is it running?
-    openhome local logs      stream requests and responses (Ctrl-C to stop)
-    openhome local run       run in the foreground (debugging)
-
-Message contract (over ``/ws/local_link/``), all JSON text frames. Requests
-arrive from the SDK as {"type":"command","data":{"cmd": <string>}}; our protocol
-is JSON-encoded inside that cmd string:
-
-    inbound  cmd = '{"type":"discover"}'
-             cmd = '{"type":"command","target":"<agent>","data":"<text>","timeout":<s>}'
-             cmd = '<raw shell command>'        plain string -> local-link, legacy
-             {"type":"ping"}
-
-    outbound {"type":"response","data":{"os","agents","unavailable"}}
-             {"type":"response","data":{"status":"ok","data":"<text>","target"}}
-             {"type":"response","data":{"status":"error","error":"<why>","target"}}
-             {"type":"pong"}
-
-Detection and invocation go through each tool's own commands to stay
-cross-platform. The local-link agent is a raw shell executor — first-class on
-macOS/Linux, best-effort on Windows.
-"""
-
 from __future__ import annotations
 
 import asyncio
+import concurrent.futures
 import json
 import logging
 import logging.handlers
@@ -42,9 +11,11 @@ import shutil
 import signal
 import subprocess
 import sys
+import threading
 import time
+import uuid
 from pathlib import Path
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlparse
 
 from .config import CONFIG_DIR, Config
 
@@ -54,7 +25,8 @@ LOG_FILE = LOCAL_DIR / "local.log"
 
 log = logging.getLogger("openhome.local")
 MAX_LOG_CHARS = 400
-DETECT_TIMEOUT = 5.0
+IS_WINDOWS = platform.system() == "Windows"
+DETECT_TIMEOUT = 20.0 if IS_WINDOWS else 5.0  # node/CLI cold-start is slower on Windows
 
 # Agent readiness.
 READY = "ready"          # installed and usable now
@@ -62,19 +34,437 @@ NOT_READY = "not_ready"  # installed but can't serve yet (needs an action)
 ABSENT = "absent"        # not installed
 
 
+# ── Hermes ACP transport ─────────────────────────────────────────────────────
+# Hermes is driven over ACP (Agent Client Protocol) instead of a cold
+# `hermes -z` per turn. One `hermes acp` process is spawned at startup and held
+# warm; each request reuses it, so Hermes keeps its prompt cache, memory, and
+# session context across turns. The utterance is sent as a structured ACP field
+# (not a shell arg), so nothing is shell-interpreted.
+#
+# A dedicated asyncio loop runs in a background thread and owns the connection;
+# the synchronous agent-run path submits work to it and blocks for the reply,
+# matching the existing run_backend contract.
+
+_acp = {
+    "thread": None,     # background thread running the asyncio loop
+    "loop": None,       # that thread's event loop
+    "conn": None,       # ClientSideConnection to hermes acp
+    "proc": None,       # the hermes acp subprocess
+    "session_id": None, # the warm ACP session
+    "ready": False,     # handshake completed
+    "error": None,      # last startup error (for detection hint)
+    "hinted": False,    # whether the voice-brevity hint has been sent yet
+}
+
+
+def _acp_available() -> bool:
+    """True if the `agent-client-protocol` package is importable."""
+    try:
+        import acp  # noqa: F401
+        return True
+    except Exception:
+        return False
+
+
+def _acp_text_of(update) -> str | None:
+    """Pull spoken-reply text out of a session_update payload. Only
+    agent_message_chunk is the actual answer; agent_thought_chunk is Hermes's
+    internal reasoning and must NOT be spoken/returned."""
+    if getattr(update, "session_update", None) != "agent_message_chunk":
+        return None
+    content = getattr(update, "content", None)
+    if content is not None:
+        text = getattr(content, "text", None)
+        if isinstance(text, str):
+            return text
+    return None
+
+
+def _acp_extract_reply(prompt_response, collected_text) -> str:
+    """Pull speakable text from a prompt round-trip: prefer text streamed via
+    session_update; fall back to any text on the PromptResponse.
+
+    Streamed agent_message_chunk fragments are raw substrings of one flowing
+    message (verified against real Hermes output, e.g. one chunk was literally
+    ') was:\\n\\n' with its own embedded newline) - they must be concatenated
+    directly with NO separator. Joining with '\\n' would insert a spurious
+    newline between every token.
+    """
+    text = "".join(t for t in collected_text if t).strip()
+    if text:
+        return text
+    for attr in ("content", "text", "stop_reason"):
+        val = getattr(prompt_response, attr, None)
+        if isinstance(val, str) and val.strip():
+            return val.strip()
+    return "(no response)"
+
+
+async def _spawn_hermes_acp(binary: str, env: dict):
+    """Spawn `hermes acp` as a long-lived subprocess, Windows-safe.
+
+    On Windows, `binary` may resolve to a `.cmd`/`.bat` shim (needs the shell
+    to run at all - the same WinError 193 class of issue `_run` works around
+    for sync calls) or a native `.exe` (the common case, since Hermes is
+    normally pip/uv-installed with a real launcher stub - but we can't be
+    certain across every install method, so handle both). Runs in its own
+    process group on Windows so it can be cleanly torn down as a unit.
+    """
+    kw = dict(
+        stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE, env=env,
+    )
+    if IS_WINDOWS:
+        kw["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
+        if os.path.splitext(binary)[1].lower() in (".cmd", ".bat"):
+            cmdline = subprocess.list2cmdline([binary, "acp"])
+            return await asyncio.create_subprocess_shell(cmdline, **kw)
+    return await asyncio.create_subprocess_exec(binary, "acp", **kw)
+
+
+async def _acp_start(timeout: float) -> None:
+    """Spawn `hermes acp`, run initialize -> new_session, hold the connection."""
+    import acp
+    from acp import Client, connect_to_agent
+    from acp.meta import PROTOCOL_VERSION
+    from acp.schema import RequestPermissionResponse, DeniedOutcome, AllowedOutcome
+
+    collected: list[str] = []
+    kind_counts: dict[str, int] = {}
+
+    class _LocalLinkClient(Client):
+        # NOTE: the acp library invokes these with keyword arguments matching
+        # its Client protocol (session_id=..., update=..., etc.) - NOT a single
+        # `params` object. Signatures below match acp.interfaces.Client exactly.
+
+        async def session_update(self, session_id, update, **kwargs):
+            kind = getattr(update, "session_update", type(update).__name__)
+            kind_counts[kind] = kind_counts.get(kind, 0) + 1
+            text = _acp_text_of(update)
+            if text:
+                collected.append(text)
+
+        async def request_permission(self, session_id, tool_call, options, **kwargs):
+            # TODO(voice-approvals): forward to the ability and map the spoken
+            # answer onto allow_once / allow_session / deny. Until that lands we
+            # fail safe by denying (matching ACP's own timeout/error behavior).
+            #
+            # Logged at INFO (not DEBUG): this has never fired in testing yet,
+            # so when it does we want the real payload visible by default to
+            # learn its actual shape (the wire schema has no "allow_session"
+            # kind - only allow_once/allow_always/reject_once/reject_always -
+            # so "Allow for session" apparently surfaces via option_id/name,
+            # not kind; we don't yet know its exact string).
+            tool_name = getattr(tool_call, "title", None) or getattr(tool_call, "tool_call_id", "?")
+            opts_desc = [(getattr(o, "option_id", "?"), getattr(o, "name", "?"), getattr(o, "kind", "?"))
+                         for o in options]
+            log.info("Hermes ACP permission request: tool=%r options=%r", tool_name, opts_desc)
+            reject = next((o for o in options if getattr(o, "kind", "") == "reject_once"), None)
+            if reject is not None:
+                log.info("Hermes ACP permission: denying (option_id=%s)", reject.option_id)
+                return RequestPermissionResponse(
+                    outcome=AllowedOutcome(outcome="selected", option_id=reject.option_id))
+            log.warning("Hermes ACP permission: no reject_once option offered; denying via cancelled outcome")
+            return RequestPermissionResponse(outcome=DeniedOutcome(outcome="cancelled"))
+
+        async def write_text_file(self, session_id, path, content, **kwargs):
+            log.debug("acp write_text_file (ignored): %s", path)
+            return None
+
+        async def read_text_file(self, session_id, path, line=None, limit=None, **kwargs):
+            log.debug("acp read_text_file (ignored): %s", path)
+            from acp.schema import ReadTextFileResponse
+            return ReadTextFileResponse(content="")
+
+    env = dict(os.environ)
+    env["HERMES_ACP_SKIP_CONFIGURED_MCP"] = "1"
+    binary = which("hermes") or "hermes"
+    proc = await _spawn_hermes_acp(binary, env)
+    _acp["proc"] = proc
+    _acp["_collected"] = collected
+    _acp["_kind_counts"] = kind_counts
+
+    async def _drain_stderr():
+        while True:
+            line = await proc.stderr.readline()
+            if not line:
+                break
+            log.debug("hermes-acp: %s", line.decode(errors="replace").rstrip())
+    asyncio.ensure_future(_drain_stderr())
+
+    conn = connect_to_agent(_LocalLinkClient(), proc.stdin, proc.stdout)
+    init_resp = await asyncio.wait_for(conn.initialize(protocol_version=PROTOCOL_VERSION), timeout)
+    log.debug("acp initialize response: %r", init_resp)
+    sess = await asyncio.wait_for(conn.new_session(cwd=os.path.expanduser("~")), timeout)
+    log.debug("acp new_session response: %r", sess)
+    if not getattr(sess, "session_id", None):
+        raise RuntimeError(f"new_session returned no session_id: {sess!r}")
+
+    # Explicitly request the safest mode ("default" = ask before edits) rather
+    # than relying on whatever Hermes defaults to. Best-effort: some Hermes
+    # versions may not expose a "default" mode id, so don't fail startup over it.
+    try:
+        modes = getattr(getattr(sess, "modes", None), "available_modes", None) or []
+        if any(getattr(m, "id", None) == "default" for m in modes):
+            await conn.set_session_mode(session_id=sess.session_id, mode_id="default")
+    except Exception as exc:
+        log.debug("acp set_session_mode(default) failed (continuing): %s", exc)
+
+    _acp["conn"] = conn
+    _acp["session_id"] = sess.session_id
+    _acp["ready"] = True
+    log.info("Hermes ACP ready (session=%s)", sess.session_id)
+
+
+def acp_start(timeout: float = 30.0) -> bool:
+    """Spawn and hold the Hermes ACP connection on a background loop. Returns
+    True on success. Safe to call once at worker startup."""
+    if _acp["ready"]:
+        return True
+    if not _acp_available():
+        _acp["error"] = "acp-missing"
+        return False
+
+    loop = asyncio.new_event_loop()
+
+    def _run_loop():
+        asyncio.set_event_loop(loop)
+        loop.run_forever()
+
+    thread = threading.Thread(target=_run_loop, daemon=True, name="hermes-acp")
+    thread.start()
+    _acp["thread"] = thread
+    _acp["loop"] = loop
+
+    fut = asyncio.run_coroutine_threadsafe(_acp_start(timeout), loop)
+    try:
+        fut.result(timeout=timeout + 5)
+        return True
+    except Exception as exc:
+        _acp["error"] = str(exc)
+        log.error("Hermes ACP failed to start: %s", exc)
+        acp_stop()
+        return False
+
+
+async def _acp_shutdown() -> None:
+    """Cancel pending ACP tasks and close the subprocess cleanly, run ON the
+    ACP loop (must happen before the loop is stopped, or asyncio complains
+    about destroyed tasks / a closed event loop on exit)."""
+    proc = _acp.get("proc")
+    if proc is not None:
+        if IS_WINDOWS:
+            # If hermes was spawned via a shell wrapper (.cmd/.bat shim),
+            # proc.terminate() only kills that cmd.exe wrapper, leaving the
+            # real hermes process - and anything IT spawned, e.g. its own
+            # terminal-tool sandboxes - orphaned. taskkill /T kills the whole
+            # process tree given the top PID, which is correct either way.
+            try:
+                killer = await asyncio.create_subprocess_exec(
+                    "taskkill", "/T", "/F", "/PID", str(proc.pid),
+                    stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL,
+                )
+                await asyncio.wait_for(killer.wait(), timeout=5.0)
+            except Exception:
+                try:
+                    proc.terminate()
+                except Exception:
+                    pass
+        else:
+            try:
+                proc.terminate()
+            except Exception:
+                pass
+        try:
+            await asyncio.wait_for(proc.wait(), timeout=3.0)
+        except Exception:
+            try:
+                proc.kill()
+            except Exception:
+                pass
+    current = asyncio.current_task()
+    pending = [t for t in asyncio.all_tasks() if t is not current]
+    for t in pending:
+        t.cancel()
+    if pending:
+        await asyncio.gather(*pending, return_exceptions=True)
+
+
+def acp_stop() -> None:
+    """Tear down the ACP process and its background loop."""
+    loop = _acp.get("loop")
+    if loop is not None and loop.is_running():
+        fut = asyncio.run_coroutine_threadsafe(_acp_shutdown(), loop)
+        try:
+            fut.result(timeout=5.0)
+        except Exception:
+            pass
+        try:
+            loop.call_soon_threadsafe(loop.stop)
+        except Exception:
+            pass
+    thread = _acp.get("thread")
+    if thread is not None:
+        thread.join(timeout=2.0)
+    for k in ("thread", "loop", "conn", "proc", "session_id"):
+        _acp[k] = None
+    _acp["hinted"] = False
+    _acp["ready"] = False
+
+
+# ACP has no session-level "system prompt" field (checked: neither new_session
+# nor prompt() accept one) - the only lever is the prompt content itself. So we
+# prepend this once, on the FIRST turn of each session, to steer Hermes toward
+# short, speakable replies instead of its normal (often long, markdown-heavy,
+# tool-narrating) chat style.
+VOICE_SYSTEM_HINT = (
+    "[You are Hermes Agent, accessed through OpenHome, a voice AI platform. "
+    "This conversation happens over a voice interface - your reply will be "
+    "spoken aloud, not read as text.\n\n"
+    "Respond quickly: give the answer first, don't narrate what you're about "
+    "to do, and don't over-deliberate before acting. Your full tools and "
+    "capabilities remain available - use them whenever they're genuinely "
+    "needed for a correct answer - but skip using a tool just to double-check "
+    "something you're already confident about.\n\n"
+    "Keep replies short and speakable: a few plain sentences, no markdown, "
+    "no bullet lists, no code blocks, no headers. If asked about \"Hermes\" "
+    "or yourself, that's you - answer directly rather than treating it as a "
+    "separate system to consult.]\n\n"
+)
+
+
+def _acp_alive() -> bool:
+    """True if the held ACP subprocess is still running."""
+    proc = _acp.get("proc")
+    if proc is None:
+        return False
+    return proc.returncode is None
+
+
+# One ACP session and one streamed-chunk buffer are shared by all callers, and
+# handle_message dispatches each request on its own thread - so two overlapping
+# hermes requests would interleave into the same buffer and corrupt both
+# replies (verified: both callers got each other's chunks). Serialize them.
+_acp_request_lock = threading.Lock()
+
+
+def run_hermes_acp(data: str, timeout: float) -> str:
+    """Send one utterance over the held ACP connection and return the reply.
+
+    Drop-in runner for the hermes agent (replaces the old ``hermes -z`` path).
+    Requests are serialized: one Hermes turn at a time per worker.
+    """
+    # Wait for any in-flight turn, but don't queue forever - a caller that
+    # can't get the lock in time gets a clean timeout rather than hanging.
+    if not _acp_request_lock.acquire(timeout=timeout):
+        raise TimeoutError("another Hermes request is still running")
+    try:
+        return _run_hermes_acp_locked(data, timeout)
+    finally:
+        _acp_request_lock.release()
+
+
+def _run_hermes_acp_locked(data: str, timeout: float) -> str:
+    """The actual ACP round-trip. Caller must hold _acp_request_lock."""
+    if not _acp["ready"]:
+        # Lazy start if the worker didn't (e.g. first request before startup).
+        if not acp_start(timeout):
+            raise RuntimeError(_acp.get("error") or "Hermes ACP not available")
+    elif not _acp_alive():
+        # The held subprocess died (crash, OOM-kill, user killed it). Without
+        # this, `ready` stays True forever and every later request fails
+        # against a dead connection until someone restarts the whole worker.
+        # Respawn once; a fresh process means a fresh session, so the voice
+        # hint is re-sent and prior conversation context is lost - which is
+        # unavoidable, since ACP sessions live in the process that died.
+        log.warning("Hermes ACP process is gone - restarting it")
+        acp_stop()
+        if not acp_start(timeout):
+            raise RuntimeError(_acp.get("error") or "Hermes ACP could not be restarted")
+
+    from acp import text_block
+
+    collected = _acp.get("_collected")
+    if collected is not None:
+        collected.clear()
+    kind_counts = _acp.get("_kind_counts")
+    if kind_counts is not None:
+        kind_counts.clear()
+
+    session_id = _acp["session_id"]
+    if not _acp.get("hinted"):
+        data = VOICE_SYSTEM_HINT + data
+        _acp["hinted"] = True
+    log.info("Hermes ACP request: %s", shorten(data))
+
+    async def _prompt():
+        conn = _acp["conn"]
+        try:
+            return await asyncio.wait_for(
+                conn.prompt(session_id=session_id, prompt=[text_block(data)]),
+                timeout,
+            )
+        except asyncio.TimeoutError:
+            # Don't just walk away: tell Hermes to actually stop the turn (it
+            # keeps running server-side otherwise, wasting tool calls/tokens
+            # after we've already given up and returned an error upstream).
+            log.warning("Hermes ACP turn exceeded %.0fs - cancelling", timeout)
+            try:
+                await conn.cancel(session_id=session_id)
+            except Exception as exc:
+                log.debug("acp cancel() failed (turn may have already ended): %s", exc)
+            raise
+
+    fut = asyncio.run_coroutine_threadsafe(_prompt(), _acp["loop"])
+    try:
+        resp = fut.result(timeout=timeout + 5)
+    except (TimeoutError, asyncio.TimeoutError, concurrent.futures.TimeoutError):
+        # NOTE: these three are the SAME class as of Python 3.11+, but this
+        # module supports >=3.10 where they are distinct - catch all three
+        # explicitly rather than relying on the 3.11+ unification.
+        # This catches both the inner wait_for timeout (which already
+        # cancelled the turn above) and a genuine outer hang. Use fut.done()
+        # to tell them apart so we don't call cancel() twice for one timeout.
+        if not fut.done():
+            # The coroutine itself never returned even after our extra grace
+            # period - the event loop may be stuck, not just the ACP turn.
+            log.error("Hermes ACP appears unresponsive (event loop did not "
+                      "finish the cancel attempt within the grace period)")
+        raise
+    reply = _acp_extract_reply(resp, collected or [])
+    log.info("Hermes ACP reply (%s, stop=%s): %s",
+              ", ".join(f"{k}={v}" for k, v in (kind_counts or {}).items()) or "no updates",
+              getattr(resp, "stop_reason", "?"), shorten(reply))
+    return reply
+
+
 # ── logging ──────────────────────────────────────────────────────────────────
 def setup_logging(foreground: bool) -> None:
     """Attach a rotating file handler always, plus a screen handler in the
-    foreground. Safe to call more than once."""
+    foreground. Safe to call more than once.
+
+    ``openhome local start`` runs detached (foreground=False) and writes ONLY
+    to the file - there is no screen handler in that case - and
+    ``openhome local logs`` reads directly from this same file. So the file
+    handler's level is what actually controls verbosity for the common
+    start+logs workflow, not just ``openhome local run``. Both default to
+    INFO so hermes-acp's internal chatter (every streamed token, subprocess
+    stderr, plugin registration spam) doesn't drown normal use; set
+    OPENHOME_DEBUG=1 (before ``start`` or ``run``) for full DEBUG detail when
+    troubleshooting.
+    """
     if log.handlers:
         return
     log.setLevel(logging.DEBUG)
     log.propagate = False
+    file_level = logging.DEBUG if os.environ.get("OPENHOME_DEBUG") else logging.INFO
+    screen_level = file_level
 
     LOCAL_DIR.mkdir(parents=True, exist_ok=True, mode=0o700)
     file_handler = logging.handlers.RotatingFileHandler(
         LOG_FILE, maxBytes=1_000_000, backupCount=3, encoding="utf-8"
     )
+    file_handler.setLevel(file_level)
     file_handler.setFormatter(logging.Formatter(
         "%(asctime)s %(levelname)-5s %(message)s", datefmt="%Y-%m-%d %H:%M:%S"
     ))
@@ -84,11 +474,12 @@ def setup_logging(foreground: bool) -> None:
         try:
             import coloredlogs
             coloredlogs.install(
-                level="DEBUG", logger=log,
+                level=screen_level, logger=log,
                 fmt="%(asctime)s %(levelname)-5s %(message)s", datefmt="%H:%M:%S",
             )
         except ImportError:
             screen = logging.StreamHandler()
+            screen.setLevel(screen_level)
             screen.setFormatter(logging.Formatter(
                 "%(asctime)s %(levelname)-5s %(message)s", datefmt="%H:%M:%S"
             ))
@@ -113,15 +504,29 @@ def os_name() -> str:
 def which(name: str) -> str | None:
     """Locate a binary across the places package managers install it. A detached
     worker rarely inherits the user's full interactive PATH (nvm, pnpm, bun,
-    homebrew, ...), so we look beyond ``shutil.which``."""
-    found = shutil.which(name)
-    if found:
-        return found
+    homebrew, ...), so we look beyond ``shutil.which``.
+
+    On Windows, prefer an executable extension (.cmd/.exe/.bat): npm drops both
+    a bare (extensionless, Unix) shim and a .cmd next to each other, and running
+    the bare one raises WinError 193 ("not a valid Win32 application")."""
+    if IS_WINDOWS:
+        for ext in (".cmd", ".exe", ".bat"):
+            found = shutil.which(name + ext)
+            if found:
+                return found
+        found = shutil.which(name)
+        if found and os.path.splitext(found)[1].lower() in (".cmd", ".exe", ".bat"):
+            return found
+    else:
+        found = shutil.which(name)
+        if found:
+            return found
 
     home = os.path.expanduser("~")
     dirs = [
         os.path.join(home, ".npm-global", "bin"),
         os.path.join(home, ".npm", "bin"),
+        os.path.join(home, "AppData", "Roaming", "npm"),
         os.path.join(home, "node_modules", ".bin"),
         os.path.join(home, ".local", "share", "pnpm"),
         os.path.join(home, ".bun", "bin"),
@@ -147,14 +552,34 @@ def which(name: str) -> str | None:
                 dirs.append(os.path.join(base, version, "bin"))
                 dirs.append(os.path.join(base, version, "installation", "bin"))
 
+    # On Windows try executable extensions FIRST (never the bare Unix shim).
+    exts = [".cmd", ".exe", ".bat"] if IS_WINDOWS else [""]
     for directory in dirs:
-        candidate = os.path.join(directory, name)
-        if os.path.isfile(candidate) and os.access(candidate, os.X_OK):
-            return candidate
+        for ext in exts:
+            candidate = os.path.join(directory, name + ext)
+            if os.path.isfile(candidate) and (IS_WINDOWS or os.access(candidate, os.X_OK)):
+                return candidate
     return None
 
 
 # ── agents ───────────────────────────────────────────────────────────────────
+def _run(cmd, **kw):
+    """subprocess.run that runs node/pip .cmd shims correctly on Windows.
+
+    On Windows the bare (extensionless) npm shim raises WinError 193, and
+    ``shell=True`` with a list drops args - so on Windows we resolve the real
+    path via ``which`` and run it through the shell as one properly quoted
+    string. On Mac/Linux this is a transparent passthrough to subprocess.run.
+    """
+    if IS_WINDOWS and isinstance(cmd, (list, tuple)) and cmd:
+        first = str(cmd[0])
+        if not os.path.isabs(first):
+            first = which(cmd[0]) or first
+        cmd = subprocess.list2cmdline([first, *[str(a) for a in cmd[1:]]])
+        kw["shell"] = True
+    return subprocess.run(cmd, **kw)
+
+
 def gateway_running(obj) -> bool | None:
     """Scan an OpenClaw status JSON for a running signal, tolerant of schema
     changes across versions. Returns True/False, or None if nothing recognizable."""
@@ -188,30 +613,103 @@ def gateway_running(obj) -> bool | None:
     return scan(obj)
 
 
-def detect_hermes() -> tuple[str, str]:
-    """Ready if `hermes dump` (a fast status probe) succeeds."""
+def _hermes_acp_ok(binary: str) -> bool:
+    """True if `hermes acp --check` succeeds (ACP extra installed + usable)."""
+    try:
+        proc = _run([binary, "acp", "--check"],
+                              capture_output=True, timeout=DETECT_TIMEOUT)
+        return proc.returncode == 0
+    except Exception as exc:
+        log.debug("hermes acp --check failed: %s", exc)
+        return False
+
+
+_acp_install_attempted = False
+
+
+def _install_hermes_acp() -> bool:
+    """Install the ACP extra into the user's Hermes checkout (acp only, never
+    Hermes itself). Returns True if the ACP extra is present afterwards.
+
+    Attempted AT MOST ONCE per process: this runs a pip install with a 300s
+    timeout, and detect_hermes() is on three hot paths (startup, every
+    discover, every run_agent). Without this guard, a machine where the
+    install fails - offline, wrong Python, no write permission - would block
+    for up to 5 minutes on *every* voice request, repeatedly.
+    """
+    global _acp_install_attempted
+    if _acp_install_attempted:
+        return False
+    _acp_install_attempted = True
+
+    checkout = os.path.expanduser("~/.hermes/hermes-agent")
+    if not os.path.isdir(checkout):
+        return False
+    cmd = None
+    if which("uv"):
+        cmd = ["uv", "pip", "install", "-e", ".[acp]"]
+    else:
+        py = which("python3") or which("python")
+        if py:
+            cmd = [py, "-m", "pip", "install", "-e", ".[acp]"]
+    if not cmd:
+        return False
+    log.info("installing Hermes ACP extra (%s)", " ".join(cmd))
+    try:
+        proc = _run(cmd, cwd=checkout, capture_output=True, timeout=300)
+    except Exception as exc:
+        log.warning("Hermes ACP install failed: %s", exc)
+        return False
+    ok = _hermes_acp_ok(which("hermes") or "hermes")
+    if not ok:
+        # Don't discard the install's own output - it's the only clue to why
+        # `.[acp]` didn't take (network failure, wrong Python, etc).
+        out = (proc.stdout or b"").decode(errors="replace").strip()
+        err = (proc.stderr or b"").decode(errors="replace").strip()
+        log.warning("Hermes ACP install did not result in a working ACP (exit %s)", proc.returncode)
+        if out:
+            log.warning("  install stdout: %s", shorten(out))
+        if err:
+            log.warning("  install stderr: %s", shorten(err))
+    return ok
+
+
+def detect_hermes(allow_install: bool = False) -> tuple[str, str]:
+    """Ready if Hermes is installed AND its ACP interface works. We drive
+    Hermes over ACP, so ACP is required.
+
+    ``allow_install`` gates the (slow, one-shot) attempt to install the ACP
+    extra. Only worker startup passes True - detection also runs on every
+    discover and every request, and a pip install must never happen inside a
+    live voice request.
+    """
     binary = which("hermes")
     if not binary:
         return ABSENT, ""
-    try:
-        proc = subprocess.run([binary, "dump"], capture_output=True, timeout=DETECT_TIMEOUT)
-    except Exception:
-        return NOT_READY, "Hermes is installed but not responding. Try `hermes doctor`."
-    if proc.returncode == 0:
+    if _hermes_acp_ok(binary):
         return READY, ""
-    return NOT_READY, "Hermes is installed but not configured. Run `hermes setup`."
+    if allow_install and _install_hermes_acp():
+        return READY, ""
+    return NOT_READY, ("Hermes is installed but its ACP interface isn't available. "
+                       "Install it with: cd ~/.hermes/hermes-agent && uv pip install -e '.[acp]'")
 
 
 def detect_openclaw() -> tuple[str, str]:
-    """Ready only if the OpenClaw gateway is up. Uses ``gateway status --json
-    --no-probe`` so the check reflects the service and doesn't fail on unresolved
-    auth (the auth-gated probe gives false negatives on fresh installs)."""
+    """Ready only if the OpenClaw gateway is up. If our own socket is already
+    connected, that's authoritative - no need to also shell out to the CLI on
+    every check, which would partly defeat the point of holding it warm.
+
+    Otherwise uses ``gateway status --json --no-probe`` so the check reflects
+    the service and doesn't fail on unresolved auth (the auth-gated probe
+    gives false negatives on fresh installs)."""
+    if _gateway["ready"]:
+        return READY, ""
     binary = which("openclaw")
     if not binary:
         return ABSENT, ""
     hint = "OpenClaw is installed but its gateway isn't running. Run `openclaw gateway start`."
     try:
-        proc = subprocess.run(
+        proc = _run(
             [binary, "gateway", "status", "--json", "--no-probe"],
             capture_output=True, text=True, timeout=DETECT_TIMEOUT,
         )
@@ -239,7 +737,7 @@ def openclaw_agent_id(binary: str) -> str:
         return _openclaw_agent_id
     agent_id = "main"
     try:
-        proc = subprocess.run(
+        proc = _run(
             [binary, "agents", "list", "--json"],
             capture_output=True, text=True, timeout=DETECT_TIMEOUT,
         )
@@ -261,57 +759,334 @@ def openclaw_agent_id(binary: str) -> str:
     return agent_id
 
 
-def parse_openclaw_reply(stdout: str) -> str | None:
-    """Extract the reply from ``openclaw agent --json`` output, or None if the
-    output isn't parseable JSON."""
-    try:
-        obj = json.loads(stdout)
-    except (ValueError, TypeError):
-        return None
+# ── OpenClaw Gateway RPC ─────────────────────────────────────────────────────
+# OpenClaw is driven over its Gateway WebSocket RPC rather than shelling out
+# to the `openclaw` CLI per turn. One connection is held for the worker's
+# lifetime; each request is an `agent` call followed by `agent.wait`.
+
+GATEWAY_URL = "ws://127.0.0.1:18789"
+
+# `agent` accepts extraSystemPrompt directly, so this travels as its own
+# field on every call instead of being mixed into the user's message.
+OPENCLAW_VOICE_HINT = (
+    "You are being reached through OpenHome, a voice AI platform. This "
+    "conversation happens over a voice interface - your reply will be "
+    "spoken aloud, not read as text.\n\n"
+    "Respond quickly: give the answer first, don't narrate what you're about "
+    "to do, and don't over-deliberate before acting. Your full tools and "
+    "capabilities remain available - use them whenever they're genuinely "
+    "needed for a correct answer.\n\n"
+    "Keep replies short and speakable: a few plain sentences, no markdown, "
+    "no bullet lists, no code blocks, no headers."
+)
+
+_gateway = {
+    "thread": None,
+    "loop": None,
+    "ws": None,
+    "ready": False,
+    "error": None,
+    "session_key": None,
+}
+
+_gateway_lock = threading.Lock()
+
+
+def _gateway_parse(raw) -> dict:
+    """Parse one Gateway frame. Raises on anything that isn't a JSON object."""
+    text = raw if isinstance(raw, str) else raw.decode()
+    obj = json.loads(text)
     if not isinstance(obj, dict):
+        raise ValueError(f"gateway sent a non-object frame: {text[:200]!r}")
+    return obj
+
+
+def gateway_token() -> str | None:
+    """Gateway auth token from the environment or OpenClaw's config, if set.
+
+    A loopback-only gateway often has none, so returning None is normal.
+    """
+    for var in ("OPENCLAW_GATEWAY_TOKEN", "OPENCLAW_GATEWAY_PASSWORD"):
+        value = os.environ.get(var)
+        if value:
+            return value
+    config_path = os.path.expanduser("~/.openclaw/openclaw.json")
+    try:
+        with open(config_path, encoding="utf-8") as f:
+            config = json.load(f)
+        auth = (config.get("gateway") or {}).get("auth") or {}
+        token = auth.get("token") or auth.get("password")
+        return token if isinstance(token, str) and token else None
+    except Exception:
         return None
-    result = obj.get("result")
-    if isinstance(result, dict):
-        payloads = result.get("payloads")
-        if isinstance(payloads, list):
-            texts = [p.get("text") for p in payloads if isinstance(p, dict) and p.get("text")]
-            if texts:
-                return "\n".join(texts).strip()
-        meta = result.get("meta")
-        if isinstance(meta, dict):
-            visible = meta.get("finalAssistantVisibleText")
-            if isinstance(visible, str) and visible.strip():
-                return visible.strip()
-    return None
+
+
+def gateway_url() -> str:
+    """Gateway WebSocket URL, overridable via OPENCLAW_GATEWAY_URL."""
+    return os.environ.get("OPENCLAW_GATEWAY_URL") or GATEWAY_URL
+
+
+async def _gateway_connect(timeout: float) -> None:
+    """Open the Gateway socket and complete the connect handshake.
+
+    Connects as a trusted local backend client (no signed device identity),
+    which is only safe against a loopback gateway - a non-loopback URL logs a
+    warning. The gateway sends a connect.challenge event before any request
+    is sent; that must be received first even though this auth mode doesn't
+    need to sign it.
+    """
+    import websockets
+
+    url = gateway_url()
+    if urlparse(url).hostname not in ("127.0.0.1", "localhost", "::1"):
+        log.warning("OpenClaw gateway URL is not loopback (%s); connecting without "
+                    "device signing is only safe for a local gateway", url)
+
+    ws = await asyncio.wait_for(websockets.connect(url, max_size=2 ** 22), timeout)
+    deadline = time.monotonic() + timeout
+
+    while True:
+        raw = await asyncio.wait_for(ws.recv(), max(0.5, deadline - time.monotonic()))
+        msg = _gateway_parse(raw)
+        log.debug("gateway <- %s", shorten(str(msg)))
+        if msg.get("type") == "event" and msg.get("event") == "connect.challenge":
+            break
+        if time.monotonic() >= deadline:
+            raise RuntimeError("gateway never sent connect.challenge")
+
+    connect_params = {
+        "minProtocol": 4,
+        "maxProtocol": 4,
+        "client": {"id": "gateway-client", "version": "1", "platform": os_name(),
+                   "mode": "backend"},
+        "role": "operator",
+        "scopes": ["operator.read", "operator.write"],
+        "caps": [],
+        "commands": [],
+        "permissions": {},
+    }
+    token = gateway_token()
+    if token:
+        connect_params["auth"] = {"token": token}
+
+    request_id = uuid.uuid4().hex
+    await ws.send(dumps({"type": "req", "id": request_id, "method": "connect",
+                         "params": connect_params}))
+
+    while time.monotonic() < deadline:
+        raw = await asyncio.wait_for(ws.recv(), max(0.5, deadline - time.monotonic()))
+        msg = _gateway_parse(raw)
+        log.debug("gateway <- %s", shorten(str(msg)))
+        if msg.get("id") == request_id and msg.get("type") == "res":
+            if not msg.get("ok"):
+                raise RuntimeError(f"gateway rejected connect: {msg.get('error')}")
+            _gateway["ws"] = ws
+            _gateway["ready"] = True
+            log.info("OpenClaw gateway connected (%s)", url)
+            return
+    raise RuntimeError("gateway did not answer the connect handshake")
+
+
+def gateway_start(timeout: float = 30.0) -> bool:
+    """Connect to the OpenClaw Gateway on a background loop. Safe to re-call."""
+    if _gateway["ready"]:
+        return True
+
+    loop = asyncio.new_event_loop()
+    thread = threading.Thread(
+        target=lambda: (asyncio.set_event_loop(loop), loop.run_forever()),
+        daemon=True, name="openclaw-gateway",
+    )
+    thread.start()
+    _gateway["thread"] = thread
+    _gateway["loop"] = loop
+
+    try:
+        asyncio.run_coroutine_threadsafe(_gateway_connect(timeout), loop).result(timeout + 5)
+        return True
+    except Exception as exc:
+        _gateway["error"] = str(exc) or type(exc).__name__
+        log.error("OpenClaw gateway connect failed: %s", _gateway["error"])
+        gateway_stop()
+        return False
+
+
+async def _gateway_disconnect() -> None:
+    """Close the socket and cancel pending tasks. Must run on the gateway's
+    own loop, before that loop stops."""
+    ws = _gateway.get("ws")
+    if ws is not None:
+        try:
+            await asyncio.wait_for(ws.close(), timeout=3.0)
+        except Exception:
+            pass
+    current_task = asyncio.current_task()
+    pending = [task for task in asyncio.all_tasks() if task is not current_task]
+    for task in pending:
+        task.cancel()
+    if pending:
+        await asyncio.gather(*pending, return_exceptions=True)
+
+
+def gateway_stop() -> None:
+    """Close the Gateway socket and stop its background loop."""
+    loop = _gateway.get("loop")
+    if loop is not None and loop.is_running():
+        try:
+            asyncio.run_coroutine_threadsafe(_gateway_disconnect(), loop).result(timeout=5.0)
+        except Exception:
+            pass
+        try:
+            loop.call_soon_threadsafe(loop.stop)
+        except Exception:
+            pass
+    thread = _gateway.get("thread")
+    if thread is not None:
+        thread.join(timeout=2.0)
+    for key in ("thread", "loop", "ws", "session_key"):
+        _gateway[key] = None
+    _gateway["ready"] = False
+
+
+async def _gateway_abort(run_id: str) -> None:
+    """Ask the Gateway to stop a run we've given up waiting on. Best effort:
+    the run may already have finished by the time this arrives."""
+    try:
+        ws = _gateway["ws"]
+        await ws.send(dumps({
+            "type": "req", "id": uuid.uuid4().hex, "method": "sessions.abort",
+            "params": {"runId": run_id},
+        }))
+    except Exception as exc:
+        log.debug("sessions.abort failed: %s", exc)
+
+
+def _extract_reply_text(msg: dict) -> tuple[str | None, str | None]:
+    """Pull assistant text out of a streamed event, as (delta, full_text).
+
+    Kept as two separate values so a turn that sends both an incremental
+    delta and a full cumulative snapshot never gets double-counted.
+    """
+    payload = msg.get("payload") if isinstance(msg.get("payload"), dict) else msg
+    delta = payload.get("deltaText")
+    full_text = payload.get("message")
+    delta = delta if isinstance(delta, str) and delta else None
+    full_text = full_text if isinstance(full_text, str) and full_text else None
+    return delta, full_text
+
+
+async def _gateway_turn(text: str, session_key: str, timeout: float) -> str:
+    """Run one agent turn and return the reply.
+
+    Starts the run with `agent`, then waits for it with `agent.wait` while
+    collecting streamed reply text along the way. A run that doesn't finish
+    in time is aborted before the timeout is raised.
+    """
+    ws = _gateway["ws"]
+    run_id = None
+    delta_chunks: list[str] = []
+    full_text: str | None = None
+    agent_request_id = uuid.uuid4().hex
+    wait_request_id = uuid.uuid4().hex
+
+    await ws.send(dumps({
+        "type": "req", "id": agent_request_id, "method": "agent",
+        "params": {"sessionKey": session_key, "message": text,
+                   "extraSystemPrompt": OPENCLAW_VOICE_HINT,
+                   "idempotencyKey": uuid.uuid4().hex},
+    }))
+
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        remaining = deadline - time.monotonic()
+        try:
+            raw = await asyncio.wait_for(ws.recv(), max(1.0, remaining))
+        except asyncio.TimeoutError:
+            if run_id:
+                await _gateway_abort(run_id)
+            raise TimeoutError("openclaw run timed out")
+
+        msg = _gateway_parse(raw)
+        log.debug("gateway <- %s", shorten(str(msg)))
+
+        if msg.get("id") == agent_request_id:
+            if not msg.get("ok"):
+                raise RuntimeError(f"agent call failed: {msg.get('error')}")
+            payload = msg.get("payload") or {}
+            run_id = payload.get("runId")
+            if not run_id:
+                raise RuntimeError(f"agent call returned no runId: {payload!r}")
+            await ws.send(dumps({
+                "type": "req", "id": wait_request_id, "method": "agent.wait",
+                "params": {"runId": run_id, "timeoutMs": int(max(0, remaining) * 1000)},
+            }))
+            continue
+
+        if msg.get("id") == wait_request_id:
+            payload = msg.get("payload") or {}
+            status = payload.get("status")
+            if status == "timeout":
+                await _gateway_abort(run_id)
+                raise TimeoutError("openclaw run timed out")
+            if status == "error" or not msg.get("ok"):
+                detail = payload.get("error") or msg.get("error") or "unknown error"
+                return f"OpenClaw couldn't complete that: {detail}"
+            break
+
+        payload = msg.get("payload") or {}
+        if run_id and msg.get("event") == "agent" and payload.get("runId") == run_id:
+            data = payload.get("data") or {}
+            delta = data.get("delta")
+            snapshot = data.get("text")
+            if isinstance(delta, str) and delta:
+                delta_chunks.append(delta)
+            if isinstance(snapshot, str) and snapshot:
+                full_text = snapshot
+            continue
+
+        delta, snapshot = _extract_reply_text(msg)
+        if delta:
+            delta_chunks.append(delta)
+        if snapshot:
+            full_text = snapshot
+
+    if full_text:
+        return full_text.strip() or "(no output)"
+    return "".join(delta_chunks).strip() or "(no output)"
 
 
 def run_openclaw(data: str, timeout: float) -> str:
-    """Run one OpenClaw agent turn through the gateway and return the reply.
+    """Send one utterance to OpenClaw over the Gateway and return the reply.
 
-    ``--agent`` gives the turn a session target; ``--json`` gives clean output we
-    parse. (This is the agent path, not ``message send``, which is channel messaging.)
+    Requests are serialized: one OpenClaw run at a time per worker.
     """
-    binary = which("openclaw") or "openclaw"
-    agent = openclaw_agent_id(binary)
-    proc = subprocess.run(
-        [binary, "agent", "--agent", agent, "--message", data, "--json"],
-        capture_output=True, text=True, timeout=timeout,
-    )
-    out = (proc.stdout or "").strip()
-    err = (proc.stderr or "").strip()
+    if not _gateway_lock.acquire(timeout=timeout):
+        raise TimeoutError("another OpenClaw request is still running")
+    try:
+        if not _gateway["ready"] and not gateway_start(timeout):
+            raise RuntimeError(_gateway.get("error") or "OpenClaw gateway not reachable")
 
-    reply = parse_openclaw_reply(out)
-    if reply is not None:
+        if not _gateway["session_key"]:
+            agent_id = openclaw_agent_id(which("openclaw") or "openclaw")
+            _gateway["session_key"] = f"agent:{agent_id}:main"
+
+        log.info("OpenClaw request: %s", shorten(data))
+        try:
+            reply = asyncio.run_coroutine_threadsafe(
+                _gateway_turn(data, _gateway["session_key"], timeout), _gateway["loop"]
+            ).result(timeout + 5)
+        except Exception:
+            gateway_stop()
+            raise
+        log.info("OpenClaw reply: %s", shorten(reply))
         return reply
-    if "error" in err.lower() or "error" in out.lower():
-        detail = (err or out).splitlines()[0] if (err or out) else "unknown error"
-        return f"OpenClaw couldn't complete that: {detail}"
-    return out or err or "(no output)"
+    finally:
+        _gateway_lock.release()
 
 
 AGENTS: dict[str, dict] = {
     "local-link": {"detect": None, "run": "shell"},
-    "hermes": {"detect": detect_hermes, "run": ["hermes", "-z"]},
+    "hermes": {"detect": detect_hermes, "run": run_hermes_acp},
     "openclaw": {"detect": detect_openclaw, "run": run_openclaw},
 }
 
@@ -331,7 +1106,7 @@ def agent_status(spec: dict) -> tuple[str, str]:
     if not binary:
         return ABSENT, ""
     try:
-        proc = subprocess.run([binary, *detect[1:]], capture_output=True, timeout=DETECT_TIMEOUT)
+        proc = _run([binary, *detect[1:]], capture_output=True, timeout=DETECT_TIMEOUT)
         return (READY, "") if proc.returncode == 0 else (NOT_READY, f"{detect[0]} is installed but not ready.")
     except Exception:
         return NOT_READY, f"{detect[0]} is installed but not responding."
@@ -350,7 +1125,7 @@ def run_backend(spec: dict, data: str, timeout: float) -> str:
             return out or "(no output)"
         return err or out or f"command failed (exit {proc.returncode})"
     binary = which(run[0]) or run[0]
-    proc = subprocess.run([binary, *run[1:], data], capture_output=True, text=True, timeout=timeout)
+    proc = _run([binary, *run[1:], data], capture_output=True, text=True, timeout=timeout)
     return (proc.stdout or proc.stderr).strip()
 
 
@@ -382,12 +1157,18 @@ def run_agent(target: str, data: str, timeout: float) -> dict:
     state, hint = agent_status(spec)
     if state != READY:
         return {"status": "error", "error": hint or f"{target} is not available"}
+    if target in ("hermes", "openclaw"):
+        # Agent turns can involve several LLM calls plus tool execution (we've
+        # seen 40s+ turns); don't let the generic 30s default cut them off.
+        timeout = max(timeout, 120.0)
     try:
         return {"status": "ok", "data": run_backend(spec, data, timeout)}
     except subprocess.TimeoutExpired:
-        return {"status": "error", "error": f"{target} timed out"}
+        return {"status": "error", "error": f"{target} timed out after {timeout:.0f}s"}
+    except (asyncio.TimeoutError, concurrent.futures.TimeoutError):
+        return {"status": "error", "error": f"{target} timed out after {timeout:.0f}s"}
     except Exception as exc:
-        return {"status": "error", "error": str(exc)}
+        return {"status": "error", "error": str(exc) or f"{type(exc).__name__} (no message)"}
 
 
 # ── messages ─────────────────────────────────────────────────────────────────
@@ -489,6 +1270,19 @@ async def serve(config: Config, client_id: str, role: str, timeout: float, once:
     if not config.api_key:
         raise SystemExit("No API key. Run `openhome login` or set OPENHOME_API_KEY.")
 
+    # Spawn and hold the Hermes ACP connection up front so requests are served
+    # by a warm process. Best-effort: if Hermes/ACP isn't present the hermes
+    # agent simply reports not-ready via detection; the worker still runs.
+    if which("hermes"):
+        state, _ = detect_hermes(allow_install=True)
+        if state == READY:
+            acp_start(timeout)
+
+    if which("openclaw"):
+        state, _ = detect_openclaw()
+        if state == READY:
+            gateway_start(timeout)
+
     url = local_link_url(config, client_id, role)
     backoff = 1.0
     while True:
@@ -511,14 +1305,47 @@ async def serve(config: Config, client_id: str, role: str, timeout: float, once:
         backoff = min(backoff * 2, 30.0)
 
 
+def _install_stop_signal_handler() -> None:
+    """Make ``openhome local stop`` trigger the same graceful shutdown path as
+    Ctrl-C, so ``finally: acp_stop()`` actually runs instead of the process
+    being killed before any cleanup code executes.
+
+    - POSIX (Mac/Linux): ``stop`` sends SIGTERM, for which Python has no
+      default handler - without this, SIGTERM kills the process immediately
+      (verified directly), leaking the held ``hermes acp`` subprocess.
+    - Windows: ``os.kill(pid, SIGTERM)`` does not deliver a catchable signal
+      at all - Python implements it as an immediate TerminateProcess call,
+      which gives the target no chance to clean up regardless of handlers.
+      The only Windows signal that is both catchable and can be aimed at one
+      specific other process is CTRL_BREAK_EVENT, which needs the target in
+      its own process group (``start`` sets this up) and an explicit
+      SIGBREAK handler, since there is no default one. ``stop`` sends
+      CTRL_BREAK_EVENT first, for exactly this reason.
+    """
+    def _handler(signum, frame):
+        raise KeyboardInterrupt()
+
+    try:
+        if IS_WINDOWS:
+            signal.signal(signal.SIGBREAK, _handler)
+        else:
+            signal.signal(signal.SIGTERM, _handler)
+    except (ValueError, OSError, AttributeError) as exc:
+        log.debug("could not install stop-signal handler: %s", exc)
+
+
 def run_worker(config: Config, client_id: str = "laptop", role: str = "agent",
                timeout: float = 30.0, once: bool = False) -> int:
     """Run Local Link in the foreground; also the process ``start`` launches."""
     setup_logging(foreground=sys.stderr.isatty())
+    _install_stop_signal_handler()
     try:
         asyncio.run(serve(config, client_id, role, timeout, once))
     except KeyboardInterrupt:
-        log.info("Local Link stopped (keyboard interrupt)")
+        log.info("Local Link stopped")
+    finally:
+        acp_stop()
+        gateway_stop()
     return 0
 
 
@@ -547,11 +1374,20 @@ def start(client_id: str = "laptop", role: str = "agent", timeout: float = 30.0)
         return 1
 
     logfile = open(LOG_FILE, "a", encoding="utf-8")  # noqa: SIM115 — handed to the child
+    popen_kwargs = dict(stdout=logfile, stderr=logfile, stdin=subprocess.DEVNULL)
+    if IS_WINDOWS:
+        # CREATE_NEW_PROCESS_GROUP: lets `stop` target this process alone
+        # with CTRL_BREAK_EVENT for a graceful shutdown.
+        # CREATE_NO_WINDOW: no console window popping up for a background worker.
+        popen_kwargs["creationflags"] = (
+            subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.CREATE_NO_WINDOW
+        )
+    else:
+        popen_kwargs["start_new_session"] = True
     proc = subprocess.Popen(
         [sys.executable, "-m", "openhome.cli", "local", "run",
          "--client-id", client_id, "--role", role, "--timeout", str(timeout)],
-        stdout=logfile, stderr=logfile, stdin=subprocess.DEVNULL,
-        start_new_session=True,
+        **popen_kwargs,
     )
     PID_FILE.write_text(str(proc.pid))
     print("Local Link started. View activity with `openhome local logs`.")
@@ -559,20 +1395,29 @@ def start(client_id: str = "laptop", role: str = "agent", timeout: float = 30.0)
 
 
 def stop() -> int:
-    """Stop the background Local Link (SIGTERM, then SIGKILL if needed)."""
+    """Stop the background Local Link, gracefully first, then force if needed."""
     pid = read_pid()
     if not pid or not is_alive(pid):
         print("Local Link is not running.")
         PID_FILE.unlink(missing_ok=True)
         return 0
     try:
-        os.kill(pid, signal.SIGTERM)
+        if IS_WINDOWS:
+            # CTRL_BREAK_EVENT is the only Windows signal that is both
+            # catchable and can target one specific process (needs that
+            # process in its own group, which `start` sets up). Plain
+            # SIGTERM on Windows is an immediate, uncatchable TerminateProcess
+            # - no chance for the target to clean up - so it's reserved below
+            # as the escalation if the graceful path doesn't respond in time.
+            os.kill(pid, signal.CTRL_BREAK_EVENT)
+        else:
+            os.kill(pid, signal.SIGTERM)
         for _ in range(20):
             if not is_alive(pid):
                 break
             time.sleep(0.1)
         if is_alive(pid):
-            os.kill(pid, signal.SIGKILL)
+            os.kill(pid, getattr(signal, "SIGKILL", signal.SIGTERM))
     except OSError as exc:
         print(f"Could not stop Local Link (PID {pid}): {exc}")
         return 1

@@ -51,10 +51,11 @@ templates/
 ├── basic-template/        ← Start here. Minimal Skill skeleton.
 ├── api-template/          ← Call an external REST API from a Skill.
 ├── loop-template/         ← Long-running looped Skill (ambient observer).
+├── music-template/        ← Stream a track; branch on how playback ended.
 │
 ├── SendEmail/             ← Fire-and-forget SDK method call.
-├── Local/                 ← LLM as translator; execute on local machine.
-├── OpenClaw/              ← Escape the sandbox via OpenClaw.
+├── openhome-local-link/   ← Voice → shell command on your PC via `openhome local`.
+├── openclaw/              ← Desktop automation via OpenClaw, over `openhome local`.
 ├── smart-home/            ← Voice-control MQTT devices; LLM picks the device + command.
 ├── PhilipsHueLightControl/← Local + persistent BLE daemon. Real hardware example.
 ├── devkit_led_lights_control/ ← Local + onboard NeoPixel LED ring control.
@@ -113,15 +114,15 @@ Every Skill **must** call this when done. It hands control back to the agent's n
 
 ---
 
-#### [`Local`](./templates/Local) — LLM as Translator (Mac Terminal)
+#### [`openhome-local-link`](./openhome-local-link) — LLM as Translator (Terminal)
 **Type:** Skill · **Pattern:** LLM-as-translator · **Complexity:** Medium
 
-You say `"list all my Python files"` and the speaker translates that into a real terminal command (`find . -name "*.py"`), runs it on your local machine, and reads back the result in plain English. Two LLM calls bookend the local execution — one translates speech → command, another translates raw output → human speech.
+You say `"list all my Python files"` and the speaker translates that into a real terminal command (`find . -name "*.py"`), runs it on your machine, and reads back the result in plain English. Two LLM calls bookend the local execution — one translates speech → command, another translates raw output → human speech.
 
 **Key SDK methods:** `wait_for_complete_transcription()`, `text_to_text_response()`, `exec_local_command()`
 
 **Key pattern — `exec_local_command()`:**
-Abilities run in OpenHome's cloud sandbox, not on your local machine. `exec_local_command()` bridges that gap via WebSocket to whatever device is connected (Mac, Pi, etc.).
+Abilities run in OpenHome's cloud sandbox, not on your machine. Run the **`openhome local`** bridge (the OpenHome CLI) on your computer and `exec_local_command()` reaches it over the connection; a plain command runs on the built-in raw-shell **`local-link`** handler.
 
 > ⚠️ No command validation or safety filtering is included. A production version must guard against destructive commands (`rm -rf`) and handle long-running processes with timeouts.
 
@@ -129,24 +130,28 @@ Abilities run in OpenHome's cloud sandbox, not on your local machine. `exec_loca
 
 ---
 
-#### [`OpenClaw`](./templates/OpenClaw) — Sandbox Escape
+#### [`openclaw`](./openclaw) — Sandbox Escape
 **Type:** Skill · **Pattern:** Sandbox escape · **Complexity:** Minimal
 
-Forwards the user's raw speech directly to OpenClaw — a desktop AI agent with 2,800+ community skills. OpenClaw processes it on your local machine and returns the result. The speaker becomes a voice interface for your entire desktop.
+Forwards the user's raw speech to OpenClaw — a desktop AI agent with 2,800+ community skills. OpenClaw processes it on your machine and returns the result. The speaker becomes a voice interface for your entire desktop.
 
-OpenHome abilities run in a restricted cloud sandbox — no arbitrary Python packages, no local network calls, limited filesystem access. OpenClaw is the escape hatch.
+OpenHome abilities run in a restricted cloud sandbox — no arbitrary Python packages, no local network calls, limited filesystem access. The **`openhome local`** bridge is the escape hatch: run it on your computer (with OpenClaw installed), and requests reach OpenClaw through its built-in **`openclaw`** handler.
 
 **Key SDK methods:** `wait_for_complete_transcription()`, `exec_local_command()`, `speak()`
 
 ```python
+import json
 user_inquiry = await self.capability_worker.wait_for_complete_transcription()
-await self.capability_worker.speak("Sending inquiry to OpenClaw")
-response = await self.capability_worker.exec_local_command(user_inquiry)
-await self.capability_worker.speak(response["data"])
+await self.capability_worker.speak("Sending your request to OpenClaw.")
+# Target the `openclaw` handler on the bridge (a plain string runs on `local-link`):
+payload = {"type": "command", "target": "openclaw", "data": user_inquiry}
+raw = await self.capability_worker.exec_local_command(json.dumps(payload), timeout=60.0)
+data = raw.get("data") if isinstance(raw, dict) and raw.get("type") == "response" else raw
+await self.capability_worker.speak(data.get("data") if isinstance(data, dict) else str(data))
 self.capability_worker.resume_normal_flow()
 ```
 
-> No routing logic, error handling, or timeout handling is included. A real implementation would parse the response structure and handle unmatched skills gracefully.
+> Add error handling and a confirmation step for destructive tasks before relying on it.
 
 **Build on top:** smart home hub via HomeAssistant, code execution, app control (`"Open Spotify"`), multi-agent orchestration for complex workflows.
 
@@ -233,6 +238,25 @@ Demonstrates nearly every advanced SDK pattern: raw audio recording, external AP
 
 ---
 
+#### [`music-template`](./templates/music-template) — Interruptible Playback
+**Type:** Skill · **Pattern:** Play-and-branch · **Complexity:** Minimal
+
+Plays a track from your music API and stays in control of what happens next. `stream_music_from_url()` blocks for the whole track and returns **why** playback ended — `finished`, `paused`, `stopped`, `unplayable` or `error`. The audio pipeline, the device buffer, music mode and the recovery afterwards are all inside the call, so `speak()` works on the very next line no matter how it ended.
+
+**Key SDK methods:** `stream_music_from_url()`, `run_io_loop()`, `speak()`, `resume_normal_flow()`
+
+**Key patterns:**
+
+- **Music mode:** while a stream is live the Ability receives no transcriptions and must not call `speak()` or `run_io_loop()`. "pause" and "stop" from the user come back as `outcome` values instead of events you handle.
+- **Resume is just calling again:** there is no separate resume function. Pass `result["position"]` as `start_seconds` and `result["byte_offset"]` as `byte_offset`, and re-resolve the URL — signed CDN links expire while the user sits paused.
+- **Only `"paused"` loops:** `finished`, `stopped`, `error` and `unplayable` all leave. A loop that retries on `error` spins.
+
+> `duration_seconds` is the **FULL** track length — the call subtracts `start_seconds` itself. Wrong values don't crash anything, they just make `position` drift so a later resume starts in the wrong place.
+
+**Build on top:** a full music DJ, a sleep-timer radio, a podcast player with chapter resume, a story-time reader.
+
+---
+
 ### 🟡 Utility Pattern
 
 ---
@@ -259,14 +283,15 @@ self.capability_worker.write_file("state.json", json.dumps(data))
 | `basic-template` | Skill | `speak()`, `resume_normal_flow()` |
 | `api-template` | Skill | `text_to_text_response()`, `resume_normal_flow()` |
 | `SendEmail` | Skill | `send_email()`, `speak()`, `resume_normal_flow()` |
-| `Local` | Skill | `text_to_text_response()`, `exec_local_command()` |
-| `OpenClaw` | Skill | `exec_local_command()`, `speak()` |
+| `openhome-local-link` | Skill | `text_to_text_response()`, `exec_local_command()` (via `openhome local`) |
+| `openclaw` | Skill | `exec_local_command()` → `openclaw` handler (via `openhome local`) |
 | `smart-home` | Skill | `text_to_text_response()`, `send_devkit_mqtt_action()`, `speak()` |
 | `PhilipsHueLightControl` | Local | `send_devkit_capability_action()`, `text_to_text_response()`, `speak()` |
 | `devkit_led_lights_control` | Local | `send_devkit_capability_action()`, `send_devkit_action()`, `text_to_text_response()` |
 | `Background` | Background Daemon | `get_full_message_history()`, `session_tasks.sleep()` |
 | `Alarm` | Skill + Daemon | `send_interrupt_signal()`, `play_from_audio_file()`, `session_tasks.sleep()` |
 | `loop-template` | Skill (long-running) | `start_audio_recording()`, `get_audio_recording()`, `text_to_text_response()` |
+| `music-template` | Skill | `stream_music_from_url()`, `run_io_loop()`, `resume_normal_flow()` |
 | `ReadWriteFile` | Utility / IPC | `read_file()`, `delete_file()`, `write_file()` |
 
 ---
