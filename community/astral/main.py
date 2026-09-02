@@ -13,8 +13,10 @@ fluently and sometimes wrongly. This computes them, in microseconds, offline.
 
 If nothing matches, it speaks nothing and hands the turn back so the agent takes it.
 """
+# No future-annotations import here, on purpose: the platform comments that line out
+# on upload, so every annotation in this file has to be valid eagerly on the runtime's
+# Python. The engine region below declares Optional and uses it instead of PEP 604.
 from datetime import datetime
-from typing import Optional
 from zoneinfo import ZoneInfo
 import re
 
@@ -28,6 +30,7 @@ from src.main import AgentWorker
 # Edit those and re-run `python3 hub/build_ability.py`. Hand edits here are lost.
 import math
 from fractions import Fraction
+from typing import Optional
 
 # ── mechanical.py ──────────────────────────────────────────────────────────
 # Mechanical command layer — deterministic, no-LLM, no-cloud, sub-millisecond.
@@ -134,8 +137,8 @@ def mech_handle(utterance: str, now: Optional[datetime] = None) -> Optional[str]
             return fn(now)
     return None
 
-# ── demo: the efficiency contrast ─────────────────────────────────────────────
 
+# ── demo: the efficiency contrast ─────────────────────────────────────────────
 
 # ── calc.py ────────────────────────────────────────────────────────────────
 # Astral calc — deterministic math, money, and unit conversion. No LLM, no cloud, µs.
@@ -919,6 +922,7 @@ _SCI_BODY = {
     "neptune": (1.02413e26, 2.4764e7, 4.351e12),
     "pluto": (1.303e22, 1.1883e6, 5.75e12),
 }
+_SCI_M_TO_MI = 1 / 1609.344   # exact: 1 mile = 1609.344 m
 _SCI_ALIAS = {"the sun": "sun", "the moon": "moon", "the earth": "earth"}
 
 # Things light travels to, in metres. The solar-system distances are READ OFF the
@@ -979,6 +983,27 @@ def sci_handle(text: str) -> Optional[str]:
     t = " " + text.lower().strip() + " "
     nums = numbers(text)
     body = _sci_body(t)
+
+    # ── mass and size (reviewer, 2026-09-01: the most common planet questions,
+    #    and the table already holds mass and equatorial radius for every body) ──
+    if body and re.search(r"\bmass of\b|\bhow massive\b|\bhow heavy is\b|\bhow much does .* weigh\b", t) \
+            and not nums and "molar" not in t and "atomic" not in t:
+        m, _, _ = _SCI_BODY[body]
+        unit = "kilograms"
+        if "pound" in t:                       # exact: 1 lb = 0.45359237 kg
+            m, unit = m / 0.45359237, "pounds"
+        exp = int(math.floor(math.log10(m)))
+        mant = m / 10 ** exp
+        return (f"The mass of {_sci_said(body)} is about {_fmt(mant)} times ten to the "
+                f"{exp} {unit}.")
+    if body and re.search(r"\bdiameter of\b|\bradius of\b|\bhow big is\b|\bhow wide is\b|\bhow large is\b", t) \
+            and "schwarzschild" not in t and "event horizon" not in t:
+        _, r, _ = _SCI_BODY[body]
+        if "radius" in t:
+            return (f"The radius of {_sci_said(body)} is {_fmt(r/1000)} kilometers, "
+                    f"{_fmt(r*_SCI_M_TO_MI)} miles.")
+        return (f"The diameter of {_sci_said(body)} is {_fmt(2*r/1000)} kilometers, "
+                f"{_fmt(2*r*_SCI_M_TO_MI)} miles.")
 
     # ── escape velocity ───────────────────────────────────────────────────────
     if "escape velocity" in t:
@@ -1495,7 +1520,7 @@ _ROUTE = (
 
 
 def normalize(text: str) -> str:
-    """Clean what speech-to-text actually hands over, not what a test.
+    """Clean what speech-to-text actually hands over, not what a test types.
 
     Whisper punctuates. It returns "What is 20% of 80?" and "What letter grade is an
     87?", and a trailing question mark or a percent sign is enough to stop the number
