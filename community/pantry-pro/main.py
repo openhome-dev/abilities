@@ -1,3 +1,4 @@
+import asyncio
 import json
 import re
 import uuid
@@ -372,12 +373,15 @@ class PantryProCapability(MatchingCapability):
         lower = (text or "").lower().strip()
         return lower in ("no", "nope", "nah", "not now", "later") or lower.startswith("no ")
 
-    def _trigger_text(self) -> str:
-        history = self.capability_worker.get_full_message_history() or []
-        for msg in reversed(history):
-            if msg.get("role") == "user":
-                return (msg.get("content") or "").strip()
-        return ""
+    async def _read_trigger(self) -> str:
+        # history does not include this turn until we resume; wait for the
+        # sentence that actually launched the skill.
+        try:
+            raw = await self.capability_worker.wait_for_complete_transcription()
+            return (raw or "").strip()
+        except Exception as e:
+            self._err(f"trigger transcription skipped: {e}")
+            return ""
 
     def classify(self, user_input: str) -> dict:
         prompt = INTENT_PROMPT.format(today=self._today().isoformat(), input=user_input)
@@ -538,12 +542,16 @@ class PantryProCapability(MatchingCapability):
             missing.append(ing)
         return missing[:8]
 
+    def _http_get(self, url: str, params: dict):
+        # session_tasks.get is the documented sdk http helper (blocking)
+        return self.worker.session_tasks.get(
+            url, params=params, timeout=API_TIMEOUT
+        )
+
     async def _search_meals(self, ingredient: str) -> list:
         url = f"{MEALDB}/filter.php"
         try:
-            r = await self.worker.session_tasks.get_async(
-                url, params={"i": ingredient}, timeout=API_TIMEOUT
-            )
+            r = await asyncio.to_thread(self._http_get, url, {"i": ingredient})
             if r.status_code != 200:
                 self._err(f"mealdb filter status {r.status_code}")
                 return []
@@ -556,9 +564,7 @@ class PantryProCapability(MatchingCapability):
     async def _lookup_meal(self, meal_id: str) -> dict:
         url = f"{MEALDB}/lookup.php"
         try:
-            r = await self.worker.session_tasks.get_async(
-                url, params={"i": meal_id}, timeout=API_TIMEOUT
-            )
+            r = await asyncio.to_thread(self._http_get, url, {"i": meal_id})
             if r.status_code != 200:
                 self._err(f"mealdb lookup status {r.status_code}")
                 return {}
@@ -1128,6 +1134,8 @@ class PantryProCapability(MatchingCapability):
 
     async def run(self):
         try:
+            trigger = await self._read_trigger()
+
             if not await self._load():
                 await self.capability_worker.speak(
                     "I couldn't load your pantry safely, so I won't change anything "
@@ -1135,7 +1143,6 @@ class PantryProCapability(MatchingCapability):
                 )
                 return
 
-            trigger = self._trigger_text()
             self._log(f"started. trigger={trigger!r} items={len(self.data.get('items') or [])}")
 
             handled_up_front = False
