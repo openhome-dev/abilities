@@ -15,10 +15,16 @@ from src.main import AgentWorker
 STORAGE_FILE = "pantrypro_inventory.json"
 MEALDB = "https://www.themealdb.com/api/json/v1/1"
 API_TIMEOUT = 10
+SMTP_HOST = "smtp.gmail.com"
+SMTP_PORT = 465
+SENDER_EMAIL_KEY = "pantrypro_sender_email"
+SENDER_PASSWORD_KEY = "pantrypro_sender_password"
 
 CANCEL_PHRASES = ("never mind", "cancel", "forget it", "skip")
 
 YES_WORDS = ("yes", "yeah", "yep", "sure", "ok", "okay", "please", "do it", "yup")
+
+REPEAT_WORDS = ("repeat", "again", "say that again", "what was that", "one more time")
 
 FULL_LIST_PHRASES = (
     "whole list", "full list", "entire list", "complete list",
@@ -41,6 +47,8 @@ intents:
 - item_date — ask when a specific item expires / what date is on it
   (e.g. "when does the ground beef expire", "what's the date on the milk")
 - recipes — meal ideas from current stock
+- email_recipe — email the last picked recipe to my phone
+- email_list — email the shopping list to my phone
 - shop_add — put items on the shopping list
 - shop_read — hear the shopping list
 - shop_clear — empty the shopping list
@@ -59,9 +67,11 @@ rules:
 - full_list is true when the user wants the complete inventory read aloud
   (whole list, full list, all items, everything, the rest, stop saying N more)
 - for item_date, put the named item in items
-- for list/expiring/recipes/exit/unknown, items may be empty
+- for list/expiring/recipes/email_recipe/email_list/exit/unknown, items may be empty
 - split multiples: "milk and eggs" → two items
 - "when does X expire" / "expiry date for X" / "tell me the date that X expires" → item_date, not expiring
+- "email the recipe" / "send me that recipe" → email_recipe, not email_list
+- "email the shopping list" / "send the grocery list" / "email my list" → email_list, not email_recipe
 
 user said: "{input}"
 """
@@ -115,7 +125,41 @@ INGREDIENT_MAP = {
 
 
 def _empty_data() -> dict:
-    return {"items": [], "shopping": []}
+    return {"items": [], "shopping": [], "prefs": {}, "last_recipe": None}
+
+
+def _steps_from_instructions(instr: str) -> list:
+    if not instr:
+        return []
+    raw = [s.strip() for s in re.split(r"\n+|(?<=\.)\s+", instr) if s.strip()]
+    return [s for s in raw if len(s) > 2]
+
+
+def _measured_ingredients(meal: dict) -> list:
+    out = []
+    for i in range(1, 21):
+        ing = _norm(meal.get(f"strIngredient{i}", ""))
+        mea = _norm(meal.get(f"strMeasure{i}", ""))
+        if ing:
+            out.append(f"{mea} {ing}".strip() if mea else ing)
+    return out
+
+
+def _normalize_email(raw: str) -> str:
+    cleaned = (raw or "").lower().strip()
+    cleaned = re.sub(r"\s+at\s+", "@", cleaned)
+    cleaned = re.sub(r"\s+dot\s+", ".", cleaned)
+    cleaned = re.sub(r"\s+", "", cleaned)
+    return cleaned
+
+
+def _looks_like_email(candidate: str) -> bool:
+    return bool(re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", candidate or ""))
+
+
+def _wants_any(text: str, phrases: tuple) -> bool:
+    lower = (text or "").lower()
+    return any(p in lower for p in phrases)
 
 
 def _item_id() -> str:
@@ -238,6 +282,8 @@ class PantryProCapability(MatchingCapability):
                 raise ValueError("inventory is not a json object")
             parsed.setdefault("items", [])
             parsed.setdefault("shopping", [])
+            parsed.setdefault("prefs", {})
+            parsed.setdefault("last_recipe", None)
             self.data = parsed
             self.load_ok = True
             return True
@@ -415,11 +461,34 @@ class PantryProCapability(MatchingCapability):
         )
         return asks_when and mentions_expire
 
+    def _looks_like_email_recipe(self, text: str) -> bool:
+        lower = (text or "").lower()
+        asks_send = any(p in lower for p in ("email", "send", "text me"))
+        return asks_send and "recipe" in lower
+
+    def _looks_like_email_list(self, text: str) -> bool:
+        lower = (text or "").lower()
+        asks_send = any(p in lower for p in ("email", "send", "text me"))
+        mentions_list = any(
+            p in lower
+            for p in ("shopping list", "grocery list", "the list", "my list")
+        )
+        if "recipe" in lower:
+            return False
+        return asks_send and mentions_list
+
     def _refine_result(self, result: dict, user_input: str) -> dict:
         # fix common misroutes before dispatch
         intent = (result.get("intent") or "unknown").lower()
         if intent == "list" and _wants_full_list(user_input):
             result["full_list"] = True
+
+        if self._looks_like_email_recipe(user_input):
+            result["intent"] = "email_recipe"
+            return result
+        if self._looks_like_email_list(user_input):
+            result["intent"] = "email_list"
+            return result
 
         if self._looks_like_item_date(user_input) and intent in (
             "expiring", "unknown", "list", "tips",
@@ -519,14 +588,6 @@ class PantryProCapability(MatchingCapability):
         parts = n.split()
         return parts[-1] if parts else n
 
-    def _parse_meal_ingredients(self, meal: dict) -> list:
-        out = []
-        for i in range(1, 21):
-            ing = _norm(meal.get(f"strIngredient{i}", ""))
-            if ing:
-                out.append(ing)
-        return out
-
     def _missing_for(self, ingredients: list) -> list:
         stock = [_norm(i.get("name", "")) for i in self.data.get("items", [])]
         missing = []
@@ -541,6 +602,205 @@ class PantryProCapability(MatchingCapability):
                 continue
             missing.append(ing)
         return missing[:8]
+
+    def _meal_from_pick_speech(self, user_input: str, meals: list):
+        token = _norm(user_input)
+        if not token or not meals:
+            return None
+        first = token.split()[0]
+        idx = {
+            "1": 0, "one": 0, "first": 0,
+            "2": 1, "two": 1, "second": 1,
+            "3": 2, "three": 2, "third": 2,
+        }.get(first)
+        if idx is not None and idx < len(meals):
+            return meals[idx]
+        for meal in meals:
+            name = _norm(meal.get("strMeal", ""))
+            if name and (name in token or token in name):
+                return meal
+        return None
+
+    def _pick_from_recent_history(self, meals: list):
+        history = self.capability_worker.get_full_message_history() or []
+        seen = 0
+        for msg in reversed(history):
+            if msg.get("role") != "user":
+                continue
+            seen += 1
+            if seen > 6:
+                break
+            pick = self._meal_from_pick_speech(msg.get("content") or "", meals)
+            if pick:
+                return pick
+        return None
+
+    async def _finish_recipe_pick(self, pick: dict) -> str:
+        title = pick.get("strMeal") or "that meal"
+        await self.capability_worker.speak(f"Got it, {title}.")
+        card = await self._recipe_card_from_pick(pick)
+        missing = card.get("missing") or []
+        title = card.get("title") or title
+        if missing:
+            self.pending = {
+                "type": "shop_missing",
+                "names": missing,
+                "meal": title,
+                "card": card,
+            }
+            return (
+                f"You're missing {_join_and(missing[:5])}. "
+                "Add those to the shopping list?"
+            )
+        self.pending = {"type": "email_recipe_offer"}
+        return f"Want me to email you the {title} recipe?"
+
+    def _llm_steps(self, title: str, ingredients: list) -> list:
+        raw = self.capability_worker.text_to_text_response(
+            f'Write a short home recipe for {title}. '
+            f'On-hand ingredients: {_join_and(ingredients) or "use common pantry items"}. '
+            'Return ONLY JSON: {"steps":["one short sentence"]}. '
+            "4 to 8 steps. no numbering inside the strings.",
+            system_prompt="return only valid json. no markdown.",
+        )
+        parsed = _parse_json(raw)
+        steps = parsed.get("steps") if isinstance(parsed, dict) else []
+        if not isinstance(steps, list):
+            return []
+        return [str(s).strip() for s in steps if str(s).strip()][:8]
+
+    async def _recipe_card_from_pick(self, pick: dict) -> dict:
+        title = pick.get("strMeal") or "that meal"
+        meal_id = pick.get("idMeal") or ""
+        detail = await self._lookup_meal(meal_id) if meal_id else {}
+        ings = _measured_ingredients(detail) if detail else []
+        if not ings:
+            ings = [_norm(u) for u in (pick.get("uses") or []) if u]
+        steps = _steps_from_instructions((detail or {}).get("strInstructions") or "")
+        # skip llm here — generating steps blocked the voice loop and the
+        # main agent stole the next utterances. fill steps at email time.
+        missing = self._missing_for([_norm(i) for i in ings])
+        card = {
+            "title": (detail.get("strMeal") if detail else None) or title,
+            "steps": steps[:20],
+            "ingredients": ings,
+            "missing": missing,
+            "source": (detail.get("strSource") or detail.get("strYoutube") or "") if detail else "",
+        }
+        self.data["last_recipe"] = card
+        await self._save()
+        return card
+
+    def _format_recipe_message(self, card: dict) -> str:
+        title = card.get("title") or "Recipe"
+        ings = card.get("ingredients") or []
+        steps = card.get("steps") or []
+        missing = card.get("missing") or []
+        lines = [title, "", "Ingredients:"]
+        if ings:
+            lines.extend(f"- {i}" for i in ings)
+        else:
+            lines.append("- (none listed)")
+        if missing:
+            lines.extend(["", "Still need:", *[f"- {m}" for m in missing]])
+        if steps:
+            lines.extend(["", "Steps:"])
+            lines.extend(f"{i + 1}. {s}" for i, s in enumerate(steps))
+        source = card.get("source") or ""
+        if source:
+            lines.extend(["", f"Source: {source}"])
+        lines.extend(["", "Sent by PantryPro on OpenHome."])
+        return "\n".join(lines)
+
+    def _format_shop_message(self) -> str:
+        shopping = self.data.get("shopping") or []
+        lines = ["Shopping list", ""]
+        if shopping:
+            lines.extend(f"- {item}" for item in shopping)
+        else:
+            lines.append("(empty)")
+        lines.extend(["", "Sent by PantryPro on OpenHome."])
+        return "\n".join(lines)
+
+    def _smtp_ready(self) -> bool:
+        try:
+            email = self.capability_worker.get_api_keys(SENDER_EMAIL_KEY)
+            password = self.capability_worker.get_api_keys(SENDER_PASSWORD_KEY)
+            return bool(email and password)
+        except Exception:
+            return False
+
+    def _saved_email(self) -> str:
+        prefs = self.data.get("prefs") or {}
+        return (prefs.get("email") or "").strip()
+
+    def _try_email(self, recipient: str, subject: str, body: str) -> bool:
+        try:
+            sender = self.capability_worker.get_api_keys(SENDER_EMAIL_KEY)
+            password = self.capability_worker.get_api_keys(SENDER_PASSWORD_KEY)
+            if not sender or not password or not recipient:
+                return False
+            return bool(self.capability_worker.send_email(
+                host=SMTP_HOST,
+                port=SMTP_PORT,
+                sender_email=sender,
+                sender_password=password,
+                receiver_email=recipient,
+                cc_emails=[],
+                subject=subject,
+                body=body,
+                attachment_paths=[],
+            ))
+        except Exception as e:
+            self._err(f"email send failed: {e}")
+            return False
+
+    def _smtp_setup_speech(self) -> str:
+        return (
+            "Sending isn't set up yet. In OpenHome Settings, add API keys named "
+            "pantrypro_sender_email and pantrypro_sender_password "
+            "(a Gmail app password)."
+        )
+
+    async def _email_or_ask(self, kind: str) -> str:
+        # kind is "recipe" or "list"
+        if kind == "recipe":
+            card = dict(self.data.get("last_recipe") or {})
+            if not card.get("title"):
+                return "Pick a recipe first. Say what can I cook."
+        else:
+            shopping = self.data.get("shopping") or []
+            if not shopping:
+                return "Your shopping list is empty."
+
+        if not self._smtp_ready():
+            return self._smtp_setup_speech()
+
+        saved = self._saved_email()
+        if not saved:
+            self.pending = {"type": "need_email", "kind": kind}
+            return "What email should I send it to?"
+
+        if kind == "recipe":
+            if not card.get("steps"):
+                card["steps"] = self._llm_steps(
+                    card.get("title") or "",
+                    card.get("ingredients") or [],
+                )
+                self.data["last_recipe"] = card
+                await self._save()
+            subject = f"PantryPro: {card.get('title')}"
+            body = self._format_recipe_message(card)
+        else:
+            subject = "PantryPro: shopping list"
+            body = self._format_shop_message()
+
+        ok = self._try_email(saved, subject, body)
+        if ok:
+            if kind == "recipe":
+                return f"Sent the recipe to {saved}."
+            return f"Sent the shopping list to {saved}."
+        return "I couldn't send that just now. Try again in a moment."
 
     def _http_get(self, url: str, params: dict):
         # session_tasks.get is the documented sdk http helper (blocking)
@@ -858,6 +1118,12 @@ class PantryProCapability(MatchingCapability):
         numbered = ". ".join(f"{i + 1}, {n}" for i, n in enumerate(names))
         return f"{lead}I can do {numbered}. Pick a number, or say skip."
 
+    async def _handle_email_recipe(self) -> str:
+        return await self._email_or_ask("recipe")
+
+    async def _handle_email_list(self) -> str:
+        return await self._email_or_ask("list")
+
     async def _handle_shop_add(self, specs: list) -> str:
         names = [_norm(s.get("name", "")) for s in specs]
         added = self._shop_add(names)
@@ -926,10 +1192,18 @@ class PantryProCapability(MatchingCapability):
             return self._expiring_speech()
         if intent == "recipes":
             return await self._handle_recipes()
+        if intent == "email_recipe":
+            return await self._handle_email_recipe()
+        if intent == "email_list":
+            return await self._handle_email_list()
         if intent == "shop_add":
             return await self._handle_shop_add(specs)
         if intent == "shop_read":
-            return self._shop_speech()
+            speech = self._shop_speech()
+            if self.data.get("shopping"):
+                self.pending = {"type": "email_list_offer"}
+                speech += " Want me to email it?"
+            return speech
         if intent == "shop_clear":
             if not self.data.get("shopping"):
                 return "The shopping list is already empty."
@@ -958,11 +1232,10 @@ class PantryProCapability(MatchingCapability):
         pending = self.pending
         if not pending:
             return ""
-        if self._is_cancel(user_input):
+        ptype = pending.get("type")
+        if self._is_cancel(user_input) and ptype not in ("need_email",):
             self.pending = None
             return "Okay, skipped."
-
-        ptype = pending.get("type")
 
         if ptype == "list_full":
             loc = pending.get("location_filter") or "all"
@@ -1026,9 +1299,9 @@ class PantryProCapability(MatchingCapability):
         if ptype == "shop_used":
             names = pending.get("names") or []
             if self._is_yes(user_input):
-                self.pending = None
                 added = self._shop_add(names)
                 warn = await self._persist()
+                self.pending = None
                 return f"Added {_join_and(added or names)} to the shopping list." + warn
             if self._is_no(user_input):
                 self.pending = None
@@ -1048,53 +1321,81 @@ class PantryProCapability(MatchingCapability):
 
         if ptype == "recipe_pick":
             meals = pending.get("meals") or []
-            lower = user_input.lower().strip()
-            pick = None
-            if lower in ("1", "one", "first"):
-                pick = meals[0] if meals else None
-            elif lower in ("2", "two", "second") and len(meals) > 1:
-                pick = meals[1]
-            elif lower in ("3", "three", "third") and len(meals) > 2:
-                pick = meals[2]
-            else:
-                for m in meals:
-                    if _norm(m.get("strMeal", "")) in _norm(user_input) or _norm(user_input) in _norm(m.get("strMeal", "")):
-                        pick = m
-                        break
+            if _wants_any(user_input, REPEAT_WORDS) or any(
+                p in (user_input or "").lower()
+                for p in ("choices", "options", "what were they", "list them")
+            ):
+                names = [m.get("strMeal", "a meal") for m in meals]
+                numbered = ". ".join(f"{i + 1}, {n}" for i, n in enumerate(names))
+                return f"I can do {numbered}. Pick a number, or say skip."
+
+            pick = self._meal_from_pick_speech(user_input, meals)
+            if not pick and self._looks_like_email_recipe(user_input):
+                pick = self._pick_from_recent_history(meals)
+                if not pick:
+                    return "Pick 1, 2, or 3 first, then I can email that recipe."
             if not pick:
                 return "Say 1, 2, or 3, or skip."
-
-            meal_id = pick.get("idMeal") or ""
-            title = pick.get("strMeal", "that meal")
-            missing = []
-            if meal_id:
-                detail = await self._lookup_meal(meal_id)
-                ings = self._parse_meal_ingredients(detail) if detail else []
-                missing = self._missing_for(ings)
-            elif pick.get("uses"):
-                missing = self._missing_for([_norm(u) for u in pick["uses"]])
-
-            self.pending = None
-            if missing:
-                self.pending = {"type": "shop_missing", "names": missing, "meal": title}
-                return (
-                    f"{title}. You're missing {_join_and(missing[:5])}. "
-                    "Add those to the shopping list?"
-                )
-            return f"{title}. You already have what you need. Want another idea?"
+            return await self._finish_recipe_pick(pick)
 
         if ptype == "shop_missing":
             names = pending.get("names") or []
+            card = pending.get("card") or self.data.get("last_recipe") or {}
+            title = card.get("title") or pending.get("meal") or "that recipe"
             if self._is_yes(user_input):
-                self.pending = None
                 added = self._shop_add(names)
                 warn = await self._persist()
-                return f"Added {_join_and(added or names)} to the shopping list." + warn
+                self.pending = {"type": "email_recipe_offer"}
+                return (
+                    f"Added {_join_and(added or names)} to the shopping list.{warn} "
+                    f"Want me to email you the {title} recipe?"
+                )
             if self._is_no(user_input):
-                self.pending = None
-                return "Okay, I won't add them."
+                self.pending = {"type": "email_recipe_offer"}
+                return f"Okay. Want me to email you the {title} recipe?"
             self.pending = None
             return ""
+
+        if ptype == "email_recipe_offer":
+            lower = user_input.lower()
+            if any(w in lower for w in ("list", "shop", "grocery")):
+                self.pending = None
+                return await self._email_or_ask("list")
+            if self._is_yes(user_input) or "email" in lower or "send" in lower:
+                self.pending = None
+                return await self._email_or_ask("recipe")
+            if self._is_no(user_input) or self._is_cancel(user_input):
+                self.pending = None
+                return "Okay. Anything else?"
+            self.pending = None
+            return ""
+
+        if ptype == "email_list_offer":
+            lower = user_input.lower()
+            if "recipe" in lower:
+                self.pending = None
+                return await self._email_or_ask("recipe")
+            if self._is_yes(user_input) or "email" in lower or "send" in lower:
+                self.pending = None
+                return await self._email_or_ask("list")
+            if self._is_no(user_input) or self._is_cancel(user_input):
+                self.pending = None
+                return "Okay. Anything else?"
+            self.pending = None
+            return ""
+
+        if ptype == "need_email":
+            kind = pending.get("kind") or "recipe"
+            if self._is_cancel(user_input) or self._is_no(user_input):
+                self.pending = None
+                return "Okay, no email. Anything else?"
+            addr = _normalize_email(user_input)
+            if not _looks_like_email(addr):
+                return "I need an email like name at gmail dot com."
+            self.data.setdefault("prefs", {})["email"] = addr
+            await self._save()
+            self.pending = None
+            return await self._email_or_ask(kind)
 
         self.pending = None
         return ""
