@@ -24,6 +24,7 @@ import re
 import sys
 from pathlib import Path
 
+from .abilities import VALID_CATEGORIES
 from .client import OpenHomeClient
 from .config import Config
 from .errors import NotAuthenticatedError, OpenHomeError, SessionExpiredError
@@ -135,10 +136,25 @@ def cmd_agents(args: argparse.Namespace) -> int:
     return 0
 
 
+# The frontend shows some categories under a different name than the API
+# value. Only list ones that actually differ.
+CATEGORY_DISPLAY_NAMES = {
+    "brain_skill": "Agent_Controlled",
+}
+
+
+def _display_category(category: str) -> str:
+    display = CATEGORY_DISPLAY_NAMES.get(category)
+    return f"{display} ({category})" if display else category
+
+
 def cmd_templates(args: argparse.Namespace) -> int:
+    from .templates import template_category
+
     client = OpenHomeClient()
     for t in client.list_templates():
-        print(f"{t.name}\t({t.source})")
+        category = template_category(t.name) or "skill"
+        print(f"{t.name}\t({t.source})\tCategory: {_display_category(category)}")
     return 0
 
 
@@ -158,7 +174,18 @@ def _prompt(label: str, *, required: bool = False, default: str = "") -> str:
             return default
 
 
+def _ability_name(name: str) -> str:
+    """The account requires alphanumeric ability names; folders may use hyphens."""
+    cleaned = name.replace("-", "")
+    if cleaned != name:
+        print(f"  note: using '{cleaned}' as the ability name (alphanumeric required)")
+    return cleaned
+
+
 def cmd_create(args: argparse.Namespace) -> int:
+    from .templates import template_category
+    from .workspace import read_manifest, write_manifest
+
     client = OpenHomeClient()
 
     # Validate any --triggers flag BEFORE scaffolding, so a bad flag exits
@@ -175,14 +202,29 @@ def cmd_create(args: argparse.Namespace) -> int:
     )
     print(f"✓ Created ability at {dest}")
 
+    category = args.category or template_category(args.template) or "skill"
+
+    # Collect triggers/description now, whether or not we're pushing today, so
+    # a later `openhome push` has everything it needs without repeating flags.
+    # The prompt re-asks until every trigger word is valid.
+    if not triggers:
+        triggers = _prompt_triggers()
+    description = args.description or _prompt(
+        "Description", default=f"{args.name} ability"
+    )
+
+    manifest = read_manifest(dest)
+    manifest.update(
+        {"category": category, "trigger_words": triggers, "description": description}
+    )
+    write_manifest(dest, manifest)
+
     if args.no_push:
+        print(f"  category: {category}")
+        print(f"  triggers: {', '.join(triggers) if triggers else '(none yet)'}")
         print(f"  Edit {dest / 'main.py'}, then: openhome push {dest}")
         return 0
 
-    # Trigger words required to push. Flag validated above; prompt if absent
-    # (the prompt re-asks until every word is valid).
-    if not triggers:
-        triggers = _prompt_triggers()
     if not triggers:
         print(
             f"  No trigger words given — not pushed. Add some, then: "
@@ -190,26 +232,20 @@ def cmd_create(args: argparse.Namespace) -> int:
         )
         return 0
 
-    description = args.description or _prompt(
-        "Description", default=f"{args.name} ability"
-    )
-
-    # The account requires an alphanumeric ability name (folder names may have hyphens).
-    ability_name = args.name.replace("-", "")
-    if ability_name != args.name:
-        print(f"  note: using '{ability_name}' as the ability name (alphanumeric required)")
+    ability_name = _ability_name(args.name)
 
     result = client.save_ability(
         dest,
         name=ability_name,
         description=description,
-        category=args.category or "skill",
+        category=category,
         trigger_words=triggers,
         personality_id=args.agent,
     )
     print(f"✓ Pushed '{ability_name}'")
     if result.capability_id:
         print(f"  capability_id: {result.capability_id}")
+    print(f"  category: {category}")
     print(f"  triggers: {', '.join(triggers)}")
     if args.agent:
         print(f"  installed into agent {args.agent}'s call flow")
@@ -272,6 +308,7 @@ def cmd_sync(args: argparse.Namespace) -> int:
 
 
 def cmd_push(args: argparse.Namespace) -> int:
+    from .templates import template_category
     from .workspace import read_manifest
 
     client = OpenHomeClient()
@@ -282,10 +319,13 @@ def cmd_push(args: argparse.Namespace) -> int:
     # Existing ability → update in place (never delete + re-create).
     if cap_id:
         result = client.update_ability(
-            folder, commit=args.commit, message=args.message or ""
+            folder, commit=args.commit, message=args.message or "",
+            category=args.category,
         )
         verb = "Committed" if args.commit else "Saved (draft)"
         print(f"✓ {verb} update to '{manifest.get('name', folder.name)}' (capability_id {cap_id})")
+        if args.category:
+            print(f"  category: {args.category}")
         detail = result.get("detail") if isinstance(result, dict) else None
         if detail:
             print(f"  {detail}")
@@ -294,14 +334,26 @@ def cmd_push(args: argparse.Namespace) -> int:
         return 0
 
     # New ability → create.
-    name = args.name or manifest.get("name") or folder.name
+    name = _ability_name(args.name or manifest.get("name") or folder.name)
     triggers = _split_csv(args.triggers) or manifest.get("trigger_words") or []
+    if not triggers:
+        _err(
+            "No trigger words. Add some with: "
+            f'openhome push {folder} --triggers "a, b"'
+        )
+        return 1
     _check_triggers(triggers)
+    category = (
+        args.category
+        or template_category(manifest.get("template") or "")
+        or manifest.get("category")
+        or "skill"
+    )
     result = client.save_ability(
         folder,
         name=name,
         description=args.description or manifest.get("description") or f"{name} ability",
-        category=args.category or manifest.get("category") or "skill",
+        category=category,
         trigger_words=triggers,
         personality_id=args.agent,
         image=args.image,
@@ -309,6 +361,7 @@ def cmd_push(args: argparse.Namespace) -> int:
     print(f"✓ Created ability '{name}'")
     if result.capability_id:
         print(f"  capability_id: {result.capability_id}")
+    print(f"  category: {category}")
     if result.detail:
         print(f"  {result.detail}")
     if args.agent:
@@ -565,8 +618,9 @@ def build_parser() -> argparse.ArgumentParser:
     p_create.add_argument(
         "--category",
         "-c",
-        default="skill",
-        choices=["skill", "brain_skill", "background_daemon", "local"],
+        default=None,
+        choices=list(VALID_CATEGORIES),
+        help="default: the template's category, else 'skill'",
     )
     p_create.add_argument("--agent", help="agent/personality id to install into")
     p_create.add_argument(
@@ -605,8 +659,8 @@ def build_parser() -> argparse.ArgumentParser:
         "--category",
         "-c",
         default=None,
-        choices=["skill", "brain_skill", "background_daemon", "local"],
-        help="default: manifest value, else 'skill'",
+        choices=list(VALID_CATEGORIES),
+        help="on update: change the category; on create: default from the template",
     )
     p_push.add_argument("--triggers", help="comma-separated trigger words (create only)")
     p_push.add_argument("--agent", help="agent/personality id to install into (create only)")

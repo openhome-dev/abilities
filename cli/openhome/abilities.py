@@ -308,6 +308,7 @@ def edit_installed(
     *,
     enabled: bool | None = None,
     trigger_words: list[str] | None = None,
+    category: str | None = None,
 ) -> dict:
     """PUT the full installed-capability object (the API replaces, not patches)."""
     return transport.request(
@@ -317,7 +318,7 @@ def edit_installed(
         json={
             "enabled": ability.enabled if enabled is None else enabled,
             "name": ability.name,
-            "category": ability.category or "skill",
+            "category": (ability.category or "skill") if category is None else category,
             "trigger_words": (
                 ability.trigger_words if trigger_words is None else trigger_words
             ),
@@ -325,6 +326,16 @@ def edit_installed(
             "agent_capability": ability.agent_capability,
         },
     )
+
+
+def set_category(transport: Transport, id_or_name: str, category: str) -> dict:
+    """Update an installed ability's marketplace category."""
+    if category not in VALID_CATEGORIES:
+        raise OpenHomeError(
+            f"Invalid category '{category}'. One of: {', '.join(VALID_CATEGORIES)}"
+        )
+    ability = find_installed(transport, id_or_name)
+    return edit_installed(transport, ability, category=category)
 
 
 def set_trigger_words(

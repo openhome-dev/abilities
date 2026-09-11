@@ -13,8 +13,9 @@ import subprocess
 import sys
 import threading
 import time
+import uuid
 from pathlib import Path
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlparse
 
 from .config import CONFIG_DIR, Config
 
@@ -694,9 +695,15 @@ def detect_hermes(allow_install: bool = False) -> tuple[str, str]:
 
 
 def detect_openclaw() -> tuple[str, str]:
-    """Ready only if the OpenClaw gateway is up. Uses ``gateway status --json
-    --no-probe`` so the check reflects the service and doesn't fail on unresolved
-    auth (the auth-gated probe gives false negatives on fresh installs)."""
+    """Ready only if the OpenClaw gateway is up. If our own socket is already
+    connected, that's authoritative - no need to also shell out to the CLI on
+    every check, which would partly defeat the point of holding it warm.
+
+    Otherwise uses ``gateway status --json --no-probe`` so the check reflects
+    the service and doesn't fail on unresolved auth (the auth-gated probe
+    gives false negatives on fresh installs)."""
+    if _gateway["ready"]:
+        return READY, ""
     binary = which("openclaw")
     if not binary:
         return ABSENT, ""
@@ -752,52 +759,329 @@ def openclaw_agent_id(binary: str) -> str:
     return agent_id
 
 
-def parse_openclaw_reply(stdout: str) -> str | None:
-    """Extract the reply from ``openclaw agent --json`` output, or None if the
-    output isn't parseable JSON."""
-    try:
-        obj = json.loads(stdout)
-    except (ValueError, TypeError):
-        return None
+# ── OpenClaw Gateway RPC ─────────────────────────────────────────────────────
+# OpenClaw is driven over its Gateway WebSocket RPC rather than shelling out
+# to the `openclaw` CLI per turn. One connection is held for the worker's
+# lifetime; each request is an `agent` call followed by `agent.wait`.
+
+GATEWAY_URL = "ws://127.0.0.1:18789"
+
+# `agent` accepts extraSystemPrompt directly, so this travels as its own
+# field on every call instead of being mixed into the user's message.
+OPENCLAW_VOICE_HINT = (
+    "You are being reached through OpenHome, a voice AI platform. This "
+    "conversation happens over a voice interface - your reply will be "
+    "spoken aloud, not read as text.\n\n"
+    "Respond quickly: give the answer first, don't narrate what you're about "
+    "to do, and don't over-deliberate before acting. Your full tools and "
+    "capabilities remain available - use them whenever they're genuinely "
+    "needed for a correct answer.\n\n"
+    "Keep replies short and speakable: a few plain sentences, no markdown, "
+    "no bullet lists, no code blocks, no headers."
+)
+
+_gateway = {
+    "thread": None,
+    "loop": None,
+    "ws": None,
+    "ready": False,
+    "error": None,
+    "session_key": None,
+}
+
+_gateway_lock = threading.Lock()
+
+
+def _gateway_parse(raw) -> dict:
+    """Parse one Gateway frame. Raises on anything that isn't a JSON object."""
+    text = raw if isinstance(raw, str) else raw.decode()
+    obj = json.loads(text)
     if not isinstance(obj, dict):
+        raise ValueError(f"gateway sent a non-object frame: {text[:200]!r}")
+    return obj
+
+
+def gateway_token() -> str | None:
+    """Gateway auth token from the environment or OpenClaw's config, if set.
+
+    A loopback-only gateway often has none, so returning None is normal.
+    """
+    for var in ("OPENCLAW_GATEWAY_TOKEN", "OPENCLAW_GATEWAY_PASSWORD"):
+        value = os.environ.get(var)
+        if value:
+            return value
+    config_path = os.path.expanduser("~/.openclaw/openclaw.json")
+    try:
+        with open(config_path, encoding="utf-8") as f:
+            config = json.load(f)
+        auth = (config.get("gateway") or {}).get("auth") or {}
+        token = auth.get("token") or auth.get("password")
+        return token if isinstance(token, str) and token else None
+    except Exception:
         return None
-    result = obj.get("result")
-    if isinstance(result, dict):
-        payloads = result.get("payloads")
-        if isinstance(payloads, list):
-            texts = [p.get("text") for p in payloads if isinstance(p, dict) and p.get("text")]
-            if texts:
-                return "\n".join(texts).strip()
-        meta = result.get("meta")
-        if isinstance(meta, dict):
-            visible = meta.get("finalAssistantVisibleText")
-            if isinstance(visible, str) and visible.strip():
-                return visible.strip()
-    return None
+
+
+def gateway_url() -> str:
+    """Gateway WebSocket URL, overridable via OPENCLAW_GATEWAY_URL."""
+    return os.environ.get("OPENCLAW_GATEWAY_URL") or GATEWAY_URL
+
+
+async def _gateway_connect(timeout: float) -> None:
+    """Open the Gateway socket and complete the connect handshake.
+
+    Connects as a trusted local backend client (no signed device identity),
+    which is only safe against a loopback gateway - a non-loopback URL logs a
+    warning. The gateway sends a connect.challenge event before any request
+    is sent; that must be received first even though this auth mode doesn't
+    need to sign it.
+    """
+    import websockets
+
+    url = gateway_url()
+    if urlparse(url).hostname not in ("127.0.0.1", "localhost", "::1"):
+        log.warning("OpenClaw gateway URL is not loopback (%s); connecting without "
+                    "device signing is only safe for a local gateway", url)
+
+    ws = await asyncio.wait_for(websockets.connect(url, max_size=2 ** 22), timeout)
+    deadline = time.monotonic() + timeout
+
+    while True:
+        raw = await asyncio.wait_for(ws.recv(), max(0.5, deadline - time.monotonic()))
+        msg = _gateway_parse(raw)
+        log.debug("gateway <- %s", shorten(str(msg)))
+        if msg.get("type") == "event" and msg.get("event") == "connect.challenge":
+            break
+        if time.monotonic() >= deadline:
+            raise RuntimeError("gateway never sent connect.challenge")
+
+    connect_params = {
+        "minProtocol": 4,
+        "maxProtocol": 4,
+        "client": {"id": "gateway-client", "version": "1", "platform": os_name(),
+                   "mode": "backend"},
+        "role": "operator",
+        "scopes": ["operator.read", "operator.write"],
+        "caps": [],
+        "commands": [],
+        "permissions": {},
+    }
+    token = gateway_token()
+    if token:
+        connect_params["auth"] = {"token": token}
+
+    request_id = uuid.uuid4().hex
+    await ws.send(dumps({"type": "req", "id": request_id, "method": "connect",
+                         "params": connect_params}))
+
+    while time.monotonic() < deadline:
+        raw = await asyncio.wait_for(ws.recv(), max(0.5, deadline - time.monotonic()))
+        msg = _gateway_parse(raw)
+        log.debug("gateway <- %s", shorten(str(msg)))
+        if msg.get("id") == request_id and msg.get("type") == "res":
+            if not msg.get("ok"):
+                raise RuntimeError(f"gateway rejected connect: {msg.get('error')}")
+            _gateway["ws"] = ws
+            _gateway["ready"] = True
+            log.info("OpenClaw gateway connected (%s)", url)
+            return
+    raise RuntimeError("gateway did not answer the connect handshake")
+
+
+def gateway_start(timeout: float = 30.0) -> bool:
+    """Connect to the OpenClaw Gateway on a background loop. Safe to re-call."""
+    if _gateway["ready"]:
+        return True
+
+    loop = asyncio.new_event_loop()
+    thread = threading.Thread(
+        target=lambda: (asyncio.set_event_loop(loop), loop.run_forever()),
+        daemon=True, name="openclaw-gateway",
+    )
+    thread.start()
+    _gateway["thread"] = thread
+    _gateway["loop"] = loop
+
+    try:
+        asyncio.run_coroutine_threadsafe(_gateway_connect(timeout), loop).result(timeout + 5)
+        return True
+    except Exception as exc:
+        _gateway["error"] = str(exc) or type(exc).__name__
+        log.error("OpenClaw gateway connect failed: %s", _gateway["error"])
+        gateway_stop()
+        return False
+
+
+async def _gateway_disconnect() -> None:
+    """Close the socket and cancel pending tasks. Must run on the gateway's
+    own loop, before that loop stops."""
+    ws = _gateway.get("ws")
+    if ws is not None:
+        try:
+            await asyncio.wait_for(ws.close(), timeout=3.0)
+        except Exception:
+            pass
+    current_task = asyncio.current_task()
+    pending = [task for task in asyncio.all_tasks() if task is not current_task]
+    for task in pending:
+        task.cancel()
+    if pending:
+        await asyncio.gather(*pending, return_exceptions=True)
+
+
+def gateway_stop() -> None:
+    """Close the Gateway socket and stop its background loop."""
+    loop = _gateway.get("loop")
+    if loop is not None and loop.is_running():
+        try:
+            asyncio.run_coroutine_threadsafe(_gateway_disconnect(), loop).result(timeout=5.0)
+        except Exception:
+            pass
+        try:
+            loop.call_soon_threadsafe(loop.stop)
+        except Exception:
+            pass
+    thread = _gateway.get("thread")
+    if thread is not None:
+        thread.join(timeout=2.0)
+    for key in ("thread", "loop", "ws", "session_key"):
+        _gateway[key] = None
+    _gateway["ready"] = False
+
+
+async def _gateway_abort(run_id: str) -> None:
+    """Ask the Gateway to stop a run we've given up waiting on. Best effort:
+    the run may already have finished by the time this arrives."""
+    try:
+        ws = _gateway["ws"]
+        await ws.send(dumps({
+            "type": "req", "id": uuid.uuid4().hex, "method": "sessions.abort",
+            "params": {"runId": run_id},
+        }))
+    except Exception as exc:
+        log.debug("sessions.abort failed: %s", exc)
+
+
+def _extract_reply_text(msg: dict) -> tuple[str | None, str | None]:
+    """Pull assistant text out of a streamed event, as (delta, full_text).
+
+    Kept as two separate values so a turn that sends both an incremental
+    delta and a full cumulative snapshot never gets double-counted.
+    """
+    payload = msg.get("payload") if isinstance(msg.get("payload"), dict) else msg
+    delta = payload.get("deltaText")
+    full_text = payload.get("message")
+    delta = delta if isinstance(delta, str) and delta else None
+    full_text = full_text if isinstance(full_text, str) and full_text else None
+    return delta, full_text
+
+
+async def _gateway_turn(text: str, session_key: str, timeout: float) -> str:
+    """Run one agent turn and return the reply.
+
+    Starts the run with `agent`, then waits for it with `agent.wait` while
+    collecting streamed reply text along the way. A run that doesn't finish
+    in time is aborted before the timeout is raised.
+    """
+    ws = _gateway["ws"]
+    run_id = None
+    delta_chunks: list[str] = []
+    full_text: str | None = None
+    agent_request_id = uuid.uuid4().hex
+    wait_request_id = uuid.uuid4().hex
+
+    await ws.send(dumps({
+        "type": "req", "id": agent_request_id, "method": "agent",
+        "params": {"sessionKey": session_key, "message": text,
+                   "extraSystemPrompt": OPENCLAW_VOICE_HINT,
+                   "idempotencyKey": uuid.uuid4().hex},
+    }))
+
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        remaining = deadline - time.monotonic()
+        try:
+            raw = await asyncio.wait_for(ws.recv(), max(1.0, remaining))
+        except asyncio.TimeoutError:
+            if run_id:
+                await _gateway_abort(run_id)
+            raise TimeoutError("openclaw run timed out")
+
+        msg = _gateway_parse(raw)
+        log.debug("gateway <- %s", shorten(str(msg)))
+
+        if msg.get("id") == agent_request_id:
+            if not msg.get("ok"):
+                raise RuntimeError(f"agent call failed: {msg.get('error')}")
+            payload = msg.get("payload") or {}
+            run_id = payload.get("runId")
+            if not run_id:
+                raise RuntimeError(f"agent call returned no runId: {payload!r}")
+            await ws.send(dumps({
+                "type": "req", "id": wait_request_id, "method": "agent.wait",
+                "params": {"runId": run_id, "timeoutMs": int(max(0, remaining) * 1000)},
+            }))
+            continue
+
+        if msg.get("id") == wait_request_id:
+            payload = msg.get("payload") or {}
+            status = payload.get("status")
+            if status == "timeout":
+                await _gateway_abort(run_id)
+                raise TimeoutError("openclaw run timed out")
+            if status == "error" or not msg.get("ok"):
+                detail = payload.get("error") or msg.get("error") or "unknown error"
+                return f"OpenClaw couldn't complete that: {detail}"
+            break
+
+        payload = msg.get("payload") or {}
+        if run_id and msg.get("event") == "agent" and payload.get("runId") == run_id:
+            data = payload.get("data") or {}
+            delta = data.get("delta")
+            snapshot = data.get("text")
+            if isinstance(delta, str) and delta:
+                delta_chunks.append(delta)
+            if isinstance(snapshot, str) and snapshot:
+                full_text = snapshot
+            continue
+
+        delta, snapshot = _extract_reply_text(msg)
+        if delta:
+            delta_chunks.append(delta)
+        if snapshot:
+            full_text = snapshot
+
+    if full_text:
+        return full_text.strip() or "(no output)"
+    return "".join(delta_chunks).strip() or "(no output)"
 
 
 def run_openclaw(data: str, timeout: float) -> str:
-    """Run one OpenClaw agent turn through the gateway and return the reply.
+    """Send one utterance to OpenClaw over the Gateway and return the reply.
 
-    ``--agent`` gives the turn a session target; ``--json`` gives clean output we
-    parse. (This is the agent path, not ``message send``, which is channel messaging.)
+    Requests are serialized: one OpenClaw run at a time per worker.
     """
-    binary = which("openclaw") or "openclaw"
-    agent = openclaw_agent_id(binary)
-    proc = _run(
-        [binary, "agent", "--agent", agent, "--message", data, "--json"],
-        capture_output=True, text=True, timeout=timeout,
-    )
-    out = (proc.stdout or "").strip()
-    err = (proc.stderr or "").strip()
+    if not _gateway_lock.acquire(timeout=timeout):
+        raise TimeoutError("another OpenClaw request is still running")
+    try:
+        if not _gateway["ready"] and not gateway_start(timeout):
+            raise RuntimeError(_gateway.get("error") or "OpenClaw gateway not reachable")
 
-    reply = parse_openclaw_reply(out)
-    if reply is not None:
+        if not _gateway["session_key"]:
+            agent_id = openclaw_agent_id(which("openclaw") or "openclaw")
+            _gateway["session_key"] = f"agent:{agent_id}:main"
+
+        log.info("OpenClaw request: %s", shorten(data))
+        try:
+            reply = asyncio.run_coroutine_threadsafe(
+                _gateway_turn(data, _gateway["session_key"], timeout), _gateway["loop"]
+            ).result(timeout + 5)
+        except Exception:
+            gateway_stop()
+            raise
+        log.info("OpenClaw reply: %s", shorten(reply))
         return reply
-    if "error" in err.lower() or "error" in out.lower():
-        detail = (err or out).splitlines()[0] if (err or out) else "unknown error"
-        return f"OpenClaw couldn't complete that: {detail}"
-    return out or err or "(no output)"
+    finally:
+        _gateway_lock.release()
 
 
 AGENTS: dict[str, dict] = {
@@ -873,8 +1157,8 @@ def run_agent(target: str, data: str, timeout: float) -> dict:
     state, hint = agent_status(spec)
     if state != READY:
         return {"status": "error", "error": hint or f"{target} is not available"}
-    if target == "hermes":
-        # ACP turns can involve several LLM calls plus tool execution (we've
+    if target in ("hermes", "openclaw"):
+        # Agent turns can involve several LLM calls plus tool execution (we've
         # seen 40s+ turns); don't let the generic 30s default cut them off.
         timeout = max(timeout, 120.0)
     try:
@@ -994,6 +1278,11 @@ async def serve(config: Config, client_id: str, role: str, timeout: float, once:
         if state == READY:
             acp_start(timeout)
 
+    if which("openclaw"):
+        state, _ = detect_openclaw()
+        if state == READY:
+            gateway_start(timeout)
+
     url = local_link_url(config, client_id, role)
     backoff = 1.0
     while True:
@@ -1056,6 +1345,7 @@ def run_worker(config: Config, client_id: str = "laptop", role: str = "agent",
         log.info("Local Link stopped")
     finally:
         acp_stop()
+        gateway_stop()
     return 0
 
 
