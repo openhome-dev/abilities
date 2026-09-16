@@ -1,0 +1,5 @@
+numpy>=1.26
+sounddevice>=0.4.6
+soundfile>=0.12
+scipy>=1.11
+ai-edge-litert>=1.0

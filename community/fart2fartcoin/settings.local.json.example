@@ -1,0 +1,11 @@
+{
+  "fartfinder_transport": "local",
+  "fartfinder_local_cmd": "/ABS/PATH/TO/openhome-fart2fart/.venv/bin/python /ABS/PATH/TO/openhome-fart2fart/abilities/user/fart2fart/devkit_functions.py",
+  "fartfinder_hooks": "speak,buy",
+  "bankr_read_key": "",
+  "bankr_trade_key": "",
+  "fart2fart_buy_usd": "1",
+  "fart2fart_route": "base_to_solana",
+  "fart2fart_mode": "dry_run",
+  "fart2fart_slippage_bps": "300"
+}
