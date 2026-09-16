@@ -16,20 +16,24 @@ from src.main import AgentWorker
 # Buy and sell Bitcoin / Ethereum by voice through the user's Bankr wallet.
 #
 # Voice carries intent, never authority. Every trade is quoted first, read back
-# in dollars, and confirmed by the user repeating the dollar amount. Assets come
-# from a fixed spoken menu; amounts are always in US dollars. The only things
-# this ability can do are: read the portfolio, read a price, swap between USD /
-# BTC / ETH inside the wallet, and lock itself for a while. It cannot add
-# recipients, change limits, or send funds anywhere.
+# in dollars, and confirmed by the user repeating the dollar amount. Amounts are
+# always in US dollars. BTC / ETH / USD resolve locally; any other token is
+# looked up through Bankr's Agent API with the READ-ONLY key (it cannot spend)
+# and executed through the Wallet API. Sells resolve against what the user
+# holds. The ability can read the portfolio, read a price, swap inside the
+# wallet, and lock itself for a while. It cannot add recipients, change limits,
+# or send funds anywhere.
 #
 # Keys (Settings -> API Keys):
-#   bankr_read_key   read-only key   (portfolio, prices, quotes)
-#   bankr_trade_key  wallet-api key  (swap execution)   -- optional; without it
-#                                    the ability is read-only.
+#   bankr_read_key   read-only key, Wallet API + Agent API on  (portfolio, prices, quotes, lookups)
+#   bankr_trade_key  Wallet API key, read-only off             (swap execution) -- optional
 # =============================================================================
 
 BANKR_API = "https://api.bankr.bot"
 COINGECKO_PRICE = "https://api.coingecko.com/api/v3/simple/price"
+DEXSCREENER_SEARCH = "https://api.dexscreener.com/latest/dex/search"
+COINGECKO_SEARCH = "https://api.coingecko.com/api/v3/search"
+COINGECKO_COIN = "https://api.coingecko.com/api/v3/coins/"
 
 READ_KEY_NAME = "bankr_read_key"
 TRADE_KEY_NAME = "bankr_trade_key"
@@ -42,9 +46,15 @@ CHAIN = "base"
 VOICE_MAX_PER_TRADE_USD = Decimal("25")
 VOICE_MAX_DAILY_USD = Decimal("100")
 MIN_TRADE_USD = Decimal("1")
+MIN_SELL_ALL_USD = Decimal("0.25")        # "sell all" of a dust position is refused
 
 QUOTE_MAX_AGE_S = 45          # older than this -> re-quote before executing
-PRICE_DRIFT_MAX = Decimal("0.03")   # quote vs CoinGecko disagreement -> refuse
+PRICE_DRIFT_MAX = Decimal("0.03")         # menu tokens: quote vs CoinGecko
+PRICE_DRIFT_MAX_OTHER = Decimal("0.08")   # resolved tokens: quote vs resolver price
+MIN_MARKET_CAP_USD = Decimal("1000000")   # below this a token is refused by voice
+MIN_LIQUIDITY_USD = Decimal("250000")     # thin pools are refused by voice
+RESOLVE_TIMEOUT_S = 15                    # agent lookup ceiling
+MATCH_RATIO = 0.8                         # fuzzy match floor for held tokens
 DEFAULT_LOCK_S = 24 * 3600
 MISMATCH_PAUSE_S = 15 * 60
 
@@ -87,11 +97,11 @@ KV_SPEND = "openhome_bankr_spend"
 INTENT_SYSTEM_PROMPT = """You extract a trading intent from one spoken sentence.
 Reply with ONLY a JSON object, no prose, no code fences, with these keys:
   action: one of "buy", "sell", "price", "portfolio", "lock", "help", "cancel", "unknown"
-  asset:  one of "BTC", "ETH", "USD", "OTHER", null   ("OTHER" when a coin outside that list was named, e.g. dogecoin, solana)
+  asset:  the coin exactly as the user named it, as a short string, or null  (e.g. "bitcoin", "degen", "pepe", "dollars")
   usd:    a number or null                      (dollar amount mentioned, if any)
   all:    true or false                         (true if the user said "all" / "everything")
   hours:  a number or null                      (only for lock: how long, if stated)
-Rules: "buy fifty dollars of bitcoin" -> buy BTC usd 50. "sell all my ethereum" -> sell ETH all true. "buy ten dollars of dogecoin" -> buy OTHER usd 10.
+Rules: "buy fifty dollars of bitcoin" -> buy "bitcoin" usd 50. "sell all my ethereum" -> sell "ethereum" all true. "buy ten dollars of degen" -> buy "degen" usd 10.
 "what's bitcoin at" / "bitcoin price" -> price BTC. "how's my portfolio" / "check my crypto" / "how much do I have" -> portfolio.
 "open my wallet" with nothing else -> help. Never invent an amount that was not said."""
 
@@ -241,12 +251,14 @@ def usd_words(amount, with_digits=False):
     return s
 
 
-def asset_words(amount, asset):
-    """Speak a crypto amount to at most 5 significant digits, digit by digit
-    after the decimal point so TTS can't slur it."""
+def asset_words(amount, name):
+    """Speak a token amount to at most 5 significant digits, digit by digit
+    after the decimal point so TTS can't slur it. `name` is the display name."""
+    if name in ASSETS:
+        name = ASSETS[name]["name"]
     d = Decimal(amount)
     if d == 0:
-        return f"zero {ASSETS[asset]['name']}"
+        return f"zero {name}"
     sig = 5
     exp = d.adjusted()
     q = Decimal(1).scaleb(exp - sig + 1)
@@ -257,7 +269,7 @@ def asset_words(amount, asset):
         spoken = f"{_int_words(int(whole))} point " + " ".join(_int_words(int(c)) for c in frac)
     else:
         spoken = _int_words(int(s))
-    return f"about {spoken} {ASSETS[asset]['name']}"
+    return f"about {spoken} {name}"
 
 
 def price_words(price):
@@ -266,7 +278,14 @@ def price_words(price):
         return _int_words(int(p.quantize(Decimal("1")))) + " dollars"
     if p >= 1:
         return usd_words(p.quantize(Decimal("0.01")))
-    return f"{format(p.quantize(Decimal('0.0001')).normalize(), 'f')} dollars"
+    cents = p * 100
+    if cents >= 1:
+        c = cents.quantize(Decimal("0.1"))
+        return f"{format(c.normalize(), 'f')} cents"
+    # Sub-cent: three significant digits, spoken digit by digit.
+    sig = cents.quantize(Decimal(1).scaleb(cents.adjusted() - 2), rounding=ROUND_DOWN)
+    digits = format(sig.normalize(), "f")
+    return " ".join("point" if ch == "." else _int_words(int(ch)) for ch in digits) + " of a cent"
 
 
 def about_usd_words(amount):
@@ -294,6 +313,200 @@ def resolve_asset(text):
         if t in a["aliases"]:
             return key
     return None
+
+
+def sanitize_asset_text(text):
+    """Letters, digits and spaces only, max 40 chars. Never the raw utterance."""
+    if not text:
+        return ""
+    t = re.sub(r"[^A-Za-z0-9 ]+", " ", str(text)).strip().lower()
+    t = re.sub(r"\s+", " ", t)
+    return t[:40]
+
+
+_ADDR_RE = re.compile(r"^0x[0-9a-fA-F]{40}$")
+
+
+def parse_resolver_json(raw):
+    """Candidates from the Bankr agent's lookup reply. Anything malformed is
+    dropped; prose is never used. Returns a list (possibly empty)."""
+    if not raw:
+        return []
+    m = re.search(r"\{.*\}", str(raw), re.S)
+    if not m:
+        return []
+    try:
+        obj = json.loads(m.group(0))
+    except json.JSONDecodeError:
+        return []
+    out = []
+    for c in (obj.get("candidates") if isinstance(obj, dict) else None) or []:
+        if not isinstance(c, dict):
+            continue
+        addr = str(c.get("address") or "").strip()
+        name = sanitize_asset_text(c.get("name"))
+        symbol = re.sub(r"[^A-Za-z0-9]", "", str(c.get("symbol") or "")).upper()[:12]
+        try:
+            decimals = int(c.get("decimals"))
+            price = Decimal(str(c.get("price_usd")))
+            mcap = Decimal(str(c.get("market_cap_usd") or 0))
+            conf = float(c.get("confidence") or 0)
+            change = c.get("change_24h_pct")
+            change = float(change) if change is not None else None
+        except (TypeError, ValueError, InvalidOperation):
+            continue
+        if not _ADDR_RE.match(addr) or not name or not (0 <= decimals <= 18) or price <= 0:
+            continue
+        out.append({
+            "name": name.title(), "symbol": symbol or name.upper()[:8], "address": addr,
+            "decimals": decimals, "ref_price": price, "market_cap": mcap,
+            "change_24h": change, "confidence": max(0.0, min(conf, 1.0)), "is_menu": False,
+        })
+    return out[:3]
+
+
+def _name_confidence(query, name, symbol):
+    q, n, sy = _norm(query), _norm(name), _norm(symbol)
+    if not q:
+        return 0.0
+    if q == n or q == sy:
+        return 1.0
+    words = [_norm(w) for w in str(name or "").split()]
+    if q in words or n.startswith(q):
+        return 0.8
+    if sy.startswith(q) or q.startswith(sy) and len(sy) >= 3:
+        return 0.7
+    if q in n:
+        return 0.5
+    return 0.2
+
+
+def dexscreener_candidates(body, query):
+    """Candidates from a DexScreener /latest/dex/search body: Base pairs only,
+    one entry per token (its deepest pool), scored by name match then liquidity.
+    Weak matches (< 0.5) are dropped so loose search hits don't become buys."""
+    best = {}
+    for pair in (body or {}).get("pairs") or []:
+        if not isinstance(pair, dict) or pair.get("chainId") != CHAIN:
+            continue
+        tok = pair.get("baseToken") or {}
+        addr = str(tok.get("address") or "").strip()
+        if not _ADDR_RE.match(addr):
+            continue
+        try:
+            liq = Decimal(str((pair.get("liquidity") or {}).get("usd") or 0))
+            price = Decimal(str(pair.get("priceUsd") or 0))
+            mcap = Decimal(str(pair.get("marketCap") or pair.get("fdv") or 0))
+            h24 = (pair.get("priceChange") or {}).get("h24")
+            h24 = float(h24) if h24 is not None else None
+        except (InvalidOperation, TypeError, ValueError):
+            continue
+        if price <= 0:
+            continue
+        name = sanitize_asset_text(tok.get("name")).title()
+        symbol = re.sub(r"[^A-Za-z0-9]", "", str(tok.get("symbol") or "")).upper()[:12]
+        if not name:
+            continue
+        conf = _name_confidence(query, name, symbol)
+        if conf < 0.5:
+            continue
+        key = addr.lower()
+        if key in best and best[key]["liquidity"] >= liq:
+            continue
+        best[key] = {"name": name, "symbol": symbol or name.upper()[:8], "address": addr,
+                     "decimals": None, "ref_price": price, "market_cap": mcap, "liquidity": liq,
+                     "change_24h": h24, "confidence": conf, "is_menu": False}
+    ranked = sorted(best.values(), key=lambda c: (c["confidence"], c["liquidity"]), reverse=True)
+    return ranked[:3]
+
+
+def coingecko_candidate(coin, query, order):
+    """Candidate record from a CoinGecko /coins/{id} body, or None if the coin
+    has no Base contract. Confidence: exact name/symbol match beats rank order."""
+    try:
+        addr = str(((coin.get("platforms") or {}).get("base")) or "").strip()
+        if not _ADDR_RE.match(addr):
+            return None
+        name = sanitize_asset_text(coin.get("name"))
+        symbol = re.sub(r"[^A-Za-z0-9]", "", str(coin.get("symbol") or "")).upper()[:12]
+        dp = ((coin.get("detail_platforms") or {}).get("base") or {}).get("decimal_place")
+        decimals = int(dp) if dp is not None else 18
+        md = coin.get("market_data") or {}
+        price = Decimal(str((md.get("current_price") or {}).get("usd")))
+        mcap = Decimal(str((md.get("market_cap") or {}).get("usd") or 0))
+        change = md.get("price_change_percentage_24h")
+        change = float(change) if change is not None else None
+    except (TypeError, ValueError, InvalidOperation, AttributeError):
+        return None
+    if not name or price <= 0 or not (0 <= decimals <= 18):
+        return None
+    q = _norm(query)
+    exact = q and (q == _norm(name) or q == _norm(symbol))
+    conf = 1.0 if exact else {0: 0.85, 1: 0.55, 2: 0.35}.get(order, 0.2)
+    return {"name": name.title(), "symbol": symbol or name.upper()[:8], "address": addr,
+            "decimals": decimals, "ref_price": price, "market_cap": mcap,
+            "change_24h": change, "confidence": conf, "is_menu": False}
+
+
+def pick_candidate(cands):
+    """(status, payload): ('none', None) | ('small', cand) | ('ambiguous', [a, b]) | ('ok', cand)."""
+    if not cands:
+        return "none", None
+    cands = sorted(cands, key=lambda c: c["confidence"], reverse=True)
+    big = [c for c in cands
+           if (c.get("market_cap") or 0) >= MIN_MARKET_CAP_USD
+           and (c.get("liquidity") is None or c["liquidity"] >= MIN_LIQUIDITY_USD)]
+    if not big:
+        return "small", cands[0]
+    if len(big) >= 2 and big[0]["confidence"] - big[1]["confidence"] < 0.2:
+        return "ambiguous", big[:2]
+    return "ok", big[0]
+
+
+def _norm(text):
+    return re.sub(r"[^a-z0-9]", "", str(text or "").lower())
+
+
+def match_holding(asset_text, holdings):
+    """(status, payload) against held tokens: ('none', None) | ('ambiguous', [a, b]) | ('ok', h).
+    Exact symbol/name first, then fuzzy on name and symbol."""
+    import difflib
+    q = _norm(asset_text)
+    if not q:
+        return "none", None
+    items = [h for h in holdings.values() if h.get("amount", 0) > 0]
+    exact = [h for h in items if _norm(h.get("symbol")) == q or _norm(h.get("name")) == q]
+    if len(exact) == 1:
+        return "ok", exact[0]
+    if len(exact) > 1:
+        return "ambiguous", exact[:2]
+    # First word of the name ("aerodrome" for "Aerodrome Finance").
+    first = [h for h in items if _norm(str(h.get("name") or "").split(" ")[0]) == q and len(q) >= 3]
+    if len(first) == 1:
+        return "ok", first[0]
+    if len(first) > 1:
+        return "ambiguous", first[:2]
+    scored = []
+    for h in items:
+        r = max(
+            difflib.SequenceMatcher(None, q, _norm(h.get("name"))).ratio(),
+            difflib.SequenceMatcher(None, q, _norm(h.get("symbol"))).ratio(),
+        )
+        if r >= MATCH_RATIO:
+            scored.append((r, h))
+    scored.sort(key=lambda x: x[0], reverse=True)
+    if not scored:
+        return "none", None
+    if len(scored) >= 2 and scored[0][0] - scored[1][0] < 0.1:
+        return "ambiguous", [scored[0][1], scored[1][1]]
+    return "ok", scored[0][1]
+
+
+def menu_token(key):
+    a = ASSETS[key]
+    return {"name": a["name"], "symbol": a["symbol"], "address": a["address"],
+            "decimals": a["decimals"], "ref_price": None, "market_cap": None,
+            "change_24h": None, "confidence": 1.0, "is_menu": True, "key": key}
 
 
 def parse_intent_json(raw):
@@ -324,11 +537,11 @@ def parse_intent_json(raw):
             hours = float(obj["hours"])
         except (TypeError, ValueError):
             hours = None
-    asset_raw = str(obj.get("asset") or "").strip().upper()
-    asset = "OTHER" if asset_raw == "OTHER" else resolve_asset(obj.get("asset"))
+    asset_text = sanitize_asset_text(obj.get("asset"))
     return {
         "action": action,
-        "asset": asset,
+        "asset": resolve_asset(asset_text),   # menu key (BTC/ETH/USD) or None
+        "asset_text": asset_text,            # what the user said, for the resolver
         "usd": usd,
         "all": bool(obj.get("all")),
         "hours": hours,
@@ -423,6 +636,24 @@ def bankr_swap(trade_key, quote_req, min_buy_amount, quote_id, idempotency_key):
     return r.status_code, _safe_json(r)
 
 
+RESOLVER_PROMPT = """You are a token lookup service. Reply with JSON only, no prose, no code fences.
+Find tokens on the Base network (chain id 8453) that match the spoken name: "{asset_text}".
+Return: {{"candidates":[{{"name":"","symbol":"","address":"0x...","decimals":18,
+ "price_usd":0.0,"market_cap_usd":0.0,"change_24h_pct":0.0,"confidence":0.0}}]}}
+Rules: up to 3 candidates, best first, confidence 0-1. Only tokens with a Base contract.
+Do not execute, quote, or trade anything. If nothing matches, return {{"candidates":[]}}."""
+
+
+def bankr_agent_prompt(read_key, prompt):
+    r = requests.post(
+        f"{BANKR_API}/agent/prompt",
+        headers=_headers(read_key),
+        json={"prompt": prompt},
+        timeout=READ_TIMEOUT,
+    )
+    return r.status_code, _safe_json(r)
+
+
 def _safe_json(resp):
     try:
         return resp.json()
@@ -452,6 +683,8 @@ class OpenhomeBankrCapability(MatchingCapability):
     read_key: str = None
     trade_key: str = None
     can_trade: bool = False
+    resolve_cache: dict = None
+    agent_unavailable: bool = False
 
     # Do not change following tag of register capability
     # {{register capability}}
@@ -479,7 +712,7 @@ class OpenhomeBankrCapability(MatchingCapability):
         r = self.worker.session_tasks.get(
             f"{BANKR_API}/wallet/portfolio",
             headers=_headers(self.read_key),
-            params={"chains": CHAIN},
+            params={"chains": CHAIN, "showLowValueTokens": "true"},
             timeout=READ_TIMEOUT,
         )
         return r.status_code, _safe_json(r)
@@ -499,6 +732,154 @@ class OpenhomeBankrCapability(MatchingCapability):
         except Exception as e:
             self._warn(f"coingecko: {e!r}")
             return {}
+
+    def _bankr_job(self, job_id):
+        r = self.worker.session_tasks.get(
+            f"{BANKR_API}/agent/job/{job_id}", headers=_headers(self.read_key), timeout=READ_TIMEOUT
+        )
+        return r.status_code, _safe_json(r)
+
+    def _dexscreener_resolve(self, asset_text):
+        q = sanitize_asset_text(asset_text)
+        r = self.worker.session_tasks.get(DEXSCREENER_SEARCH, params={"q": q}, timeout=READ_TIMEOUT)
+        if r.status_code != 200:
+            raise RuntimeError(f"dexscreener {r.status_code}")
+        body = r.json() or {}
+        hits = len(body.get("pairs") or [])
+        return dexscreener_candidates(body, q), hits
+
+    def _coingecko_resolve(self, asset_text):
+        """Search CoinGecko, take the top few by market-cap rank, keep those with
+        a Base contract. Returns a candidate list ([] if nothing usable)."""
+        q = sanitize_asset_text(asset_text)
+        r = self.worker.session_tasks.get(COINGECKO_SEARCH, params={"query": q}, timeout=READ_TIMEOUT)
+        if r.status_code != 200:
+            raise RuntimeError(f"search {r.status_code}")
+        coins = (r.json() or {}).get("coins") or []
+        hits = len(coins)
+        coins = sorted(coins, key=lambda c: (c.get("market_cap_rank") is None, c.get("market_cap_rank") or 0))[:4]
+        out = []
+        for i, c in enumerate(coins):
+            cid = str(c.get("id") or "")
+            if not cid:
+                continue
+            d = self.worker.session_tasks.get(
+                COINGECKO_COIN + cid,
+                params={"localization": "false", "tickers": "false", "community_data": "false",
+                        "developer_data": "false", "sparkline": "false"},
+                timeout=READ_TIMEOUT,
+            )
+            if d.status_code != 200:
+                self._warn(f"coingecko coin {cid}: {d.status_code} {d.text[:120]}")
+                continue
+            cand = coingecko_candidate(d.json(), q, len(out))
+            if cand is None:
+                self._info(f"coingecko coin {cid}: no Base contract or unusable data")
+            if cand:
+                out.append(cand)
+            if len(out) >= 3:
+                break
+        return out, hits
+
+    async def _bankr_agent_resolve(self, asset_text):
+        """Optional fallback: Bankr's agent with the READ key. Needs Bankr Club
+        or Max Mode on the account; returns [] (never an error) when unavailable."""
+        if self.agent_unavailable:
+            return []
+        prompt = RESOLVER_PROMPT.format(asset_text=sanitize_asset_text(asset_text))
+        code, body = await asyncio.to_thread(bankr_agent_prompt, self.read_key, prompt)
+        if code not in (200, 202) or not isinstance(body, dict) or not body.get("jobId"):
+            self._info(f"agent resolve unavailable ({code}): {str(body)[:120]}")
+            if code in (401, 403):
+                self.agent_unavailable = True
+            return []
+        deadline = time.time() + RESOLVE_TIMEOUT_S
+        while time.time() < deadline:
+            await self.worker.session_tasks.sleep(2.0)
+            code, job = await asyncio.to_thread(self._bankr_job, body["jobId"])
+            status = (job.get("status") if isinstance(job, dict) else None) or ""
+            if status == "completed":
+                return parse_resolver_json(job.get("response"))
+            if status in ("failed", "cancelled"):
+                return []
+        return []
+
+    async def _resolve_token(self, asset_text):
+        """(status, payload) per pick_candidate, or ('error', spoken_reason)."""
+        key = _norm(asset_text)
+        if self.resolve_cache is None:
+            self.resolve_cache = {}
+        if key not in self.resolve_cache:
+            cands, hits = [], 0
+            try:
+                cands, hits = await asyncio.to_thread(self._dexscreener_resolve, asset_text)
+            except Exception as e:
+                self._warn(f"dexscreener resolve: {e!r}")
+            if not cands:
+                try:
+                    cands, hits2 = await asyncio.to_thread(self._coingecko_resolve, asset_text)
+                    hits = hits or hits2
+                except Exception as e:
+                    self._warn(f"coingecko resolve: {e!r}")
+            if not cands:
+                cands = await self._bankr_agent_resolve(asset_text)
+            self._info(f"resolve {asset_text!r} -> {[(c['symbol'], c['address'][:10], str(c['market_cap'])) for c in cands]} (search hits {hits})")
+            self.resolve_cache[key] = (cands, hits)
+        cands, hits = self.resolve_cache[key]
+        status, payload = pick_candidate(cands)
+        if status == "none" and hits:
+            # Search found the name somewhere, but nothing usable on Base.
+            return "not_on_base", None
+        return status, payload
+
+    async def _token_for(self, intent, side, holdings=None):
+        """Resolve the intent's asset to a token record, asking one clarifying
+        question if needed. Returns the record or None (already spoken)."""
+        nothing = "Nothing was traded."
+        if intent["asset"] in ("BTC", "ETH"):
+            return menu_token(intent["asset"])
+        if intent["asset"] == "USD":
+            await self._say(f"Dollars are what you {side} with. Name a token. {nothing}")
+            return None
+        text = intent.get("asset_text") or ""
+        if not text:
+            await self._say(f"Which token? {nothing}")
+            return None
+        if side == "sell":
+            status, payload = match_holding(text, holdings or {})
+            if status == "none":
+                await self._say(f"You don't hold anything called {text}. {nothing}")
+                return None
+            if status == "ambiguous":
+                a, b = payload
+                reply = await self.capability_worker.run_io_loop(f"{a['name']} or {b['name']}?")
+                status, payload = match_holding(reply, {a["address"]: a, b["address"]: b})
+                if status != "ok":
+                    await self._say(f"Cancelled. {nothing}")
+                    return None
+            return payload
+        status, payload = await self._resolve_token(text)
+        if status == "error":
+            await self._say(f"{payload} {nothing}")
+            return None
+        if status == "none":
+            await self._say(f"I couldn't find a token called {text}. {nothing}")
+            return None
+        if status == "not_on_base":
+            await self._say(f"{text.title()} exists, but not on Base, which is the only network I trade on. {nothing}")
+            return None
+        if status == "small":
+            await self._say(f"{payload['name']} is too small or too thinly traded for me to trade by voice. {nothing}")
+            return None
+        if status == "ambiguous":
+            a, b = payload
+            reply = await self.capability_worker.run_io_loop(f"{a['name']}, ticker {a['symbol']}, or {b['name']}, ticker {b['symbol']}?")
+            st, pick = match_holding(reply, {a["address"]: a, b["address"]: b})
+            if st != "ok":
+                await self._say(f"Cancelled. {nothing}")
+                return None
+            return pick
+        return payload
 
     # --- entry --------------------------------------------------------------
     async def run(self):
@@ -600,26 +981,50 @@ class OpenhomeBankrCapability(MatchingCapability):
 
     async def _help(self):
         await self._say(
-            "I can tell you what Bitcoin or Ethereum is at, read your portfolio, or buy and "
-            "sell them in dollars, up to "
-            f"{usd_words(VOICE_MAX_PER_TRADE_USD)} a trade. Say lock my wallet to pause me. "
-            "Everything else lives on bankr dot bot."
+            "I can tell you what a token is at, read your portfolio, or buy and sell any "
+            f"token on Base in dollars, up to {usd_words(VOICE_MAX_PER_TRADE_USD)} a trade. "
+            "Say lock my wallet to pause me. Everything else lives on bankr dot bot."
         )
 
     # --- reads --------------------------------------------------------------
     async def _price(self, intent):
-        asset = intent["asset"] or "BTC"
-        if asset == "OTHER":
-            await self._say("I only track Bitcoin and Ethereum. Ask bankr dot bot for anything else.")
-            return
-        if asset == "USD":
-            asset = "BTC"
-        prices = await asyncio.to_thread(self._coingecko_prices)
-        if asset not in prices:
-            await self._say("I couldn't get a price right now.")
-            return
-        price, change = prices[asset]
-        line = f"{ASSETS[asset]['name']} is at {price_words(price)}"
+        key = intent["asset"]
+        if key == "USD" or (key is None and not intent.get("asset_text")):
+            key = "BTC"
+        if key in ("BTC", "ETH"):
+            prices = await asyncio.to_thread(self._coingecko_prices)
+            if key not in prices:
+                await self._say("I couldn't get a price right now.")
+                return
+            price, change = prices[key]
+            name = ASSETS[key]["name"]
+        else:
+            status, payload = await self._resolve_token(intent["asset_text"])
+            if status == "error":
+                await self._say(payload)
+                return
+            if status == "none":
+                await self._say(f"I couldn't find a token called {intent['asset_text']}.")
+                return
+            if status == "not_on_base":
+                await self._say(f"{intent['asset_text'].title()} exists, but not on Base, which is the only network I track.")
+                return
+            if status == "small":
+                await self._say(
+                    f"The closest match on Base is {payload['name']}, which is too small or too "
+                    "thinly traded for me. I don't quote it."
+                )
+                return
+            if status == "ambiguous":
+                a, b = payload
+                await self._say(
+                    f"Two matches. {a['name']}, ticker {a['symbol']}, is at {price_words(a['ref_price'])}. "
+                    f"{b['name']}, ticker {b['symbol']}, is at {price_words(b['ref_price'])}."
+                )
+                return
+            tok = payload
+            price, change, name = tok["ref_price"], tok["change_24h"], tok["name"]
+        line = f"{name} is at {price_words(price)}"
         if change is not None:
             pct = Decimal(str(change)).quantize(Decimal("0.1"))
             direction = "up" if pct >= 0 else "down"
@@ -643,38 +1048,54 @@ class OpenhomeBankrCapability(MatchingCapability):
             )
             return
         parts = []
-        for key in ("USD", "BTC", "ETH"):
-            h = holdings.get(key)
-            if h and h["usd"] >= Decimal("0.5"):
-                if key == "USD":
-                    parts.append(f"{rounded_usd_words(h['usd'])} in cash")
-                else:
-                    parts.append(f"{rounded_usd_words(h['usd'])} of {ASSETS[key]['name']}")
+        ranked = sorted(holdings.values(), key=lambda h: h["usd"], reverse=True)
+        for h in [h for h in ranked if h["usd"] >= Decimal("0.5")][:5]:
+            if h.get("key") == "USD":
+                parts.append(f"{rounded_usd_words(h['usd'])} in cash")
+            else:
+                parts.append(f"{rounded_usd_words(h['usd'])} of {h['name']}")
         summary = f"You have {rounded_usd_words(total)} on Base"
         if parts:
             summary += ": " + ", ".join(parts)
         await self._say(summary + ".")
 
     def _holdings(self, portfolio):
-        """{asset: {"amount": Decimal, "usd": Decimal, "price": Decimal|None}} for the menu."""
+        """{address_lower: token record + amount/usd/price} for every Base holding.
+        Menu tokens are also reachable via holding_for_key()."""
         out = {}
         chain = ((portfolio.get("balances") or {}).get(CHAIN)) or {}
         native = chain.get("nativeBalance")
         if native is not None:
             amt = _dec(native)
             usd = _dec(chain.get("nativeUsd"))
-            out["ETH"] = {"amount": amt, "usd": usd, "price": (usd / amt) if amt else None}
+            rec = menu_token("ETH")
+            rec.update({"amount": amt, "usd": usd, "price": (usd / amt) if amt else None})
+            out[rec["address"].lower()] = rec
         for entry in chain.get("tokenBalances") or []:
             tok = (entry or {}).get("token") or {}
             base = tok.get("baseToken") or {}
             addr = str(base.get("address") or "").lower()
+            if not _ADDR_RE.match(addr):
+                continue
+            amt = _dec(tok.get("balance"))
+            usd = _dec(tok.get("balanceUSD"))
+            price = _dec(base.get("price")) if base.get("price") is not None else (usd / amt if amt else None)
+            rec = None
             for key, a in ASSETS.items():
                 if key != "ETH" and addr == a["address"].lower():
-                    amt = _dec(tok.get("balance"))
-                    usd = _dec(tok.get("balanceUSD"))
-                    price = _dec(base.get("price")) if base.get("price") is not None else (usd / amt if amt else None)
-                    out[key] = {"amount": amt, "usd": usd, "price": price}
+                    rec = menu_token(key)
+            if rec is None:
+                rec = {"name": sanitize_asset_text(base.get("name")).title() or str(base.get("symbol") or "token"),
+                       "symbol": str(base.get("symbol") or "").upper()[:12], "address": addr,
+                       "decimals": None, "ref_price": price, "market_cap": None, "change_24h": None,
+                       "confidence": 1.0, "is_menu": False}
+            rec.update({"amount": amt, "usd": usd, "price": price})
+            out[addr] = rec
         return out
+
+    @staticmethod
+    def holding_for_key(holdings, key):
+        return holdings.get(ASSETS[key]["address"].lower())
 
     # --- lock ---------------------------------------------------------------
     def _lock_state(self):
@@ -725,7 +1146,6 @@ class OpenhomeBankrCapability(MatchingCapability):
     # --- trade --------------------------------------------------------------
     async def _trade(self, intent):
         side = intent["action"]
-        asset = intent["asset"]
         nothing = "Nothing was traded."
 
         if not self.can_trade:
@@ -734,25 +1154,29 @@ class OpenhomeBankrCapability(MatchingCapability):
                 f"underscore trade underscore key in Settings to enable it. {nothing}"
             )
             return
-        if asset in (None, "USD", "OTHER"):
-            await self._say(f"By voice I can only buy or sell Bitcoin or Ethereum. {nothing}")
-            return
         lock = self._lock_state()
         if lock:
             await self._say(f"My trading is locked right now. {nothing}")
             return
 
-        holdings = None
+        holdings = await self._load_holdings()
+        if holdings is None:
+            return
+        tok = await self._token_for(intent, side, holdings)
+        if tok is None:
+            return
+        name = tok["name"]
+        held = holdings.get(tok["address"].lower())
+
         usd = intent["usd"]
         if side == "sell" and intent["all"]:
-            holdings = await self._load_holdings()
-            if holdings is None:
+            if not held or held["amount"] <= 0:
+                await self._say(f"You don't hold any {name} to sell. {nothing}")
                 return
-            h = holdings.get(asset)
-            if not h or h["usd"] < MIN_TRADE_USD:
-                await self._say(f"You don't hold any {ASSETS[asset]['name']} to sell. {nothing}")
+            if held["usd"] < MIN_SELL_ALL_USD:
+                await self._say(f"Your {name} is only worth {about_usd_words(held['usd'])}, too little to sell. {nothing}")
                 return
-            usd = h["usd"].quantize(Decimal("0.01"), rounding=ROUND_DOWN)
+            usd = held["usd"].quantize(Decimal("0.01"), rounding=ROUND_DOWN)
         if usd is None:
             reply = await self.capability_worker.run_io_loop(
                 f"How much, in dollars, would you like to {side}?"
@@ -762,7 +1186,7 @@ class OpenhomeBankrCapability(MatchingCapability):
                 await self._say(f"I didn't get a clear dollar amount. {nothing}")
                 return
 
-        if usd < MIN_TRADE_USD:
+        if usd < MIN_TRADE_USD and not (side == "sell" and intent["all"]):
             await self._say(f"The minimum is {usd_words(MIN_TRADE_USD)}. {nothing}")
             return
         if usd > VOICE_MAX_PER_TRADE_USD:
@@ -780,16 +1204,18 @@ class OpenhomeBankrCapability(MatchingCapability):
             )
             return
 
-        # Balances and reference price.
-        if holdings is None:
-            holdings = await self._load_holdings()
-            if holdings is None:
-                return
-        ref = await asyncio.to_thread(self._coingecko_prices)
-        ref_price = ref.get(asset, (None, None))[0]
+        # Reference price: CoinGecko for menu tokens, the resolver / portfolio otherwise.
+        if tok["is_menu"]:
+            ref = await asyncio.to_thread(self._coingecko_prices)
+            ref_price = ref.get(tok["key"], (None, None))[0]
+            drift_max = PRICE_DRIFT_MAX
+        else:
+            ref_price = tok.get("ref_price") or (held or {}).get("price")
+            drift_max = PRICE_DRIFT_MAX_OTHER
 
+        usdc = self.holding_for_key(holdings, "USD") or {}
         if side == "buy":
-            cash = holdings.get("USD", {}).get("amount", Decimal("0"))
+            cash = usdc.get("amount", Decimal("0"))
             if cash < usd:
                 if cash < MIN_TRADE_USD:
                     await self._say(f"You don't have any cash in the wallet to buy with. {nothing}")
@@ -802,35 +1228,37 @@ class OpenhomeBankrCapability(MatchingCapability):
                     await self._say(f"Cancelled. {nothing}")
                     return
                 usd = cash
-            from_asset, to_asset, amount = "USD", asset, usd
+            from_addr, to_addr, amount = ASSETS["USD"]["address"], tok["address"], usd
         else:
-            h = holdings.get(asset)
-            if not h or h["amount"] == 0:
-                await self._say(f"You don't hold any {ASSETS[asset]['name']} to sell. {nothing}")
+            if not held or held["amount"] == 0:
+                await self._say(f"You don't hold any {name} to sell. {nothing}")
                 return
-            price = h["price"] or ref_price
+            price = held["price"] or ref_price
             if not price:
-                await self._say(f"I couldn't price your {ASSETS[asset]['name']}. {nothing}")
+                await self._say(f"I couldn't price your {name}. {nothing}")
                 return
             if intent["all"]:
-                amount = h["amount"]
+                amount = held["amount"]
             else:
-                amount = (usd / price).quantize(Decimal(1).scaleb(-ASSETS[asset]["decimals"]), rounding=ROUND_DOWN)
-                if amount > h["amount"]:
-                    have = h["usd"].quantize(Decimal("0.01"), rounding=ROUND_DOWN)
+                decimals = tok.get("decimals")
+                if decimals is None:
+                    decimals = 6
+                amount = (usd / price).quantize(Decimal(1).scaleb(-decimals), rounding=ROUND_DOWN)
+                if amount > held["amount"]:
+                    have = held["usd"].quantize(Decimal("0.01"), rounding=ROUND_DOWN)
                     await self._say(
-                        f"You only hold about {usd_words(have)} of {ASSETS[asset]['name']}. "
-                        f"Say sell all my {ASSETS[asset]['name']} to sell it all. {nothing}"
+                        f"You only hold about {usd_words(have)} of {name}. "
+                        f"Say sell all my {name} to sell it all. {nothing}"
                     )
                     return
-            from_asset, to_asset = asset, "USD"
+            from_addr, to_addr = tok["address"], ASSETS["USD"]["address"]
 
         # Quote.
         quote_req = {
             "fromChain": CHAIN,
-            "fromToken": ASSETS[from_asset]["address"],
+            "fromToken": from_addr,
             "toChain": CHAIN,
-            "toToken": ASSETS[to_asset]["address"],
+            "toToken": to_addr,
             "amount": format(Decimal(amount).normalize(), "f"),
             "slippageBps": 100,
         }
@@ -852,7 +1280,7 @@ class OpenhomeBankrCapability(MatchingCapability):
             else:
                 quote_price = (out_amt / in_amt) if in_amt else Decimal("0")
             self._info(
-                f"quote: in={in_amt} out={out_amt} eff_price={quote_price:.2f} "
+                f"quote: in={in_amt} out={out_amt} eff_price={format(quote_price.normalize(), 'f')[:14]} "
                 f"ref_field={q.get('buyTokenPriceUsd') if side == 'buy' else q.get('sellTokenPriceUsd')} "
                 f"impact_bps={q.get('priceImpactBps')} fee_bps={q.get('feeBps')} min={q.get('minBuyAmount')}"
             )
@@ -866,8 +1294,8 @@ class OpenhomeBankrCapability(MatchingCapability):
         # Sanity: effective price vs an independent source.
         if ref_price:
             drift = abs(quote_price - ref_price) / ref_price
-            if drift > PRICE_DRIFT_MAX:
-                self._warn(f"price drift {drift:.3f}: effective {quote_price:.2f} vs ref {ref_price}")
+            if drift > drift_max:
+                self._warn(f"price drift {drift:.3f}: effective {quote_price} vs ref {ref_price}")
                 await self._say(f"Bankr's price looks off from the market right now. {nothing}")
                 return
         # Our own impact figure: how much worse than the market price the user
@@ -882,13 +1310,13 @@ class OpenhomeBankrCapability(MatchingCapability):
         # Read-back. The user confirms by repeating the DOLLAR amount.
         if side == "buy":
             readback = (
-                f"{usd_words(usd)} gets you {asset_words(out_amt, asset)} at "
-                f"{price_words(quote_price)}."
+                f"{usd_words(usd)} gets you {asset_words(out_amt, name)} at "
+                f"{price_words(quote_price)}" + (" each" if not tok["is_menu"] else "") + "."
             )
         else:
             readback = (
-                f"Selling {asset_words(amount, asset)} for {about_usd_words(out_amt)} at "
-                f"{price_words(quote_price)}."
+                f"Selling {asset_words(amount, name)} for {about_usd_words(out_amt)} at "
+                f"{price_words(quote_price)}" + (" each" if not tok["is_menu"] else "") + "."
             )
         if impact_bps > 100:
             readback += f" Price impact is {Decimal(impact_bps) / 100} percent."
@@ -919,7 +1347,7 @@ class OpenhomeBankrCapability(MatchingCapability):
             q = q2
             out_amt = _dec((q.get("to") or {}).get("formattedAmount"))
             line = (
-                f"Now {usd_words(usd)} gets you {asset_words(out_amt, asset)}."
+                f"Now {usd_words(usd)} gets you {asset_words(out_amt, name)}."
                 if side == "buy"
                 else f"Now that's {about_usd_words(out_amt)}."
             )
@@ -930,7 +1358,7 @@ class OpenhomeBankrCapability(MatchingCapability):
 
         # Execute. One intent id, one idempotency key.
         intent_id = str(uuid.uuid4())
-        self._info(f"execute intent={intent_id} side={side} asset={asset} usd={usd}")
+        self._info(f"execute intent={intent_id} side={side} token={tok['symbol']} usd={usd}")
         code, body = await asyncio.to_thread(
             bankr_swap, self.trade_key, quote_req, q["minBuyAmount"], q.get("quoteId"), intent_id
         )
@@ -943,7 +1371,7 @@ class OpenhomeBankrCapability(MatchingCapability):
             # a few seconds behind a swap, so it isn't used for this line.
             got = _dec(body.get("amountReceived")) if isinstance(body, dict) else Decimal("0")
             if side == "buy":
-                line = f"Done. You bought {asset_words(got or out_amt, asset)} for {usd_words(usd)}."
+                line = f"Done. You bought {asset_words(got or out_amt, name)} for {usd_words(usd)}."
             else:
                 line = f"Sold. You got {about_usd_words(got or out_amt)}."
             await self._say(line)
