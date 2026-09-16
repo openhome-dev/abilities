@@ -1,0 +1,5 @@
+{
+  "fartfinder_transport": "local",
+  "fartfinder_local_cmd": "/ABS/PATH/TO/openhome-fartfinder/.venv/bin/python /ABS/PATH/TO/openhome-fartfinder/abilities/user/fart-finder/devkit_functions.py",
+  "fartfinder_hooks": "speak"
+}
