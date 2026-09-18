@@ -1,4 +1,4 @@
-# Astral DevKit
+# OpenBrain
 
 A deterministic answer layer for the exact-answer class. On a trigger phrase the
 transcript goes straight to the DevKit, which answers with pattern-and-table code.
