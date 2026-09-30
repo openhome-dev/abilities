@@ -7,6 +7,7 @@ delete, and the direct voice-to-voice call.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
 
 from . import abilities as _abilities
@@ -16,10 +17,45 @@ from . import workspace as _workspace
 from .abilities import Ability, SaveResult
 from .agents import Agent
 from .config import Config
-from .errors import OpenHomeError
+from .errors import ApiError, OpenHomeError
 from . import endpoints
 from .transport import Transport
 from .workspace import SyncReport
+
+
+@dataclass
+class User:
+    """The account an API key belongs to."""
+
+    id: str
+    first_name: str = ""
+    last_name: str = ""
+    email: str = ""
+    username: str = ""
+
+    @classmethod
+    def from_api(cls, data: dict) -> "User":
+        return cls(
+            id=str(data.get("id", "")),
+            first_name=(data.get("first_name") or "").strip(),
+            last_name=(data.get("last_name") or "").strip(),
+            email=(data.get("email") or "").strip(),
+            username=(data.get("username") or "").strip(),
+        )
+
+    @property
+    def display_name(self) -> str:
+        """Best human label available, falling back through to the id."""
+        full = f"{self.first_name} {self.last_name}".strip()
+        return full or self.username or self.email or f"user {self.id}"
+
+    def describe(self) -> str:
+        """One line for the CLI: name plus the address that identifies it."""
+        contact = self.email or self.username
+        name = f"{self.first_name} {self.last_name}".strip()
+        if name and contact:
+            return f"{name} ({contact})"
+        return name or contact or f"user {self.id}"
 
 
 class OpenHomeClient:
@@ -44,6 +80,15 @@ class OpenHomeClient:
         if isinstance(result, dict) and "valid" in result:
             return bool(result["valid"])
         return True
+
+    def get_user(self) -> User:
+        """Resolve the account the configured API key belongs to."""
+        result = self.transport.request("GET", endpoints.GET_USER, auth="xapikey")
+        # A blank 200, or a captive portal's HTML, both arrive as dicts; without
+        # an id there is no account and the caller must not treat it as one.
+        if not isinstance(result, dict) or not result.get("id"):
+            raise ApiError("bad_response", "Could not identify the account for this API key")
+        return User.from_api(result)
 
     def list_agents(self) -> list[Agent]:
         """List the account's agents/personalities (action: choose where to install)."""

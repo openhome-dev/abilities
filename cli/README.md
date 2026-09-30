@@ -9,6 +9,7 @@ and drive the same actions the dashboard live editor does — from code or the t
 4. **Set trigger words** (persisted in the OpenHome database)
 5. **Voice-to-voice call** an agent directly, no dashboard needed
 6. **Run a Local Link bridge** so an agent can execute requests on your own machine
+7. **Onboard a DevKit** — put it on WiFi and sign it in, then check its status
 
 It is a thin CLI over a reusable Python library (`openhome`).
 
@@ -157,6 +158,20 @@ Options for `start` / `run`:
 print and exit, or `-n/--lines N` to change how much history it shows first. The
 background bridge reconnects on its own if the connection drops; `openhome local run
 --once` connects a single time without reconnecting (handy while debugging).
+
+### DevKit
+
+```bash
+openhome devkit onboard     # set up a nearby DevKit: connect it to WiFi and sign it in
+openhome devkit status      # check whether your DevKit is online
+openhome devkit onboard --device OpenHome-XXXX   # skip the picker and use this DevKit
+openhome devkit status --watch                   # keep checking until Ctrl-C
+```
+
+`onboard` finds your DevKit over Bluetooth, lets you pick a WiFi network and sign it
+in to your account, then confirms it's online. If a step fails, such as a wrong WiFi
+password, you can retry it right there. `status` shows whether your DevKit is
+online, along with its IP address, firmware and agent connection.
 
 ### Sync (account → local) and delete
 ```bash

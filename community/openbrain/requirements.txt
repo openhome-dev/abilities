@@ -1,0 +1,10 @@
+# The Astral engine. Compiled, proprietary, and installed by the platform on the
+# DevKit — "Packages listed in requirements.txt are installed for devkit_functions.py
+# on the OpenHome DevKit". devkit_functions.py in this directory is a thin shim over it
+# and is MIT, like the rest of this repository.
+#
+# Built for the interpreter and architecture it runs on (the DevKit is CPython 3.13 on
+# aarch64), which is a property of compiled code rather than a defect. Point this at the
+# release you want; a device that has the Astral local hub installed does not need it at
+# all, and one with neither says so out loud rather than going quiet.
+astral-kernel @ https://github.com/Jmesmykil/astral-OpenBrain/releases/download/v2.2.7/astral_kernel-2.2.7-cp313-cp313-linux_aarch64.whl#sha256=a1107b5bc78d62e24325dbb5f0bb7818dd96c66b70f6a12f739308ebe8289081

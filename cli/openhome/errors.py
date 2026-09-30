@@ -26,3 +26,35 @@ class ApiError(OpenHomeError):
         self.code = code
         self.message = message
         self.details = details or {}
+
+
+class DevKitError(OpenHomeError):
+    """Base class for DevKit onboarding failures (BLE and cloud)."""
+
+
+class DeviceNotFound(DevKitError):
+    """No DevKit was discovered, or the requested one was not reachable."""
+
+
+class ConnectionLost(DevKitError):
+    """The BLE link dropped. Recoverable: reconnect and resume."""
+
+
+class ScanFailed(DevKitError):
+    """The device reported that its WiFi scan failed."""
+
+
+class WifiFailed(DevKitError):
+    """The device could not join the requested WiFi network."""
+
+    def __init__(self, message: str, *, wrong_password: bool = False) -> None:
+        super().__init__(message)
+        self.wrong_password = wrong_password
+
+
+class ApiKeyRejected(DevKitError):
+    """The device (or the backend) refused the API key."""
+
+
+class DeviceOffline(DevKitError):
+    """The cloud has no DevKit reporting for this account."""

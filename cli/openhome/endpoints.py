@@ -15,6 +15,9 @@ from __future__ import annotations
 #                   when no jwt is configured (forward-compatible with the
 #                   planned backend change to accept the api key here too)
 GET_PERSONALITIES = "/api/sdk/get_personalities"
+# GET, xapikey: resolves whichever API key is sent, so it identifies a
+# key the user has just typed, not only the saved one.
+GET_USER = "/api/accounts/get-user/"
 VERIFY_API_KEY = "/api/sdk/verify_apikey"
 
 ADD_CAPABILITY = "/api/capabilities/add-capability/"
@@ -53,3 +56,12 @@ def validate_release_code(release_id: str | int) -> str:
 
 def voice_stream(api_key: str, agent_id: str) -> str:
     return f"/websocket/voice-stream/{api_key}/{agent_id}"
+
+
+def devkit_socket(api_key: str) -> str:
+    """Cloud telemetry socket for the account's DevKit.
+
+    Identify as ``frontend`` on open (a raw string, not JSON), then send
+    ``{"command": "device_stats"}`` to request a stats frame.
+    """
+    return f"/ws/devkit/{api_key}/"
