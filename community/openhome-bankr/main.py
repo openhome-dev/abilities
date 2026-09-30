@@ -467,14 +467,15 @@ def _norm(text):
     return re.sub(r"[^a-z0-9]", "", str(text or "").lower())
 
 
-def match_holding(asset_text, holdings):
+def match_holding(asset_text, holdings, require_amount=True):
     """(status, payload) against held tokens: ('none', None) | ('ambiguous', [a, b]) | ('ok', h).
-    Exact symbol/name first, then fuzzy on name and symbol."""
+    Exact symbol/name first, then fuzzy on name and symbol. require_amount=False matches
+    unheld candidates (buy-side disambiguation), which carry no amount."""
     import difflib
     q = _norm(asset_text)
     if not q:
         return "none", None
-    items = [h for h in holdings.values() if h.get("amount", 0) > 0]
+    items = [h for h in holdings.values() if not require_amount or h.get("amount", 0) > 0]
     exact = [h for h in items if _norm(h.get("symbol")) == q or _norm(h.get("name")) == q]
     if len(exact) == 1:
         return "ok", exact[0]
@@ -874,7 +875,7 @@ class OpenhomeBankrCapability(MatchingCapability):
         if status == "ambiguous":
             a, b = payload
             reply = await self.capability_worker.run_io_loop(f"{a['name']}, ticker {a['symbol']}, or {b['name']}, ticker {b['symbol']}?")
-            st, pick = match_holding(reply, {a["address"]: a, b["address"]: b})
+            st, pick = match_holding(reply, {a["address"]: a, b["address"]: b}, require_amount=False)
             if st != "ok":
                 await self._say(f"Cancelled. {nothing}")
                 return None
@@ -1099,23 +1100,36 @@ class OpenhomeBankrCapability(MatchingCapability):
 
     # --- lock ---------------------------------------------------------------
     def _lock_state(self):
-        try:
-            v = self.capability_worker.get_single_key(KV_LOCK) or {}
-        except Exception:
-            return None
+        v = self._get_kv(KV_LOCK)
         until = v.get("until")
         if until and float(until) > time.time():
             return v
         return None
 
-    def _set_kv(self, key, value):
+    def _get_kv(self, key):
+        """The stored dict, unwrapped from get_single_key's {"value": ...} envelope; {} if absent."""
         try:
-            if self.capability_worker.get_single_key(key) is not None:
-                self.capability_worker.update_key(key, value)
-            else:
-                self.capability_worker.create_key(key, value)
+            r = self.capability_worker.get_single_key(key)
+        except Exception as e:
+            self._warn(f"kv read {key} failed: {e!r}")
+            return {}
+        v = r.get("value") if isinstance(r, dict) else None
+        return v if isinstance(v, dict) else {}
+
+    def _set_kv(self, key, value):
+        # create_key first: update_key silently no-ops on a key that doesn't exist yet.
+        def ok(resp):
+            return isinstance(resp, dict) and resp.get("success")
+        try:
+            if ok(self.capability_worker.create_key(key, value)):
+                return True
+            if ok(self.capability_worker.update_key(key, value)):
+                return True
         except Exception as e:
             self._warn(f"kv write {key} failed: {e!r}")
+            return False
+        self._warn(f"kv write {key} failed")
+        return False
 
     async def _lock(self, intent):
         hours = intent.get("hours")
@@ -1130,10 +1144,7 @@ class OpenhomeBankrCapability(MatchingCapability):
 
     # --- spend tracking (rolling 24h, voice-side only) ----------------------
     def _spent_24h(self):
-        try:
-            v = self.capability_worker.get_single_key(KV_SPEND) or {}
-        except Exception:
-            return Decimal("0"), []
+        v = self._get_kv(KV_SPEND)
         cutoff = time.time() - 24 * 3600
         entries = [e for e in (v.get("entries") or []) if float(e.get("t", 0)) > cutoff]
         total = sum((_dec(e.get("usd")) for e in entries), Decimal("0"))
@@ -1391,10 +1402,7 @@ class OpenhomeBankrCapability(MatchingCapability):
         return self._holdings(body)
 
     def _note_mismatch(self):
-        try:
-            v = self.capability_worker.get_single_key("openhome_bankr_mismatch") or {}
-        except Exception:
-            v = {}
+        v = self._get_kv("openhome_bankr_mismatch")
         recent = [t for t in (v.get("t") or []) if float(t) > time.time() - 600]
         recent.append(time.time())
         self._set_kv("openhome_bankr_mismatch", {"t": recent[-5:]})
