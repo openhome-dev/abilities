@@ -1,0 +1,45 @@
+name: Discord — ability merged
+
+on:
+  pull_request:
+    types: [closed]
+
+jobs:
+  notify-discord:
+    if: github.event.pull_request.merged == true
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - name: Post merged ability to Discord
+        env:
+          DISCORD_WEBHOOK: ${{ secrets.DISCORD_ABILITIES_WEBHOOK }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+          MERGE_SHA: ${{ github.event.pull_request.merge_commit_sha }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          python3 <<'PY'
+          import json, os, urllib.request
+          title = os.environ["PR_TITLE"]
+          author = os.environ["PR_AUTHOR"]
+          url = os.environ["PR_URL"]
+          sha = os.environ.get("MERGE_SHA") or ""
+          num = os.environ["PR_NUMBER"]
+          webhook = os.environ["DISCORD_WEBHOOK"]
+          lines = [f"**New ability merged** — #{num} **{title}** by @{author}", url]
+          if sha:
+              lines.append(f"`{sha[:7]}`")
+          body = json.dumps({"content": "\n".join(lines)}).encode()
+          req = urllib.request.Request(
+              webhook,
+              data=body,
+              headers={"Content-Type": "application/json"},
+              method="POST",
+          )
+          with urllib.request.urlopen(req) as resp:
+              print("discord", resp.status)
+          PY
