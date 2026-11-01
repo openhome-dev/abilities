@@ -41,7 +41,7 @@ The defaults are a check-in at 9:30 am and the family email at 7 pm, in the devi
 
 | When | What happens |
 |---|---|
-| A check-in time arrives | It asks one short question out loud. The question uses the person's name from their OpenHome profile and one thing from yesterday's chat. |
+| A check-in time arrives | It asks one short question out loud. The question uses the person's name and at most one personal touch: something from yesterday's chat, a reminder from earlier today ("How did the dentist go?"), or a family member they may have heard from. If a medication dose isn't marked as taken yet, it adds a gentle aside. |
 | They answer | It reads the answer from the conversation and notes a mood (1 to 5), any worries (fall, pain, dizziness, chest pain, breathing, confusion, not eating, low mood, loneliness, poor sleep) and a short note they'd be happy for family to hear. |
 | No answer within 20 minutes | It asks once more, gently. |
 | Still no answer 20 minutes later | It marks the check-in missed and emails family: "Jean didn't answer the 9:30 am check-in... You might want to give them a call." It says only when they last spoke to the speaker, never what they said. |
@@ -56,7 +56,7 @@ While a check-in question is open, it writes `checkin_context.md`, a short hint 
 
 | You say | It does |
 |---|---|
-| "Check in" | Asks three short questions: how you are, food and plans, anything for family. It records them like a scheduled check-in, so a scheduled one within the next two hours is skipped. |
+| "Check in" | Asks three short questions: how you are, food and plans, anything for family. It records them like a scheduled check-in, so a scheduled one within the next two hours is skipped. If a dose isn't marked as taken yet, it mentions that at the end. |
 | "Check in at 9 and 7" / "stop the evening one" | Confirms, then changes the times (up to 3 a day). You can answer the confirmation with a change ("no, make it 10"). |
 | "Send the family email at 8" | Changes the digest time after you confirm. |
 | "I'm at my daughter's until Sunday" | Pauses check-ins, alerts and digests after you confirm, and emails family that check-ins are paused. They restart by themselves after the pause. |
@@ -66,17 +66,31 @@ While a check-in question is open, it writes `checkin_context.md`, a short hint 
 | "Stop listening between check-ins" / "start again" | Turns the everyday worry listening off or on. |
 | "My emergency number is 999" | Saves the number used in the safety prompt. |
 | "When's my next check-in?" | Gives the times, any pause, and how many people get the email. |
+| "What can you do?" | Names two things, then offers more, so you never hear a long list. |
+
+Pausing and setting the emergency number both accept a change in reply ("no, until Monday", "no, it's 112").
 
 Say "that's all", "stop" or "goodbye" at any prompt to leave. "I'm good" and "nothing" count as answers, not exits. Two silent turns also end the session.
 
 ## What Family See, and What They Never See
 - **They see:** answered or missed for each check-in, a mood word, worry types ("mentioned feeling dizzy"), short notes the person was happy to share, a weekly mood trend, and roughly when they last spoke to the speaker.
-- **They never see:** transcripts, recordings, or anything the person asked to keep private.
+- **They never see:** transcripts, recordings, medication details, or anything the person asked to keep private.
+
+## Reuses What Other Abilities Already Know
+It never asks for anything OpenHome already has. Each source is read-only and optional, and it's skipped quietly if that ability isn't installed.
+
+| Source | Used for |
+|---|---|
+| `user_profile.md`, `user_summary.md` (OpenHome memory) | The person's first name. |
+| `memory_mirror_corrections.md` ([Memory Mirror](../memory-mirror/)) | A name the person corrected there. |
+| `upcoming_schedule.md` ([Timers, Alarms & Reminders](../timers-alarms-reminders/)) | Asking about something from earlier today. Alarms are ignored. |
+| `social_memory.json` ([Social Memory](../social-memory/)) | Names of family members, for a natural question. Only names and relationships are read, never the conversation snippets. |
+| `medication_reminder_data` ([Medication Reminder](../medication-reminder/)) | A gentle spoken aside when a dose is 30 minutes or more overdue and not marked as taken or skipped. **This is only ever spoken to the person, never sent to family.** |
 
 ## Data
 - Settings, today's record and a 21-day log are kept in Context Storage under `checkin_state`. The log holds dates, statuses, mood numbers, worry types and the shared notes.
 - `checkin_busy` keeps the background out while the voice skill is open.
-- `user_profile.md` and `user_summary.md` are read only, for the person's first name. They are never written.
+- Other abilities' data (see above) is read only. It is never written, logged or emailed.
 - Logs record event types only, never words, names or email addresses.
 
 ## Limits
