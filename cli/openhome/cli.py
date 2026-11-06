@@ -862,7 +862,11 @@ def _describe_signed_in(key, cfg) -> str:
     The DevKit reports only its key's prefix. If that matches the saved key,
     the account can be looked up by name.
     """
-    fragment = f"{key.key_prefix}…" if key.key_prefix else "signed in (key not shown)"
+    # Session firmware never says which key it holds.
+    fragment = (
+        f"{key.key_prefix}…" if key.key_prefix
+        else "signed in (this DevKit doesn't say which account)"
+    )
     saved = cfg.api_key or ""
     if key.key_prefix and saved.startswith(key.key_prefix):
         user, _error = _lookup_account(saved)
@@ -1155,19 +1159,56 @@ async def _devkit_api_key(
         return key
 
 
-async def _devkit_verify(cfg, *, device: str = "", ssid: str = "") -> None:
+def _status_check(saved_key: str, sent_key: str | None, key_state) -> tuple[str | None, bool]:
+    """Pick the key to check the DevKit's cloud status with.
+
+    Returns ``(key, known)``: ``key`` is None when no key can see the DevKit,
+    and ``known`` says whether the DevKit is known to be on that key's
+    account. A key sent this run is the DevKit's for certain. Otherwise the
+    saved key is used if the DevKit's key prefix matches it; if the DevKit
+    reports no prefix (session firmware), the saved key is only a guess.
+    """
+    if sent_key:
+        return sent_key, True
+    if not saved_key:
+        return None, False
+    prefix = key_state.key_prefix
+    if prefix:
+        return (saved_key, True) if saved_key.startswith(prefix) else (None, True)
+    return saved_key, False
+
+
+async def _devkit_verify(
+    cfg, *, device: str = "", ssid: str = "", account_known: bool = True
+) -> None:
     """Wait for the DevKit to report in to OpenHome and show its status."""
     from . import devkit
 
     print()
+    if not account_known:
+        print(
+            "  This DevKit doesn't say which account it's signed in to,\n"
+            "  so this only checks whether it shows up on yours."
+        )
     try:
         async with _spinner("Waiting for the DevKit to come online"):
-            status = await devkit.wait_until_online(cfg, timeout=90.0)
+            # An unknown account may never show up here: don't wait as long.
+            status = await devkit.wait_until_online(
+                cfg, timeout=90.0 if account_known else 45.0
+            )
     except DeviceOffline:
-        print(
-            "  The DevKit is still starting up.\n"
-            "  Give it a minute, then run: openhome devkit status"
-        )
+        if account_known:
+            print(
+                "  The DevKit is still starting up.\n"
+                "  Give it a minute, then run: openhome devkit status"
+            )
+        else:
+            print(
+                "  It isn't showing up on your account. It may still be starting\n"
+                "  up, or it may be signed in to a different account.\n"
+                "  To sign it in to yours: run `openhome devkit onboard` again and\n"
+                "  answer y to \"Switch account?\"."
+            )
         return
     except OpenHomeError as exc:
         # The DevKit was set up either way, so this is a note, not a failure.
@@ -1234,9 +1275,7 @@ async def _devkit_onboard(args: argparse.Namespace) -> int:
     # Checking the DevKit is online needs its own account's key: the one just
     # sent, or the saved one if the DevKit is signed in with it.
     logged_in = bool(cfg.api_key)
-    prefix = key_state.key_prefix
-    saved_matches = logged_in and (not prefix or cfg.api_key.startswith(prefix))
-    check_key = key or (cfg.api_key if saved_matches else None)
+    check_key, account_known = _status_check(cfg.api_key or "", key, key_state)
     if not check_key:
         if logged_in:
             print(
@@ -1251,7 +1290,10 @@ async def _devkit_onboard(args: argparse.Namespace) -> int:
             )
         return 0
 
-    await _devkit_verify(Config.from_env(api_key=check_key), device=name, ssid=ssid or "")
+    await _devkit_verify(
+        Config.from_env(api_key=check_key), device=name, ssid=ssid or "",
+        account_known=account_known,
+    )
     if not logged_in:
         # The key was typed for this run only; `devkit status` won't find it later.
         print(
