@@ -31,18 +31,33 @@ One Zapier MCP server is enough to reach thousands of apps (Gmail, Sheets, Trell
 ## How It Works
 | You say | MCP Bridge does |
 |---|---|
-| "MCP bridge" | Connects and says which server it reached and how many tools it has. |
+| "MCP bridge" | Connects and says which server it reached. |
 | "What can it do?" | Reads the tool names three at a time and offers more. |
 | "What does add card do?" | Reads that tool's own short description. |
 | "Search the docs for the Workers request limit" | Picks the tool, fills in the details, calls it and gives you a short spoken summary. |
-| "Add 'call the plumber' to my Trello board" | Asks for anything required that's missing, one question at a time. Then it says what it's about to do and asks "Go ahead, or change something?". You can say yes, no, or what to change. |
+| "Add 'call the plumber' to my Trello board" | Asks for anything required that's missing, all in one question ("I need the title and list"), with one follow-up at most for whatever is still missing. Then it says what it's about to do and asks "Go ahead, or change something?". You can say yes, no, or what to change. |
+| "Add a card due tomorrow" | Knows today's date in your timezone, so "tomorrow" or "next Friday" become real dates. |
 
-The session stays open after each answer, so you can keep going. Say "done", "that's all" or "never mind" at any prompt to stop.
+The session stays open after each answer, so you can keep going. Say "done", "that's all", "forget it" or "I'm all set" at any prompt to stop.
+
+### What it reuses instead of asking
+MCP Bridge reads what OpenHome and your other abilities already know, so it can fill details like "my city" or "send it to my sister" without asking:
+
+| Source | Owner | What's used |
+|---|---|---|
+| `user_profile.md`, `user_summary.md` | OpenHome platform | Facts about you, such as your name |
+| `memory_mirror_corrections.md` | Memory Mirror | Facts you've confirmed or corrected |
+| `social_memory.json` | Social Memory | Names of people you know and how you know them. Its private context notes are skipped |
+| `get_region_data()` | OpenHome | Your current area |
+| `get_timezone()` | OpenHome | Today's date and time for relative dates (falls back to UTC) |
+
+These are only read, never written. They're held in memory for the session only, used only when your request points to you or someone you know, and never logged. Any value taken from them always goes through the spoken confirmation, even for read-only tools, because it's about to leave for a third-party server. The confirmation names it ("Using Islamabad from what I know"), but never reads out an email address or a long number. If none of these exist, everything still works and MCP Bridge simply asks.
 
 ### Which tools run without asking
-A tool runs straight away only when **both** are true:
+A tool runs straight away only when **all three** are true:
 - The server marks it read-only (`readOnlyHint: true`) and doesn't mark it destructive.
 - Neither its name nor the start of its description has a write word such as send, create, add, update, delete, pay, book, cancel, publish or run.
+- None of its values came from your stored details (see above).
 
 Everything else asks for confirmation first. That includes any tool the server hasn't marked at all, such as DeepWiki's tools and most Zapier actions. Tools that aren't marked read-only also get a "this might not be undoable" warning, unless the server explicitly marks them non-destructive. MCP treats unmarked tools as possibly destructive.
 
@@ -50,7 +65,7 @@ Everything else asks for confirmation first. That includes any tool the server h
 - **Untrusted server content.** Tool descriptions and tool output come from a third party. They are passed to the language model as clearly marked data, with instructions never to follow anything written inside them. MCP Bridge makes exactly one tool call per request you make, and output from one call never triggers another.
 - **Address checks.** Only `https://` addresses are accepted. Redirects are never followed. Addresses on private, local or cloud-metadata networks are refused, both as typed and after the name is resolved. If the platform blocks name lookups, only the typed-address checks apply.
 - **Limits on replies.** Replies are capped at 512 KB. Only the first 6,000 characters are summarized.
-- **Spoken output.** Answers are at most two sentences, with no links or markdown.
+- **Spoken output.** Answers are plain spoken English, at most two sentences and under 30 words, with no links, lists or markdown. Email addresses, phone numbers and long ids are never read out.
 - **What's stored.** One Context Storage key, `mcp_bridge_state`, holds a short fingerprint of the server address (a hash, without any query string), whether the server uses the new or older MCP protocol, and the server's display name. Tokens, tool lists and tool output are never stored. Logs show the server address without its query string and never show the token.
 
 ### Protocol support
@@ -69,17 +84,18 @@ Everything else asks for confirmation first. That includes any tool the server h
   - long-running task tools
   - change subscriptions
 - **Images and audio.** If a tool returns them, MCP Bridge says it got them but can't share them here.
-- **Timeouts.** A tool call times out after 30 seconds. Real servers usually answer in 5 to 10 seconds, so MCP Bridge says "One moment" first.
+- **Timeouts.** A tool call times out after 30 seconds. Real servers usually answer in 5 to 10 seconds, so MCP Bridge says a short filler first ("Checking with Zapier", then varied ones like "One sec").
 
 ### How it differs from existing options
 - **n8n Commander:** you build and wire a webhook for each workflow. MCP Bridge finds the server's tools on its own, through the MCP standard.
-- **OpenClaw, Hermes and Voice Dev Terminal:** these need software running on your own computer. MCP Bridge talks to a hosted server directly.
+- **The API template:** one hardcoded endpoint per ability. MCP Bridge needs no code per service.
+- **OpenClaw, Hermes, Local Link templates and Voice Dev Terminal:** these need software running on your own computer. MCP Bridge talks to a hosted server directly.
 - **Slack Voice Operator, Gmail, GitHub and the other single-service abilities:** each covers one service. MCP Bridge covers whatever your server exposes.
 
 ## Example Conversation
 > **User:** MCP bridge
 >
-> **OpenHome:** Connected to Zapier, 6 tools. What do you need? You can also ask what it can do.
+> **OpenHome:** Connected to Zapier. What do you need?
 >
 > **User:** Add "call the plumber" to my Trello board
 >
@@ -95,7 +111,7 @@ Everything else asks for confirmation first. That includes any tool the server h
 >
 > **User:** Yes
 >
-> **OpenHome:** One moment.
+> **OpenHome:** Checking with Zapier.
 >
 > **OpenHome:** Done, the card "call the plumber" is on your Doing list. Anything else?
 >
