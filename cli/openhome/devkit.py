@@ -2,6 +2,20 @@
 
 Nothing here prints: functions return values, raise DevKitError subclasses,
 and report progress through an optional ``on_progress`` callback.
+
+Two firmware families share one GATT service and the same characteristic
+UUIDs, but are onboarded differently:
+
+* **Older firmware**: each step subscribes to the characteristic it needs and
+  unsubscribes when done.
+* **Session firmware** (its play-cue characteristic is readable): right after
+  connecting, the app subscribes to five characteristics, which arms the
+  firmware's app session, and keeps all five on until it disconnects; turning
+  one off ends the session. With the session armed, a read also comes back as
+  a notification of the same value. Its API key status doesn't say which key
+  it holds.
+
+Both start a WiFi scan on a read of the scan characteristic.
 """
 
 from __future__ import annotations
@@ -46,8 +60,23 @@ API_KEY_UUID = "12345678-1234-5678-1234-56789abcdef4"
 HEARTBEAT_UUID = "12345678-1234-5678-1234-56789abcdef5"
 # Never written: a successful write restarts the DevKit's Bluetooth service.
 ENV_CONFIG_UUID = "12345678-1234-5678-1234-56789abcdef6"
+# Audio cues the DevKit plays during setup (session firmware). Older firmware
+# also has this characteristic, but it can't be read there.
+PLAY_CUE_UUID = "12345678-1234-5678-1234-56789abcdef7"
 
-# DevKits advertise as openhome_<last 6 characters of the MAC address>.
+# Session firmware arms its app session once the app has subscribed to all of
+# these, in this order (as its reference client does). Nothing else is
+# subscribed on it: heartbeat isn't needed and wifi-connect is write-only.
+SESSION_UUIDS = (
+    PLAY_CUE_UUID,
+    ENV_CONFIG_UUID,
+    API_KEY_UUID,
+    WIFI_STATUS_UUID,
+    WIFI_SCAN_UUID,
+)
+
+# Older firmware advertises as openhome_<last 6 hex digits of the MAC>,
+# session firmware as OpenHome-<the same>; both start with this, ignoring case.
 DEVICE_PREFIX = "openhome"
 
 SCAN_TIMEOUT = 10.0
@@ -81,6 +110,7 @@ _CHAR_NAMES = {
     API_KEY_UUID: "api-key",
     HEARTBEAT_UUID: "heartbeat",
     ENV_CONFIG_UUID: "env-config",
+    PLAY_CUE_UUID: "play-cue",
     "7772e5db-3868-4112-a1a9-f2669d106bf3": "MIDI I/O",
 }
 _SERVICE_NAMES = {
@@ -221,6 +251,15 @@ class ApiKeyStatus:
         # `configured` can be left over from an earlier key, so it is never
         # sufficient on its own — only a fresh `success` proves the current key.
         return self.state.lower() == "success"
+
+    @property
+    def is_final(self) -> bool:
+        return self.state.lower() in ("success", "invalid", "error")
+
+    @property
+    def is_pending(self) -> bool:
+        # Session firmware reports "verifying" while it checks the key online.
+        return self.state.lower() == "verifying"
 
 
 @dataclass(frozen=True)
@@ -454,9 +493,14 @@ class DevKit:
     def __init__(self, target: Device | str, *, on_progress: Progress | None = None):
         self.address = target.address if isinstance(target, Device) else target
         self.name = target.name if isinstance(target, Device) else self.address
+        # Session firmware (see the module docstring); known once connected.
+        self.session_protocol = False
         self._note = on_progress or (lambda _m: None)
         self._client: Any = None
         self._subscribed: set[str] = set()  # characteristics with notifications on
+        # Who gets each characteristic's notifications right now. Kept across
+        # reconnects, so a step that is waiting still hears its answer.
+        self._listeners: dict[str, Callable[[Any, Any], None]] = {}
         self._agent = contextlib.AsyncExitStack()
 
     # -- lifecycle -------------------------------------------------------
@@ -489,7 +533,13 @@ class DevKit:
                         await asyncio.wait_for(client.disconnect(), timeout=OP_TIMEOUT)
                     self._client = None
                     raise ConnectionLost("Couldn't set up the connection to the DevKit.")
-                await self._subscribe_heartbeat()
+                self.session_protocol = self._detect_session_protocol()
+                if self.session_protocol:
+                    # Exactly the five session channels: heartbeat isn't needed
+                    # and wifi-connect is write-only.
+                    await self._open_session()
+                else:
+                    await self._subscribe_heartbeat()
                 return
             except (ConnectionLost, DeviceNotFound, DevKitError) as exc:
                 last = exc
@@ -514,11 +564,15 @@ class DevKit:
         subscribed, self._subscribed = self._subscribed, set()
         if client is None:
             return
-        if client.is_connected:
-            # Unsubscribe before dropping the link: the DevKit treats a client
-            # as connected while any notification is still on (newer firmware
-            # also ends the session itself once they are all off), and a bare
-            # link drop does not clear them on its side.
+        if client.is_connected and self.session_protocol:
+            # Session firmware: drop the link with the session's channels
+            # still on, as its reference client does. Turning them off one by
+            # one would end the app session piecemeal before the link goes.
+            _trace(f"disconnect: session firmware; leaving {len(subscribed)} channel(s) on")
+        elif client.is_connected:
+            # Older firmware: unsubscribe before dropping the link. It treats
+            # a client as connected while any notification is still on, and a
+            # bare link drop does not clear them on its side.
             if not subscribed:
                 _trace("disconnect: no notifications to turn off")
             for uuid in sorted(subscribed):
@@ -606,45 +660,103 @@ class DevKit:
             raise ConnectionLost("Lost the connection to the DevKit.")
         return self._client
 
-    async def _subscribe_heartbeat(self) -> None:
-        # Non-fatal: some firmware returns UNLIKELY_ERROR here while the link
-        # is perfectly healthy.
+    # -- notifications ---------------------------------------------------
+    def _deliver(self, uuid: str) -> Callable[[Any, Any], None]:
+        """The callback bleak calls for ``uuid``: trace, then hand to whoever listens."""
+
+        def deliver(sender, data) -> None:
+            _trace(f"RX  notify {_char(uuid)}: {_show(data)}")
+            listener = self._listeners.get(uuid)
+            if listener is not None:
+                listener(sender, data)
+
+        return deliver
+
+    def _characteristic(self, uuid: str) -> Any:
+        for svc in self._client.services or []:
+            for ch in svc.characteristics:
+                if str(ch.uuid).lower() == uuid:
+                    return ch
+        return None
+
+    def _detect_session_protocol(self) -> bool:
+        """Session firmware's play-cue characteristic is readable; older
+        firmware's is write-only."""
+        cue = self._characteristic(PLAY_CUE_UUID)
+        cue_props = list(getattr(cue, "properties", []) or [])
+        session = "read" in cue_props
+        _trace(
+            f"protocol: {'session' if session else 'older'} firmware "
+            f"(play-cue {cue_props or 'absent'})"
+        )
+        return session
+
+    async def _start_notify(self, uuid: str) -> bool:
+        """Turn notifications on for ``uuid``. Best effort: failures are traced."""
+        started = time.monotonic()
         try:
             await asyncio.wait_for(
-                self._client.start_notify(
-                    HEARTBEAT_UUID, lambda _s, data: _trace(f"RX  notify heartbeat: {_show(data)}")
-                ),
-                timeout=OP_TIMEOUT,
+                self._client.start_notify(uuid, self._deliver(uuid)), timeout=OP_TIMEOUT
             )
-            self._subscribed.add(HEARTBEAT_UUID)
-            _trace("subscribed heartbeat")
-        except Exception as exc:
-            _trace(f"subscribe heartbeat failed: {exc or type(exc).__name__}")
+        except Exception as exc:  # some firmware returns UNLIKELY_ERROR on a healthy link
+            _trace(f"subscribe {_char(uuid)} failed: {exc or type(exc).__name__}")
+            return False
+        self._subscribed.add(uuid)
+        _trace(f"subscribed {_char(uuid)} in {_since(started)}")
+        return True
+
+    async def _open_session(self) -> None:
+        """Subscribe to the five session characteristics, which arms the app
+        session on session firmware. They stay on until disconnect."""
+        on = 0
+        for uuid in SESSION_UUIDS:
+            on += await self._start_notify(uuid)
+        if on == len(SESSION_UUIDS):
+            _trace(f"session: all {on} channels on; the DevKit's app session is armed")
+        else:
+            # Steps still subscribe what they need; only the session is at risk.
+            _trace(f"session: only {on}/{len(SESSION_UUIDS)} channels on; app session not armed")
+
+    async def _subscribe_heartbeat(self) -> None:
+        # Older firmware only, and non-fatal.
+        if HEARTBEAT_UUID not in self._subscribed:
+            await self._start_notify(HEARTBEAT_UUID)
 
     @contextlib.asynccontextmanager
     async def _notifications(self, uuid: str, handler):
-        """Subscribe for the duration of a block. Unsubscribing never raises."""
+        """Send ``uuid``'s notifications to ``handler`` for the duration of a block.
+
+        Older firmware: subscribe for the block and unsubscribe after it.
+        Session firmware: the characteristic stays subscribed for the whole
+        connection (turning it off ends the app session), so only the handler
+        is swapped in and out. Yields whether notifications are on.
+        Unsubscribing never raises.
+        """
         client = self._need_link()
-        subscribed = False
-
-        def traced(sender, data) -> None:
-            _trace(f"RX  notify {_char(uuid)}: {_show(data)}")
-            handler(sender, data)
-
-        started = time.monotonic()
+        self._listeners[uuid] = handler
+        keep = self.session_protocol
+        mine = False  # subscribed by this block, so this block turns it off
+        if uuid in self._subscribed:
+            _trace(f"listening on {_char(uuid)} (already on)")
+        else:
+            started = time.monotonic()
+            try:
+                with _ble_errors("subscribing to updates"):
+                    await asyncio.wait_for(
+                        client.start_notify(uuid, self._deliver(uuid)), timeout=OP_TIMEOUT
+                    )
+                mine = True
+                self._subscribed.add(uuid)
+                _trace(f"subscribed {_char(uuid)} in {_since(started)}")
+            except DevKitError as exc:
+                # Subscribing can fail on its own; callers decide what that means.
+                _trace(f"subscribe {_char(uuid)} failed: {exc.__cause__ or exc}")
         try:
-            with _ble_errors("subscribing to updates"):
-                await asyncio.wait_for(client.start_notify(uuid, traced), timeout=OP_TIMEOUT)
-            subscribed = True
-            self._subscribed.add(uuid)
-            _trace(f"subscribed {_char(uuid)} in {_since(started)}")
-        except DevKitError as exc:
-            # Subscribing can fail on its own; callers decide what that means.
-            _trace(f"subscribe {_char(uuid)} failed: {exc.__cause__ or exc}")
-        try:
-            yield subscribed
+            yield uuid in self._subscribed
         finally:
-            if subscribed:
+            if self._listeners.get(uuid) is handler:
+                del self._listeners[uuid]
+            if mine and not keep:
                 self._subscribed.discard(uuid)
                 await self._stop_notify(client, uuid)
 
@@ -839,7 +951,7 @@ class DevKit:
             except DevKitError:
                 return
             latest.append(status)
-            if status.state.lower() in ("success", "invalid", "error"):
+            if status.is_final:
                 done.set()
 
         payload = json.dumps({"api_key": api_key}).encode("utf-8")
@@ -848,10 +960,11 @@ class DevKit:
             with contextlib.suppress(asyncio.TimeoutError):
                 await asyncio.wait_for(done.wait(), timeout=timeout)
 
-        status = latest[-1] if latest else None
         # A final notification is the device's answer - don't second-guess it.
-        # Only when none arrived do we re-read, and then trust just `state`:
-        # `configured` can be left over from an earlier key.
+        # A "verifying" one is not an answer yet.
+        status = next((s for s in reversed(latest) if s.is_final), None)
+        # Only when no answer arrived do we re-read, and then trust just
+        # `state`: `configured` can be left over from an earlier key.
         if status is None:
             if not self.is_connected:
                 return None
@@ -860,6 +973,8 @@ class DevKit:
                 status = await self.api_key_status()
             except DevKitError:
                 return None
+            if status.is_pending:
+                return None  # still checking: the caller reports "signing in"
         if status.is_verified:
             return status
         raise ApiKeyRejected(
