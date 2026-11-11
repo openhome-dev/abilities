@@ -281,6 +281,10 @@ class FamilyStoryKeeperCapability(MatchingCapability):
             self.log_error(f"Unexpected error: {type(error).__name__}")
             await self.capability_worker.speak("Sorry, something went wrong with Family Story Keeper.")
         finally:
+            try:
+                self.capability_worker.stop_audio_recording()
+            except Exception:
+                pass
             self.capability_worker.resume_normal_flow()
 
     async def handle(self, utterance: str, first_turn: bool = False) -> bool:
@@ -417,7 +421,8 @@ class FamilyStoryKeeperCapability(MatchingCapability):
             return None
         for teller in self.index["tellers"]:
             name_norm = _normalize(teller["name"])
-            if hint_norm == name_norm or hint_norm in name_norm.split() or name_norm in hint_norm:
+            if hint_norm == name_norm or hint_norm in name_norm.split() \
+                    or re.search(rf"\b{re.escape(name_norm)}\b", hint_norm):
                 return teller
         return None
 
@@ -805,7 +810,7 @@ class FamilyStoryKeeperCapability(MatchingCapability):
         entries = []
         for teller in self.index["tellers"]:
             for story in self.load_teller(teller["id"])["stories"]:
-                if not (another and story["id"] in self.played):
+                if not (another and f"{teller['id']}:{story['id']}" in self.played):
                     entries.append((teller, story))
         if not entries:
             message = ("That's every story I have on that." if another else
@@ -829,7 +834,7 @@ class FamilyStoryKeeperCapability(MatchingCapability):
             await self.offer_queue(query)
             return
         teller, story = entries[index - 1]
-        self.played.append(story["id"])
+        self.played.append(f"{teller['id']}:{story['id']}")
         await self.play_story(teller, story)
         self.last_mode = "listened"
         await self.capability_worker.speak("Want to hear another?")
