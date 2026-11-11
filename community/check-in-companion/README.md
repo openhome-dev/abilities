@@ -61,7 +61,7 @@ While a check-in question is open, it writes `checkin_context.md`, a short hint 
 | "Send the family email at 8" | Changes the digest time after you confirm. |
 | "I'm at my daughter's until Sunday" | Pauses check-ins, alerts and digests after you confirm, and emails family that check-ins are paused. They restart by themselves after the pause. |
 | "Start check-ins again" | Ends a pause early. |
-| "Keep today private" | Family hear only that you checked in, nothing you said. |
+| "Keep today private" | Family hear only that you checked in and how you seemed, never what you said. |
 | "What have you told my family?" | Reads back a short summary of the last evening email. |
 | "Stop listening between check-ins" / "start again" | Turns the everyday worry listening off or on. |
 | "My emergency number is 999" | Saves the number used in the safety prompt. |

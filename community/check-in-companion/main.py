@@ -239,6 +239,11 @@ def parse_recipients(raw) -> list:
 class CheckInCompanionCapability(MatchingCapability):
     worker: AgentWorker = None
     capability_worker: CapabilityWorker = None
+    state: dict = None
+    first_run: bool = False
+    name: str = ""
+    ending: bool = False
+    tz_name: str = ""
 
     # Do not change following tag of register capability
     # {{register capability}}
@@ -392,7 +397,8 @@ class CheckInCompanionCapability(MatchingCapability):
         nudge = self.dose_nudge()
         if today["withheld"]:
             await self.capability_worker.speak(
-                f"Thank you{self.name_suffix()}. I'll just tell them you checked in and keep the rest between us.{nudge}")
+                f"Thank you{self.name_suffix()}. I'll just tell them you checked in and how you seemed, "
+                f"not what you said.{nudge}")
         else:
             await self.capability_worker.speak(
                 f"Thank you{self.name_suffix()}. I'll let the family know you checked in.{nudge}")
@@ -421,8 +427,7 @@ class CheckInCompanionCapability(MatchingCapability):
         today = self.today()
         emergency = self.state["settings"].get("emergency") or "your local emergency number"
         await self.capability_worker.speak(
-            f"That sounds serious. If you need help right now, please call {emergency}. "
-            "I'm letting your family know as well."
+            f"That sounds serious. If you need help right now, please call {emergency}."
         )
         today["urgent_sig"] = hashlib.sha256(text[:300].encode("utf-8", "ignore")).hexdigest()[:16]
         today["urgent_at"] = int(time.time())
@@ -438,6 +443,8 @@ class CheckInCompanionCapability(MatchingCapability):
             "This alert comes from the Check-In Companion ability. It is not an emergency service.",
         )
         self.log(f"urgent alert sent={sent}")
+        if sent:
+            await self.capability_worker.speak("I've let your family know as well.")
 
     # ------------------------------------------------------------------ settings
 
@@ -523,7 +530,7 @@ class CheckInCompanionCapability(MatchingCapability):
     async def do_keep_private(self, route: dict):
         self.today()["withheld"] = True
         await self.speak_saved(
-            "Of course. Family will only hear that you checked in today, nothing you said.")
+            "Of course. Family will only hear that you checked in today and how you seemed, not what you said.")
 
     async def do_what_told(self, route: dict):
         told = self.state.get("last_digest") or ""
@@ -694,7 +701,7 @@ class CheckInCompanionCapability(MatchingCapability):
             return False
         if await self.send_gmail(recipients, subject, body):
             return True
-        return self.send_smtp(recipients, subject, body)
+        return await asyncio.to_thread(self.send_smtp, recipients, subject, body)
 
     async def send_gmail(self, recipients: list, subject: str, body: str) -> bool:
         try:

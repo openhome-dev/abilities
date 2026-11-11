@@ -60,6 +60,7 @@ GMAIL_SEND_URL = "https://gmail.googleapis.com/gmail/v1/users/me/messages/send"
 
 POLL_INTERVAL = 60.0
 FIRST_POLL_LOOKBACK = 6
+TAIL_SIZE = 4
 REPLY_WINDOW = 20 * 60        # seconds to wait for an answer, before the retry and again after it
 FIRE_GRACE = 2 * 3600         # a slot not asked within this long after its time is skipped, not missed
 URGENT_COOLDOWN = 2 * 3600
@@ -294,7 +295,7 @@ class CheckInCompanionBackground(MatchingCapability):
     worker: AgentWorker = None
     capability_worker: CapabilityWorker = None
     background_daemon_mode: bool = False
-    cursor: int = -1
+    tail: list = []
     name: str = ""
     profile_read: bool = False
     tz_name: str = ""
@@ -306,7 +307,7 @@ class CheckInCompanionBackground(MatchingCapability):
         self.worker = worker
         self.background_daemon_mode = background_daemon_mode  # set BEFORE constructing the worker
         self.capability_worker = CapabilityWorker(self)  # daemon: pass self, not self.worker
-        self.cursor = -1
+        self.tail = []
         self.name = ""
         self.profile_read = False
         self.tz_name = ""
@@ -374,16 +375,28 @@ class CheckInCompanionBackground(MatchingCapability):
     def message_parts(message):
         if isinstance(message, dict):
             return message.get("role"), message.get("content")
-        return getattr(message, "role", None), getattr(message, "content", None)
+        return None, None
+
+    def new_start(self, history: list) -> int:
+        """Index of the first message the last poll didn't see.
+
+        History only keeps recent messages, so its length can stay the same while new ones arrive.
+        Find where the last few messages we saw now end instead of trusting a position.
+        """
+        size = len(self.tail)
+        if size:
+            parts = [self.message_parts(m) for m in history]
+            for end in range(len(parts), size - 1, -1):
+                if parts[end - size:end] == self.tail:
+                    return end
+        return max(0, len(history) - FIRST_POLL_LOOKBACK)
 
     def new_user_turns(self, history: list) -> list:
         """User turns since the last poll. The first poll looks back a few turns only."""
-        length = len(history)
-        if self.cursor < 0 or self.cursor > length:
-            self.cursor = max(0, length - FIRST_POLL_LOOKBACK)
-        start, self.cursor = self.cursor, length
+        start = self.new_start(history)
+        self.tail = [self.message_parts(m) for m in history[-TAIL_SIZE:]]
         turns = []
-        for message in history[start:length]:
+        for message in history[start:]:
             role, content = self.message_parts(message)
             if role == "user" and isinstance(content, str) and content.strip():
                 turns.append(content.strip()[:600])
@@ -592,8 +605,7 @@ class CheckInCompanionBackground(MatchingCapability):
         emergency = state["settings"].get("emergency") or "your local emergency number"
         await self.capability_worker.send_interrupt_signal()
         await self.capability_worker.speak(
-            f"That sounds serious. If you need help right now, please call {emergency}. "
-            "I'm letting your family know as well."
+            f"That sounds serious. If you need help right now, please call {emergency}."
         )
         name = self.name or "Your family member"
         flags = [FLAG_TEXT[f] for f in FLAGS if f in today["flags"]] or ["said something that sounded urgent"]
@@ -606,6 +618,9 @@ class CheckInCompanionBackground(MatchingCapability):
             "This alert comes from the Check-In Companion ability. It is not an emergency service.",
         )
         self.log(f"urgent alert sent={sent}")
+        if sent:
+            await self.capability_worker.send_interrupt_signal()
+            await self.capability_worker.speak("I've let your family know as well.")
 
     # ------------------------------------------------------------------ family emails
 
@@ -655,7 +670,7 @@ class CheckInCompanionBackground(MatchingCapability):
             return False
         if await self.send_gmail(recipients, subject, body):
             return True
-        return self.send_smtp(recipients, subject, body)
+        return await asyncio.to_thread(self.send_smtp, recipients, subject, body)
 
     async def send_gmail(self, recipients: list, subject: str, body: str) -> bool:
         try:
