@@ -30,6 +30,7 @@ MD_FILE = "tailor_style.md"
 
 POLL_INTERVAL = 90.0
 FIRST_POLL_LOOKBACK = 6
+TAIL_SIZE = 4
 MAX_LLM_CALLS_PER_POLL = 3
 MAX_RULES = 8
 MAX_PENDING = 10
@@ -141,7 +142,8 @@ class TailorBackground(MatchingCapability):
     worker: AgentWorker = None
     capability_worker: CapabilityWorker = None
     background_daemon_mode: bool = False
-    cursor: int = -1
+    tail: list = []
+    seen_state: bool = False
     last_md: str = ""
 
     # Do not change following tag of register capability
@@ -151,7 +153,8 @@ class TailorBackground(MatchingCapability):
         self.worker = worker
         self.background_daemon_mode = background_daemon_mode  # set BEFORE constructing the worker
         self.capability_worker = CapabilityWorker(self)  # daemon: pass self, not self.worker
-        self.cursor = -1
+        self.tail = []
+        self.seen_state = False
         self.last_md = UNSET
         self.worker.session_tasks.create(self.watch_loop())
 
@@ -177,9 +180,8 @@ class TailorBackground(MatchingCapability):
     async def poll(self):
         history = self.read_history()
         length = len(history)
-        if self.cursor < 0 or self.cursor > length:
-            self.cursor = max(1, length - FIRST_POLL_LOOKBACK)
-        start, self.cursor = self.cursor, length
+        start = self.new_start(history)
+        self.tail = [self.message_parts(m) for m in history[-TAIL_SIZE:]]
 
         # While the Tailor skill is open it owns the state, and its own conversation
         # ("forget the short one") is about rules, not feedback on replies; skip it.
@@ -188,7 +190,8 @@ class TailorBackground(MatchingCapability):
         state = self.load_state()
         if state is None:
             return
-        changed = self.decay(state)
+        # Only clean up rules that were actually loaded; a fresh empty state is never saved for this alone.
+        changed = self.decay(state) if self.seen_state else False
 
         calls = 0
         for index in range(max(start, 1), length):
@@ -214,13 +217,25 @@ class TailorBackground(MatchingCapability):
             self.log_error(f"History unavailable: {type(error).__name__}")
             return []
 
+    def new_start(self, history: list) -> int:
+        """Index of the first message the last poll didn't see.
+
+        History only keeps recent messages, so its length can stay the same while new ones arrive.
+        Find where the last few messages we saw now end instead of trusting a position.
+        """
+        size = len(self.tail)
+        if size:
+            parts = [self.message_parts(m) for m in history]
+            for end in range(len(parts), size - 1, -1):
+                if parts[end - size:end] == self.tail:
+                    return end
+        return max(1, len(history) - FIRST_POLL_LOOKBACK)
+
     @staticmethod
     def message_parts(message):
         if isinstance(message, dict):
             return message.get("role"), message.get("content")
-        role = getattr(message, "role", None)
-        content = getattr(message, "content", None)
-        return role, content
+        return None, None
 
     def candidate(self, history: list, index: int):
         """Return (assistant_reply, user_message) if this user turn may be style feedback."""
@@ -393,7 +408,12 @@ class TailorBackground(MatchingCapability):
             if isinstance(data, str):
                 data = json.loads(data)
             if not isinstance(data, dict):
+                if self.seen_state:
+                    # Saved state existed earlier this session, so this is a failed read, not a first run.
+                    self.log_error("Saved state came back missing, skipping this poll")
+                    return None
                 return state
+            self.seen_state = True
             state["rules"] = [r for r in data.get("rules", [])
                               if isinstance(r, dict) and isinstance(r.get("text"), str) and r.get("id")][:MAX_RULES]
             state["pending"] = [p for p in data.get("pending", [])

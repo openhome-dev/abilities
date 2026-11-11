@@ -37,6 +37,8 @@ MD_WORD_CAP = 180
 MAX_TURNS = 14
 IDLE_LIMIT = 2
 BUSY_SECONDS = 900
+# Kept set briefly after exit so the daemon polls past this skill's own conversation before learning resumes.
+BUSY_GRACE_SECONDS = 150
 
 CATEGORIES = (
     "length", "structure", "follow_ups", "confirmations", "formality", "humor",
@@ -681,7 +683,7 @@ class TailorCapability(MatchingCapability):
         A separate key, so this flag can never overwrite saved rules. It expires on its own
         if the session dies before the skill clears it.
         """
-        until = time.time() + BUSY_SECONDS if busy else 0
+        until = time.time() + (BUSY_SECONDS if busy else BUSY_GRACE_SECONDS)
         if not self.store_key({"until": until}, BUSY_KEY):
             self.log_error("Could not update busy flag")
 
