@@ -63,7 +63,7 @@ Everything else asks for confirmation first. That includes any tool the server h
 
 ### Safety and privacy
 - **Untrusted server content.** Tool descriptions and tool output come from a third party. They are passed to the language model as clearly marked data, with instructions never to follow anything written inside them. MCP Bridge makes exactly one tool call per request you make, and output from one call never triggers another.
-- **Address checks.** Only `https://` addresses are accepted. Redirects are never followed. Addresses on private, local or cloud-metadata networks are refused, both as typed and after the name is resolved. If the platform blocks name lookups, only the typed-address checks apply.
+- **Address checks.** Only `https://` addresses are accepted. Redirects are never followed. Addresses on private, local or cloud-metadata networks are refused as typed.
 - **Limits on replies.** Replies are capped at 512 KB. Only the first 6,000 characters are summarized.
 - **Spoken output.** Answers are plain spoken English, at most two sentences and under 30 words, with no links, lists or markdown. Email addresses, phone numbers and long ids are never read out.
 - **What's stored.** One Context Storage key, `mcp_bridge_state`, holds a short fingerprint of the server address (a hash, without any query string), whether the server uses the new or older MCP protocol, and the server's display name. Tokens, tool lists and tool output are never stored. Logs show the server address without its query string and never show the token.

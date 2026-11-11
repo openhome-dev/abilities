@@ -5,10 +5,8 @@ import ipaddress
 import json
 import re
 import secrets
-import socket
 import time
 from datetime import datetime, timezone
-from urllib.parse import urlsplit
 from zoneinfo import ZoneInfo
 
 import requests
@@ -161,15 +159,6 @@ items, then offer more. Never read out email addresses, phone numbers or long id
 request, say so plainly."""
 
 
-class McpError(Exception):
-    """A failure we can explain to the user. `kind` picks the spoken message."""
-
-    def __init__(self, kind: str, detail: str = ""):
-        super().__init__(kind)
-        self.kind = kind
-        self.detail = detail
-
-
 # ---------------------------------------------------------------------- pure helpers
 
 def _normalize(text: str) -> str:
@@ -182,13 +171,19 @@ def _fence(text: str) -> str:
     return (text or "").replace("<<<", " ").replace(">>>", " ")
 
 
+def _url_parts(url: str) -> tuple:
+    """(scheme, host, path) of a URL, lowercased scheme/host, without userinfo, port, query or fragment."""
+    match = re.match(r"^([A-Za-z][A-Za-z0-9+.\-]*)://(?:[^@/?#]*@)?(\[[^\]]*\]|[^:/?#]*)(?::\d*)?([^?#]*)",
+                     (url or "").strip())
+    if not match:
+        return "", "", ""
+    return match.group(1).lower(), match.group(2).strip("[]").lower(), match.group(3)
+
+
 def _redact(url: str) -> str:
     """scheme://host/path only; drops query strings (Zapier allows ?token=) and userinfo."""
-    try:
-        parts = urlsplit(url)
-        return f"{parts.scheme}://{parts.hostname or ''}{parts.path or ''}"
-    except Exception:
-        return "<unparseable url>"
+    scheme, host, path = _url_parts(url)
+    return f"{scheme}://{host}{path}" if scheme else "<unparseable url>"
 
 
 def _fingerprint(url: str) -> str:
@@ -419,328 +414,17 @@ def _personal_fields(args: dict, conversation: str, personal_norm: str) -> list:
     """Argument names whose value came from the user's stored notes rather than from what they said."""
     if not personal_norm:
         return []
-    said = _normalize(conversation)
+    said = set(_normalize(conversation).split())
+    personal = set(personal_norm.split())
     fields = []
     for name, value in (args or {}).items():
         for item in (value if isinstance(value, list) else [value]):
-            norm = _normalize(item) if isinstance(item, str) else ""
-            if len(norm) >= 3 and norm not in said and norm in personal_norm:
+            words = _normalize(item).split() if isinstance(item, str) else []
+            # Any word the user didn't say that comes from the notes, even inside a longer value.
+            if any(len(w) >= 3 and w not in said and w in personal for w in words):
                 fields.append(name)
                 break
     return fields
-
-
-# ---------------------------------------------------------------------- transport
-
-class McpClient:
-    """Blocking MCP Streamable HTTP client. Every method runs in a worker thread."""
-
-    def __init__(self, url: str, token: str, era: str, log, log_error):
-        self.url = url
-        self.token = token
-        self.era = era if era in ("modern", "legacy") else ""
-        self.log = log
-        self.log_error = log_error
-        self.session_id = ""
-        self.legacy_version = LEGACY_VERSION
-        self.server_name = ""
-        self.next_id = 1
-        self.use_stream = True
-
-    # ------------------------------------------------------------ url safety
-
-    def check_url(self):
-        parts = urlsplit(self.url)
-        if parts.scheme != "https" or not parts.hostname:
-            raise McpError("bad_url", "not https")
-        host = parts.hostname.lower().rstrip(".")
-        if host in BLOCKED_HOSTS or host.endswith(".localhost") or host.endswith(".internal") \
-                or host.endswith(".local"):
-            raise McpError("private_url", host)
-        try:
-            ipaddress.ip_address(host)
-            literal = True
-        except ValueError:
-            literal = False
-        if literal:
-            if _address_blocked(host):
-                raise McpError("private_url", "literal")
-            return
-        try:
-            infos = socket.getaddrinfo(host, parts.port or 443, proto=socket.IPPROTO_TCP)
-        except socket.gaierror:
-            raise McpError("dns", host)
-        except Exception as error:
-            # Sandbox without DNS access: hostname and literal-IP checks above still apply.
-            self.log_error(f"DNS check unavailable: {type(error).__name__}")
-            return
-        if not infos or any(_address_blocked(info[4][0]) for info in infos):
-            raise McpError("private_url", "resolved")
-
-    # ------------------------------------------------------------ raw POST
-
-    def _headers(self, method: str, name: str = "", params: dict = None) -> dict:
-        headers = {
-            "Content-Type": "application/json",
-            "Accept": "application/json, text/event-stream",
-        }
-        if self.token:
-            headers["Authorization"] = f"Bearer {self.token}"
-        if self.era == "legacy":
-            if method != "initialize":
-                headers["MCP-Protocol-Version"] = self.legacy_version
-            if self.session_id:
-                headers["Mcp-Session-Id"] = self.session_id
-            return headers
-        headers["MCP-Protocol-Version"] = MODERN_VERSION
-        headers["Mcp-Method"] = method
-        if name:
-            headers["Mcp-Name"] = _header_value(name)
-        for header, value in (params or {}).items():
-            headers[header] = value
-        return headers
-
-    def _read(self, resp, request_id, deadline: float):
-        """Read one JSON-RPC response from a JSON body or an SSE stream, size- and time-capped."""
-        ctype = (resp.headers.get("Content-Type") or "").lower()
-        if "text/event-stream" in ctype:
-            data_lines = []
-            total = 0
-            for raw in resp.iter_lines(decode_unicode=True):
-                if time.monotonic() > deadline:
-                    raise McpError("timeout")
-                line = raw or ""
-                total += len(line) + 1
-                if total > MAX_RESPONSE_BYTES:
-                    raise McpError("too_big")
-                if line.startswith(":"):
-                    continue
-                if line.startswith("data:"):
-                    data_lines.append(line[5:].lstrip(" "))
-                    continue
-                if line == "" and data_lines:
-                    payload = "\n".join(data_lines)
-                    data_lines = []
-                    try:
-                        message = json.loads(payload)
-                    except ValueError:
-                        continue
-                    if isinstance(message, dict) and message.get("id") == request_id \
-                            and ("result" in message or "error" in message):
-                        return message
-            if data_lines:
-                try:
-                    message = json.loads("\n".join(data_lines))
-                    if isinstance(message, dict) and message.get("id") == request_id:
-                        return message
-                except ValueError:
-                    pass
-            return None
-        body = b""
-        for chunk in resp.iter_content(chunk_size=16384):
-            if time.monotonic() > deadline:
-                raise McpError("timeout")
-            body += chunk or b""
-            if len(body) > MAX_RESPONSE_BYTES:
-                raise McpError("too_big")
-        if not body.strip():
-            return None
-        try:
-            message = json.loads(body.decode("utf-8", errors="replace"))
-        except ValueError:
-            return None
-        return message if isinstance(message, dict) else None
-
-    def post(self, method: str, params: dict, timeout: float, name: str = "",
-             header_params: dict = None, notification: bool = False) -> tuple:
-        """Send one JSON-RPC message. Returns (status, message_or_None, response_headers)."""
-        body = {"jsonrpc": "2.0", "method": method}
-        request_id = None
-        if not notification:
-            request_id = self.next_id
-            self.next_id += 1
-            body["id"] = request_id
-        params = dict(params or {})
-        if self.era != "legacy" and not notification:
-            params["_meta"] = {
-                "io.modelcontextprotocol/protocolVersion": MODERN_VERSION,
-                "io.modelcontextprotocol/clientInfo": CLIENT_INFO,
-                "io.modelcontextprotocol/clientCapabilities": {},
-            }
-        if params or not notification:
-            body["params"] = params
-        headers = self._headers(method, name, header_params)
-        deadline = time.monotonic() + timeout
-        try:
-            try:
-                resp = requests.post(self.url, headers=headers, data=json.dumps(body),
-                                     timeout=(CONNECT_TIMEOUT, timeout), allow_redirects=False,
-                                     stream=self.use_stream)
-            except TypeError:
-                # Sandboxed requests without streaming support: fall back to buffered reads.
-                self.use_stream = False
-                resp = requests.post(self.url, headers=headers, data=json.dumps(body),
-                                     timeout=(CONNECT_TIMEOUT, timeout), allow_redirects=False)
-        except requests.exceptions.Timeout:
-            raise McpError("timeout")
-        except requests.exceptions.SSLError:
-            raise McpError("network", "tls")
-        except requests.exceptions.RequestException as error:
-            raise McpError("network", type(error).__name__)
-        try:
-            status = resp.status_code
-            if 300 <= status < 400:
-                raise McpError("redirect")
-            if status in (401, 403):
-                raise McpError("auth", str(status))
-            if status == 202 or notification:
-                return status, None, resp.headers
-            try:
-                message = self._read(resp, request_id, deadline)
-            except requests.exceptions.RequestException:
-                raise McpError("timeout")
-            return status, message, resp.headers
-        finally:
-            try:
-                resp.close()
-            except Exception:
-                pass
-
-    # ------------------------------------------------------------ eras
-
-    @staticmethod
-    def _modern_error(message) -> bool:
-        if not isinstance(message, dict) or not isinstance(message.get("error"), dict):
-            return False
-        code = message["error"].get("code")
-        return code in MODERN_ERROR_CODES
-
-    def _legacy_handshake(self):
-        self.era = "legacy"
-        self.session_id = ""
-        status, message, headers = self.post("initialize", {
-            "protocolVersion": LEGACY_VERSION,
-            "capabilities": {},
-            "clientInfo": CLIENT_INFO,
-        }, LIST_TIMEOUT)
-        result = message.get("result") if isinstance(message, dict) else None
-        if status != 200 or not isinstance(result, dict):
-            raise McpError("unsupported", f"initialize status {status}")
-        version = result.get("protocolVersion")
-        if version not in LEGACY_VERSIONS:
-            raise McpError("unsupported", f"legacy version {version}")
-        self.legacy_version = version
-        self.session_id = (headers.get("Mcp-Session-Id") or "").strip()
-        info = result.get("serverInfo") if isinstance(result.get("serverInfo"), dict) else {}
-        self.server_name = str(info.get("title") or info.get("name") or "")
-        self.post("notifications/initialized", {}, LIST_TIMEOUT, notification=True)
-
-    def connect(self):
-        """Work out the server's era. Modern first (server/discover), legacy on a non-modern 4xx."""
-        self.check_url()
-        if self.era == "legacy":
-            try:
-                self._legacy_handshake()
-                return
-            except McpError as error:
-                if error.kind in ("auth", "network", "timeout"):
-                    raise
-                self.log("Cached legacy era failed, re-probing modern")
-        self.era = "modern"
-        status, message, _ = self.post("server/discover", {}, LIST_TIMEOUT)
-        result = message.get("result") if isinstance(message, dict) else None
-        if status == 200 and isinstance(result, dict):
-            versions = result.get("supportedVersions")
-            if isinstance(versions, list) and MODERN_VERSION not in versions:
-                if any(v in LEGACY_VERSIONS for v in versions):
-                    self._legacy_handshake()
-                    return
-                raise McpError("unsupported", f"versions {versions[:4]}")
-            meta = result.get("_meta") if isinstance(result.get("_meta"), dict) else {}
-            info = meta.get("io.modelcontextprotocol/serverInfo")
-            info = info if isinstance(info, dict) else {}
-            self.server_name = str(info.get("title") or info.get("name") or "")
-            return
-        if self._modern_error(message):
-            code = message["error"].get("code")
-            if code == -32022:
-                supported = (message["error"].get("data") or {}).get("supported") or []
-                if any(v in LEGACY_VERSIONS for v in supported):
-                    self._legacy_handshake()
-                    return
-            raise McpError("unsupported", f"modern error {code}")
-        # Not a modern answer: try the legacy handshake. If that fails too, the server may be modern
-        # without server/discover, so stay modern and let tools/list decide.
-        try:
-            self._legacy_handshake()
-        except McpError as error:
-            if error.kind in ("auth", "network", "timeout"):
-                raise
-            self.log(f"Legacy handshake failed ({error.detail}), trying modern tools/list")
-            self.era = "modern"
-            self.session_id = ""
-
-    def request(self, method: str, params: dict, timeout: float, name: str = "",
-                header_params: dict = None) -> dict:
-        """Send a request and return its result, re-initializing once if a legacy session expired."""
-        for attempt in range(2):
-            status, message, _ = self.post(method, params, timeout, name, header_params)
-            if self.era == "legacy" and status == 404 and self.session_id and attempt == 0:
-                self.log("Legacy session expired, re-initializing")
-                self._legacy_handshake()
-                continue
-            if not isinstance(message, dict):
-                raise McpError("protocol", f"{method} status {status}")
-            if isinstance(message.get("error"), dict):
-                code = message["error"].get("code")
-                raise McpError("rpc", f"{method} error {code}")
-            result = message.get("result")
-            if not isinstance(result, dict):
-                raise McpError("protocol", f"{method} no result")
-            return result
-        raise McpError("protocol", f"{method} retry failed")
-
-    # ------------------------------------------------------------ tools
-
-    def list_tools(self) -> list:
-        tools = []
-        cursor = None
-        for _ in range(MAX_LIST_PAGES):
-            params = {"cursor": cursor} if cursor else {}
-            result = self.request("tools/list", params, LIST_TIMEOUT)
-            for tool in result.get("tools") or []:
-                if not isinstance(tool, dict) or not isinstance(tool.get("name"), str) or not tool["name"]:
-                    continue
-                valid, _ = _header_params(tool.get("inputSchema") or {})
-                if not valid:
-                    self.log(f"Dropping tool with invalid x-mcp-header: {tool['name'][:40]}")
-                    continue
-                tools.append(tool)
-                if len(tools) >= MAX_TOOLS:
-                    return tools
-            cursor = result.get("nextCursor")
-            if not isinstance(cursor, str) or not cursor:
-                break
-        return tools
-
-    def call_tool(self, tool: dict, arguments: dict) -> dict:
-        header_params = {}
-        if self.era == "modern":
-            _, found = _header_params(tool.get("inputSchema") or {})
-            for path, header, kind in found:
-                value = arguments
-                for step in path:
-                    value = value.get(step) if isinstance(value, dict) else None
-                if value is None:
-                    continue
-                if kind == "boolean":
-                    value = "true" if value else "false"
-                header_params[f"Mcp-Param-{header}"] = _header_value(str(value))
-        result = self.request("tools/call", {"name": tool["name"], "arguments": arguments},
-                              CALL_TIMEOUT, name=tool["name"], header_params=header_params)
-        if result.get("resultType") == "input_required":
-            raise McpError("input_required")
-        return result
 
 
 # ---------------------------------------------------------------------- ability
@@ -748,7 +432,7 @@ class McpClient:
 class McpBridgeCapability(MatchingCapability):
     worker: AgentWorker = None
     capability_worker: CapabilityWorker = None
-    client: McpClient = None
+    client: object = None
     tools: list = None
     state: dict = {}
     state_ok: bool = False
@@ -833,7 +517,9 @@ class McpBridgeCapability(MatchingCapability):
         self.load_state(url)
         era = self.state.get("era", "") if self.state.get("fingerprint") == _fingerprint(url) else ""
         self.client = McpClient(url, token, era, self.log, self.log_error)
-        self.log(f"Connecting to {_redact(url)} (cached era: {era or 'none'})")
+        # Host only: some servers put the access key in the path.
+        self.log(f"Connecting to {_url_parts(url)[1] or 'server'} (cached era: {era or 'none'})")
+        await self.capability_worker.speak("One sec, connecting.")
         try:
             await asyncio.to_thread(self.client.connect)
             self.tools = await asyncio.to_thread(self.client.list_tools)
@@ -1160,7 +846,7 @@ class McpBridgeCapability(MatchingCapability):
             self.log_error(f"LLM JSON parse failed: {type(error).__name__}")
             return None
 
-    def error_line(self, error: McpError, connecting: bool = False) -> str:
+    def error_line(self, error: "McpError", connecting: bool = False) -> str:
         has_token = bool(self.client and self.client.token)
         lines = {
             "bad_url": "Your server address needs to start with https. You can fix it in Settings.",
@@ -1184,7 +870,7 @@ class McpBridgeCapability(MatchingCapability):
         name = re.sub(r"[^A-Za-z0-9 .]+", " ", server_name or "")
         name = re.sub(r"\s+", " ", name).strip()[:40]
         if not name:
-            host = (urlsplit(url).hostname or "").split(".")
+            host = _url_parts(url)[1].split(".")
             core = [p for p in host if p not in ("mcp", "api", "www", "com", "io", "ai", "dev", "net", "org")]
             name = core[0] if core else "your server"
         return name.strip() or "your server"
@@ -1312,3 +998,316 @@ class McpBridgeCapability(MatchingCapability):
             except Exception as error:
                 self.log_error(f"Context save attempt failed: {type(error).__name__}")
         return False
+
+
+# ---------------------------------------------------------------------- errors
+
+class McpError(Exception):
+    """A failure we can explain to the user. `kind` picks the spoken message."""
+
+    def __init__(self, kind: str, detail: str = ""):
+        super().__init__(kind)
+        self.kind = kind
+        self.detail = detail
+
+
+# ---------------------------------------------------------------------- transport
+
+class McpClient:
+    """Blocking MCP Streamable HTTP client. Every method runs in a worker thread."""
+
+    def __init__(self, url: str, token: str, era: str, log, log_error):
+        self.url = url
+        self.token = token
+        self.era = era if era in ("modern", "legacy") else ""
+        self.log = log
+        self.log_error = log_error
+        self.session_id = ""
+        self.legacy_version = LEGACY_VERSION
+        self.server_name = ""
+        self.next_id = 1
+        self.use_stream = True
+
+    # ------------------------------------------------------------ url safety
+
+    def check_url(self):
+        scheme, host, _ = _url_parts(self.url)
+        if scheme != "https" or not host:
+            raise McpError("bad_url", "not https")
+        host = host.rstrip(".")
+        if host in BLOCKED_HOSTS or host.endswith(".localhost") or host.endswith(".internal") \
+                or host.endswith(".local"):
+            raise McpError("private_url", host)
+        try:
+            ipaddress.ip_address(host)
+            literal = True
+        except ValueError:
+            literal = False
+        if literal and _address_blocked(host):
+            raise McpError("private_url", "literal")
+
+    # ------------------------------------------------------------ raw POST
+
+    def _headers(self, method: str, name: str = "", params: dict = None) -> dict:
+        headers = {
+            "Content-Type": "application/json",
+            "Accept": "application/json, text/event-stream",
+        }
+        if self.token:
+            headers["Authorization"] = f"Bearer {self.token}"
+        if self.era == "legacy":
+            if method != "initialize":
+                headers["MCP-Protocol-Version"] = self.legacy_version
+            if self.session_id:
+                headers["Mcp-Session-Id"] = self.session_id
+            return headers
+        headers["MCP-Protocol-Version"] = MODERN_VERSION
+        headers["Mcp-Method"] = method
+        if name:
+            headers["Mcp-Name"] = _header_value(name)
+        for header, value in (params or {}).items():
+            headers[header] = value
+        return headers
+
+    def _read(self, resp, request_id, deadline: float):
+        """Read one JSON-RPC response from a JSON body or an SSE stream, size- and time-capped."""
+        ctype = (resp.headers.get("Content-Type") or "").lower()
+        if "text/event-stream" in ctype:
+            resp.encoding = "utf-8"  # event streams are always UTF-8
+            data_lines = []
+            total = 0
+            for raw in resp.iter_lines(decode_unicode=True):
+                if time.monotonic() > deadline:
+                    raise McpError("timeout")
+                line = raw or ""
+                total += len(line) + 1
+                if total > MAX_RESPONSE_BYTES:
+                    raise McpError("too_big")
+                if line.startswith(":"):
+                    continue
+                if line.startswith("data:"):
+                    data_lines.append(line[5:].lstrip(" "))
+                    continue
+                if line == "" and data_lines:
+                    payload = "\n".join(data_lines)
+                    data_lines = []
+                    try:
+                        message = json.loads(payload)
+                    except ValueError:
+                        continue
+                    if isinstance(message, dict) and message.get("id") == request_id \
+                            and ("result" in message or "error" in message):
+                        return message
+            if data_lines:
+                try:
+                    message = json.loads("\n".join(data_lines))
+                    if isinstance(message, dict) and message.get("id") == request_id:
+                        return message
+                except ValueError:
+                    pass
+            return None
+        body = b""
+        for chunk in resp.iter_content(chunk_size=16384):
+            if time.monotonic() > deadline:
+                raise McpError("timeout")
+            body += chunk or b""
+            if len(body) > MAX_RESPONSE_BYTES:
+                raise McpError("too_big")
+        if not body.strip():
+            return None
+        try:
+            message = json.loads(body.decode("utf-8", errors="replace"))
+        except ValueError:
+            return None
+        return message if isinstance(message, dict) else None
+
+    def post(self, method: str, params: dict, timeout: float, name: str = "",
+             header_params: dict = None, notification: bool = False) -> tuple:
+        """Send one JSON-RPC message. Returns (status, message_or_None, response_headers)."""
+        body = {"jsonrpc": "2.0", "method": method}
+        request_id = None
+        if not notification:
+            request_id = self.next_id
+            self.next_id += 1
+            body["id"] = request_id
+        params = dict(params or {})
+        if self.era != "legacy" and not notification:
+            params["_meta"] = {
+                "io.modelcontextprotocol/protocolVersion": MODERN_VERSION,
+                "io.modelcontextprotocol/clientInfo": CLIENT_INFO,
+                "io.modelcontextprotocol/clientCapabilities": {},
+            }
+        if params or not notification:
+            body["params"] = params
+        headers = self._headers(method, name, header_params)
+        deadline = time.monotonic() + timeout
+        try:
+            try:
+                resp = requests.post(self.url, headers=headers, data=json.dumps(body),
+                                     timeout=(CONNECT_TIMEOUT, timeout), allow_redirects=False,
+                                     stream=self.use_stream)
+            except TypeError:
+                # Sandboxed requests without streaming support: fall back to buffered reads.
+                self.use_stream = False
+                resp = requests.post(self.url, headers=headers, data=json.dumps(body),
+                                     timeout=(CONNECT_TIMEOUT, timeout), allow_redirects=False)
+        except requests.exceptions.Timeout:
+            raise McpError("timeout")
+        except requests.exceptions.SSLError:
+            raise McpError("network", "tls")
+        except requests.exceptions.RequestException as error:
+            raise McpError("network", type(error).__name__)
+        try:
+            status = resp.status_code
+            if 300 <= status < 400:
+                raise McpError("redirect")
+            if status in (401, 403):
+                raise McpError("auth", str(status))
+            if status == 202 or notification:
+                return status, None, resp.headers
+            try:
+                message = self._read(resp, request_id, deadline)
+            except requests.exceptions.RequestException:
+                raise McpError("timeout")
+            return status, message, resp.headers
+        finally:
+            try:
+                resp.close()
+            except Exception:
+                pass
+
+    # ------------------------------------------------------------ eras
+
+    @staticmethod
+    def _modern_error(message) -> bool:
+        if not isinstance(message, dict) or not isinstance(message.get("error"), dict):
+            return False
+        code = message["error"].get("code")
+        return code in MODERN_ERROR_CODES
+
+    def _legacy_handshake(self):
+        self.era = "legacy"
+        self.session_id = ""
+        status, message, headers = self.post("initialize", {
+            "protocolVersion": LEGACY_VERSION,
+            "capabilities": {},
+            "clientInfo": CLIENT_INFO,
+        }, LIST_TIMEOUT)
+        result = message.get("result") if isinstance(message, dict) else None
+        if status != 200 or not isinstance(result, dict):
+            raise McpError("unsupported", f"initialize status {status}")
+        version = result.get("protocolVersion")
+        if version not in LEGACY_VERSIONS:
+            raise McpError("unsupported", f"legacy version {version}")
+        self.legacy_version = version
+        self.session_id = (headers.get("Mcp-Session-Id") or "").strip()
+        info = result.get("serverInfo") if isinstance(result.get("serverInfo"), dict) else {}
+        self.server_name = str(info.get("title") or info.get("name") or "")
+        self.post("notifications/initialized", {}, LIST_TIMEOUT, notification=True)
+
+    def connect(self):
+        """Work out the server's era. Modern first (server/discover), legacy on a non-modern 4xx."""
+        self.check_url()
+        if self.era == "legacy":
+            try:
+                self._legacy_handshake()
+                return
+            except McpError as error:
+                if error.kind in ("auth", "network", "timeout"):
+                    raise
+                self.log("Cached legacy era failed, re-probing modern")
+        self.era = "modern"
+        status, message, _ = self.post("server/discover", {}, LIST_TIMEOUT)
+        result = message.get("result") if isinstance(message, dict) else None
+        if status == 200 and isinstance(result, dict):
+            versions = result.get("supportedVersions")
+            if isinstance(versions, list) and MODERN_VERSION not in versions:
+                if any(v in LEGACY_VERSIONS for v in versions):
+                    self._legacy_handshake()
+                    return
+                raise McpError("unsupported", f"versions {versions[:4]}")
+            meta = result.get("_meta") if isinstance(result.get("_meta"), dict) else {}
+            info = meta.get("io.modelcontextprotocol/serverInfo")
+            info = info if isinstance(info, dict) else {}
+            self.server_name = str(info.get("title") or info.get("name") or "")
+            return
+        if self._modern_error(message):
+            code = message["error"].get("code")
+            if code == -32022:
+                supported = (message["error"].get("data") or {}).get("supported") or []
+                if any(v in LEGACY_VERSIONS for v in supported):
+                    self._legacy_handshake()
+                    return
+            raise McpError("unsupported", f"modern error {code}")
+        # Not a modern answer: try the legacy handshake. If that fails too, the server may be modern
+        # without server/discover, so stay modern and let tools/list decide.
+        try:
+            self._legacy_handshake()
+        except McpError as error:
+            if error.kind in ("auth", "network", "timeout"):
+                raise
+            self.log(f"Legacy handshake failed ({error.detail}), trying modern tools/list")
+            self.era = "modern"
+            self.session_id = ""
+
+    def request(self, method: str, params: dict, timeout: float, name: str = "",
+                header_params: dict = None) -> dict:
+        """Send a request and return its result, re-initializing once if a legacy session expired."""
+        for attempt in range(2):
+            status, message, _ = self.post(method, params, timeout, name, header_params)
+            if self.era == "legacy" and status == 404 and self.session_id and attempt == 0:
+                self.log("Legacy session expired, re-initializing")
+                self._legacy_handshake()
+                continue
+            if not isinstance(message, dict):
+                raise McpError("protocol", f"{method} status {status}")
+            if isinstance(message.get("error"), dict):
+                code = message["error"].get("code")
+                raise McpError("rpc", f"{method} error {code}")
+            result = message.get("result")
+            if not isinstance(result, dict):
+                raise McpError("protocol", f"{method} no result")
+            return result
+        raise McpError("protocol", f"{method} retry failed")
+
+    # ------------------------------------------------------------ tools
+
+    def list_tools(self) -> list:
+        tools = []
+        cursor = None
+        for _ in range(MAX_LIST_PAGES):
+            params = {"cursor": cursor} if cursor else {}
+            result = self.request("tools/list", params, LIST_TIMEOUT)
+            for tool in result.get("tools") or []:
+                if not isinstance(tool, dict) or not isinstance(tool.get("name"), str) or not tool["name"]:
+                    continue
+                valid, _ = _header_params(tool.get("inputSchema") or {})
+                if not valid:
+                    self.log(f"Dropping tool with invalid x-mcp-header: {tool['name'][:40]}")
+                    continue
+                tools.append(tool)
+                if len(tools) >= MAX_TOOLS:
+                    return tools
+            cursor = result.get("nextCursor")
+            if not isinstance(cursor, str) or not cursor:
+                break
+        return tools
+
+    def call_tool(self, tool: dict, arguments: dict) -> dict:
+        header_params = {}
+        if self.era == "modern":
+            _, found = _header_params(tool.get("inputSchema") or {})
+            for path, header, kind in found:
+                value = arguments
+                for step in path:
+                    value = value.get(step) if isinstance(value, dict) else None
+                if value is None:
+                    continue
+                if kind == "boolean":
+                    value = "true" if value else "false"
+                header_params[f"Mcp-Param-{header}"] = _header_value(str(value))
+        result = self.request("tools/call", {"name": tool["name"], "arguments": arguments},
+                              CALL_TIMEOUT, name=tool["name"], header_params=header_params)
+        if result.get("resultType") == "input_required":
+            raise McpError("input_required")
+        return result
