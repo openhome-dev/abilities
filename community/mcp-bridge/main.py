@@ -81,7 +81,14 @@ WRITE_WORDS = (
     "send", "post", "create", "add", "update", "edit", "modify", "delete", "remove", "pay", "buy",
     "purchase", "transfer", "book", "cancel", "publish", "merge", "write", "insert", "upload",
     "move", "archive", "invite", "reply", "submit", "approve", "set", "assign", "close", "run",
+    "execute", "deploy", "push", "commit", "share", "email", "trigger", "sync", "save", "rename",
+    "replace", "reset", "kill", "unlock", "grant", "charge", "refund", "enable", "disable", "revoke",
+    "restart", "clear", "drop", "wipe",
 )
+# Fine as the exit word at a menu, but also real answers ("Done" is a Trello list) or a step-level cancel.
+AMBIGUOUS_EXIT = {"done", "nothing", "cancel", "all done", "all good", "all set", "cheers"}
+SKIP_STEP = {"cancel", "nothing", "skip", "skip it", "skip that"}
+NUMERIC_HOST_RE = re.compile(r"^(0x[0-9a-f]+|\d+)(\.(0x[0-9a-f]+|\d+)){0,3}$")
 
 EXIT_PHRASES = {
     "stop", "done", "exit", "quit", "bye", "goodbye", "cancel", "nothing", "nothing else",
@@ -163,7 +170,8 @@ request, say so plainly."""
 
 def _normalize(text: str) -> str:
     text = (text or "").lower().replace("\u2019", "'")
-    text = re.sub(r"[^a-z0-9' ]+", " ", text)
+    # \w keeps letters of any script, so non-Latin speech and names don't normalize to nothing.
+    text = re.sub(r"[^\w' ]+", " ", text)
     return re.sub(r"\s+", " ", text).strip()
 
 
@@ -332,7 +340,8 @@ def _looks_like_write(tool: dict) -> bool:
     opening = _normalize(str(tool.get("description") or "")).split()[:6]
     stems = set(words) | set(opening)
     for word in WRITE_WORDS:
-        if word in stems or word + "s" in stems or word + "es" in stems:
+        forms = {word, word + "s", word + "es", word + "ed", word + "d", word + "ing", word.rstrip("e") + "ing"}
+        if forms & stems:
             return True
     return False
 
@@ -348,8 +357,13 @@ def _is_read_only(tool: dict) -> bool:
 
 def _is_destructive(tool: dict) -> bool:
     notes = tool.get("annotations") if isinstance(tool.get("annotations"), dict) else {}
+    if notes.get("destructiveHint") is True:
+        return True
+    # A server's readOnlyHint is a claim, not proof: a tool that reads like a write still gets the warning.
+    if notes.get("readOnlyHint") is True and not _looks_like_write(tool):
+        return False
     # Spec default for destructiveHint is true when a tool isn't read-only.
-    return notes.get("readOnlyHint") is not True and notes.get("destructiveHint") is not False
+    return notes.get("destructiveHint") is not False
 
 
 def _catalog_line(tool: dict, with_args: bool) -> str:
@@ -419,6 +433,11 @@ def _personal_fields(args: dict, conversation: str, personal_norm: str) -> list:
     fields = []
     for name, value in (args or {}).items():
         for item in (value if isinstance(value, list) else [value]):
+            if isinstance(item, (dict, list, int, float)) and not isinstance(item, bool):
+                try:
+                    item = json.dumps(item)
+                except (TypeError, ValueError):
+                    item = str(item)
             words = _normalize(item).split() if isinstance(item, str) else []
             # Any word the user didn't say that comes from the notes, even inside a longer value.
             if any(len(w) >= 3 and w not in said and w in personal for w in words):
@@ -704,7 +723,12 @@ class McpBridgeCapability(MatchingCapability):
         await self.capability_worker.speak(question)
         for attempt in range(2):
             answer = (await self.capability_worker.user_response() or "").strip()
-            if self.is_exit(answer):
+            norm = _normalize(answer)
+            if norm in SKIP_STEP:
+                await self.capability_worker.speak("Okay, skipping that one.")
+                return None
+            # "Done" or "all good" can be a real value (a list name), so only clear exit phrases end the session.
+            if self.is_exit(answer) and norm not in AMBIGUOUS_EXIT:
                 self.ending = True
                 await self.capability_worker.speak("Okay, done for now.")
                 return None
@@ -735,11 +759,26 @@ class McpBridgeCapability(MatchingCapability):
             sentence = _speakable(raw, 110)
         except Exception as error:
             self.log_error(f"Describe failed: {type(error).__name__}")
+        name = _humanize(tool["name"])
         if not sentence.lower().startswith("i'll") and not sentence.lower().startswith("i will"):
-            sentence = f"I'll run {_humanize(tool['name'])}."
+            sentence = f"I'll run {name}{self.arg_summary(args)}."
+        elif name not in _normalize(sentence).replace("_", " "):
+            # The sentence is the model's wording; the real tool name always comes from the code.
+            sentence = f"Tool {name}. {sentence}"
         note = f" Using {self.personal_preview(args, personal)} from what I know." if personal else ""
         warning = " This might not be undoable." if destructive else ""
         return f"{sentence}{note}{warning} Go ahead, or change something?"
+
+    def arg_summary(self, args: dict) -> str:
+        """Short spoken list of the values being sent; long, numeric or address-like ones are named only."""
+        bits = []
+        for field, value in list((args or {}).items())[:3]:
+            text = _speakable(str(value)) if isinstance(value, (str, int, float)) and not isinstance(value, bool) else ""
+            if text and "@" not in text and len(text) <= 30 and sum(c.isdigit() for c in text) <= 4:
+                bits.append(f"{_humanize(field)} {text}")
+            else:
+                bits.append(f"some {_humanize(field)}")
+        return f" with {_join(bits)}" if bits else ""
 
     def personal_preview(self, args: dict, personal: list) -> str:
         """Say which stored detail is being sent, but never read out emails, numbers or long ids."""
@@ -813,7 +852,7 @@ class McpBridgeCapability(MatchingCapability):
             norm = _normalize(answer)
             if norm in QUICK_YES:
                 return "yes", ""
-            if norm in QUICK_NO:
+            if norm in QUICK_NO or norm in SKIP_STEP:
                 return "no", ""
             if self.is_exit(answer):
                 self.ending = True
@@ -1043,6 +1082,10 @@ class McpClient:
             literal = True
         except ValueError:
             literal = False
+            # Decimal, hex and short forms (2130706433, 0x7f.1, 127.1) are not valid literals here but
+            # some resolvers still turn them into loopback or private addresses, so refuse them as typed.
+            if NUMERIC_HOST_RE.match(host):
+                raise McpError("private_url", "numeric")
         if literal and _address_blocked(host):
             raise McpError("private_url", "literal")
 
