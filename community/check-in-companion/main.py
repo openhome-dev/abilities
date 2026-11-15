@@ -533,7 +533,8 @@ class CheckInCompanionCapability(MatchingCapability):
             sent = await self.email_family(
                 f"Check-ins paused: {name}",
                 f"{name} has paused their daily check-ins until the end of {end.strftime('%A')} "
-                f"{end.day} {end.strftime('%B')}. You won't get alerts or digests until then.\n\n"
+                f"{end.day} {end.strftime('%B')}. You won't get check-in questions, missed-check-in alerts or "
+                f"evening emails until then. If they say something that sounds urgent, you will still be emailed.\n\n"
                 "Sent by the Check-In Companion ability on OpenHome.",
             )
             self.log(f"pause notice sent={sent}")
