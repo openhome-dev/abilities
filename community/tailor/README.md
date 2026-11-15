@@ -28,12 +28,12 @@ Tailor has two parts.
 - **Explicit feedback.** You say something like "too long", "shorter", "you already said that", "skip the intro" or "in metric".
 - **A repeated question.** You ask nearly the same question again because the reply missed it.
 
-Most messages never reach the LLM. At most three a poll do. The LLM then decides whether the message is really feedback on style, and writes one short rule. A rule can apply everywhere, or to one topic ("for recipes, give only the steps").
+Most messages never reach the LLM. At most three a poll do; any left over are looked at on the next poll, not dropped. The LLM then decides whether the message is really feedback on style, and writes one short rule. A rule can apply everywhere, or to one topic ("for recipes, give only the steps").
 
 - **Explicit feedback** becomes a rule straight away.
 - **A repeated question** becomes a rule only after it happens twice.
 - **Same rule again:** feedback that matches an existing rule reinforces it.
-- **Opposite rule:** feedback that contradicts a rule replaces it.
+- **Opposite rule:** when you clearly ask for the opposite, it replaces a learned rule. A rule you added by voice is only changed by voice, and one indirect signal (like asking the same thing again) never overturns an existing rule.
 
 Rules are saved in Context Storage and written to `tailor_style.md`. OpenHome injects that file into the main Agent's prompt within about 60 to 90 seconds, so you should hear a change within a couple of minutes.
 
@@ -52,7 +52,7 @@ Rules are saved in Context Storage and written to `tailor_style.md`. OpenHome in
 Say "done", "that's all" or "goodbye" at any point to leave. Two silent turns also end the session.
 
 ### Limits
-- **At most 8 rules.** The injected file stays under 180 words. If the list is full, a new learned rule replaces the learned rule you reinforced least recently. Rules you added by voice are never dropped this way.
+- **At most 8 rules.** The injected file stays under 180 words. If the list is full, a new learned rule replaces the learned rule you reinforced least recently. Rules you added by voice are never dropped this way, and a new rule that would not fit evicts nothing. If saving the style file fails, the next poll tries again. Dates use your timezone, falling back to UTC.
 - **Learned rules expire.** A learned rule that isn't reinforced for 30 days is dropped. A one-off repeated question that never comes up again is forgotten after 14 days.
 - **Rules shape the main Agent's own replies.** Other skills that speak fixed scripts won't change.
 - **Not instant.** The background checks every 90 seconds, and the Agent picks up the file within another 60 to 90 seconds.

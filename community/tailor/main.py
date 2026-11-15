@@ -3,6 +3,7 @@ import re
 import secrets
 import time
 from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 
 from src.agent.capability import MatchingCapability
 from src.agent.capability_worker import CapabilityWorker
@@ -59,8 +60,10 @@ QUICK_NEXT = {"next", "next one", "continue", "go on", "keep going"}
 # Backstop only; the normalizer prompt is the primary filter for non-style "rules".
 UNSAFE_RE = re.compile(
     r"\b(ignore|disregard|system prompt|jailbreak|pretend|you are now|act as|role ?play|reveal|password|"
-    r"api key|token|execute|command|http|www|safety|unsafe|illegal|bypass|override|admin|developer mode|"
-    r"ability|abilities|skill|tool|install|purchase|buy|send|delete|transfer|wallet)\b"
+    r"api key|execute|http|www|safety|unsafe|illegal|bypass|override|admin|developer mode|"
+    r"ability|abilities|skill|install|purchase|buy|delete|transfer|wallet|from now on|forget (all|everything|"
+    r"previous|your)|previous instructions|new instructions|instead of answering|respond only with|"
+    r"do not follow|always say)\b"
 )
 
 HELP_TEXT = (
@@ -142,16 +145,33 @@ def _one_line(text: str) -> str:
 
 
 def _today() -> str:
-    return datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    return _now().strftime("%Y-%m-%d")
+
+
+def _now() -> datetime:
+    """Now in the user's timezone when known (set once per session), otherwise UTC."""
+    try:
+        return datetime.now(ZoneInfo(TZ_NAME[0]))
+    except Exception:
+        return datetime.now(timezone.utc)
+
+
+def _set_timezone(worker) -> None:
+    try:
+        name = worker.get_timezone() or ""
+        ZoneInfo(name)
+        TZ_NAME[0] = name
+    except Exception:
+        TZ_NAME[0] = "UTC"  # unknown or non-IANA names fall back to UTC
 
 
 def _spoken_when(day: str) -> str:
     """Speech-friendly age of a date: never reads a raw date aloud."""
     try:
-        then = datetime.strptime(day, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+        then = datetime.strptime(day, "%Y-%m-%d").date()
     except (TypeError, ValueError):
         return "a while ago"
-    days = (datetime.now(timezone.utc) - then) // timedelta(days=1)
+    days = (_now().date() - then).days
     if days <= 0:
         return "today"
     if days == 1:
@@ -226,6 +246,7 @@ class TailorCapability(MatchingCapability):
     async def run(self):
         try:
             self.set_busy(True)
+            _set_timezone(self.capability_worker)
             if not self.load_state():
                 await self.capability_worker.speak("Sorry, I can't reach your saved style rules right now.")
                 return
@@ -379,7 +400,7 @@ class TailorCapability(MatchingCapability):
 
     def describe(self, rule: dict) -> str:
         scope = rule.get("scope") or "global"
-        text = rule["text"].rstrip(".")
+        text = rule["text"].rstrip(".").strip() or "no wording saved"
         return text if scope == "global" else f"for {scope}, {text[0].lower() + text[1:]}"
 
     def greeting(self) -> str:
@@ -557,6 +578,11 @@ class TailorCapability(MatchingCapability):
         rule = await self.confirmed_rule(raw, lambda text: f"Change it to: {text}?")
         if rule is None:
             return
+        others = [r for i, r in enumerate(self.state["rules"]) if i != index]
+        changed_rule = {**self.state["rules"][index], **rule}
+        if len(render_md(others + [changed_rule]).split()) > MD_WORD_CAP:
+            await self.capability_worker.speak("That would make my notes too long. Try fewer words.")
+            return
         snapshot = self.copy_state()
         today = _today()
         self.state["rules"][index].update({**rule, "source": "voice", "evidence": "",
@@ -583,6 +609,8 @@ class TailorCapability(MatchingCapability):
         snapshot = self.copy_state()
         self.state["rules"].pop(index)
         self.current = -1
+        if index < self.cursor:
+            self.cursor -= 1  # the rules after it moved up one place, so the next one to read is not skipped
         self.cursor = min(self.cursor, len(self.state["rules"]))
         if await self.save(snapshot):
             self.log(f"rule removed total={len(self.state['rules'])}")
@@ -719,7 +747,9 @@ class TailorCapability(MatchingCapability):
         """Load saved rules. False only when storage can't be read, so nothing gets overwritten."""
         try:
             result = self.capability_worker.get_single_key(STATE_KEY)
-            data = result.get("value") if isinstance(result, dict) else None
+            if not isinstance(result, dict) or result.get("error"):
+                raise ValueError("unexpected storage reply")  # a failed read must not look like "no rules yet"
+            data = result.get("value")
             if isinstance(data, str):
                 data = json.loads(data)
             if not isinstance(data, dict):

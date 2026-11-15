@@ -3,6 +3,7 @@ import re
 import secrets
 import time
 from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 
 from src.agent.capability import MatchingCapability
 from src.agent.capability_worker import CapabilityWorker
@@ -43,6 +44,7 @@ MAX_EVIDENCE_WORDS = 12
 MD_WORD_CAP = 180
 REASK_OVERLAP = 0.6
 UNSET = "<unset>"
+TZ_NAME = ["UTC"]
 
 CATEGORIES = (
     "length", "structure", "follow_ups", "confirmations", "formality", "humor",
@@ -62,8 +64,10 @@ FEEDBACK_HINT_RE = re.compile(
 # Backstop only; the extraction prompt is the primary filter for non-style "rules".
 UNSAFE_RE = re.compile(
     r"\b(ignore|disregard|system prompt|jailbreak|pretend|you are now|act as|role ?play|reveal|password|"
-    r"api key|token|execute|command|http|www|safety|unsafe|illegal|bypass|override|admin|developer mode|"
-    r"ability|abilities|skill|tool|install|purchase|buy|send|delete|transfer|wallet)\b"
+    r"api key|execute|http|www|safety|unsafe|illegal|bypass|override|admin|developer mode|"
+    r"ability|abilities|skill|install|purchase|buy|delete|transfer|wallet|from now on|forget (all|everything|"
+    r"previous|your)|previous instructions|new instructions|instead of answering|respond only with|"
+    r"do not follow|always say)\b"
 )
 
 EXTRACT_SYSTEM = """You help a voice assistant learn HOW one user wants it to talk. You are shown the
@@ -96,15 +100,32 @@ Existing rules and pending rules:
 
 
 def _today() -> str:
-    return datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    return _now().strftime("%Y-%m-%d")
 
 
 def _days_ago(day: str) -> int:
     try:
-        then = datetime.strptime(day, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+        then = datetime.strptime(day, "%Y-%m-%d").date()
     except (TypeError, ValueError):
         return 10 ** 6
-    return (datetime.now(timezone.utc) - then) // timedelta(days=1)
+    return (_now().date() - then).days
+
+
+def _now() -> datetime:
+    """Now in the user's timezone when known (set once per session), otherwise UTC."""
+    try:
+        return datetime.now(ZoneInfo(TZ_NAME[0]))
+    except Exception:
+        return datetime.now(timezone.utc)
+
+
+def _set_timezone(worker) -> None:
+    try:
+        name = worker.get_timezone() or ""
+        ZoneInfo(name)
+        TZ_NAME[0] = name
+    except Exception:
+        TZ_NAME[0] = "UTC"  # unknown or non-IANA names fall back to UTC
 
 
 def _words(text: str) -> set:
@@ -181,21 +202,27 @@ class TailorBackground(MatchingCapability):
         history = self.read_history()
         length = len(history)
         start = self.new_start(history)
-        self.tail = [self.message_parts(m) for m in history[-TAIL_SIZE:]]
 
         # While the Tailor skill is open it owns the state, and its own conversation
         # ("forget the short one") is about rules, not feedback on replies; skip it.
+        # The tail is not moved here, so these turns are looked at on the next poll instead of being lost
+        # (the skill's own turns are skipped then because the busy flag outlasts it briefly).
         if self.skill_busy():
             return
         state = self.load_state()
         if state is None:
             return
+        _set_timezone(self.capability_worker)
         # Only clean up rules that were actually loaded; a fresh empty state is never saved for this alone.
         changed = self.decay(state) if self.seen_state else False
 
         calls = 0
+        resume = length  # first message the next poll must look at
         for index in range(max(start, 1), length):
-            if state["paused"] or calls >= MAX_LLM_CALLS_PER_POLL:
+            if state["paused"]:
+                break
+            if calls >= MAX_LLM_CALLS_PER_POLL:
+                resume = index  # more feedback is waiting; carry it over instead of dropping it
                 break
             pair = self.candidate(history, index)
             if pair is None:
@@ -205,8 +232,11 @@ class TailorBackground(MatchingCapability):
             if found and self.merge(state, found):
                 changed = True
 
+        self.tail = [self.message_parts(m) for m in history[max(0, resume - TAIL_SIZE):resume]]
         if changed:
             await self.save(state)
+        elif self.seen_state:
+            await self.sync_style_file(state)  # a failed file write earlier is retried here
 
     # ------------------------------------------------------------------ history
 
@@ -248,7 +278,7 @@ class TailorBackground(MatchingCapability):
         text, prev_text = text.strip(), prev_text.strip()
         if len(text) < 4 or not prev_text:
             return None
-        if FEEDBACK_HINT_RE.search(text.lower()):
+        if FEEDBACK_HINT_RE.search(text.lower().replace("\u2019", "'")):
             return prev_text, text
         # Implicit signal: the user asks nearly the same thing again right after a reply.
         if index >= 2:
@@ -335,12 +365,22 @@ class TailorBackground(MatchingCapability):
                          if p.get("scope", "global") == scope and p.get("category") == category}
 
         target = same_scope.get(found["replaces"])
-        if target is not None:
-            target.update({"text": found["text"], "category": found["category"], "scope": found["scope"],
-                           "source": found["kind"], "evidence": found["evidence"],
-                           "created": today, "last_seen": today, "hits": 1})
+        if target is not None and target.get("source") == "voice":
+            # Rules the user added by voice never expire and are only changed by voice.
+            self.log("left a voice-added rule alone")
+            return False
+        if target is not None and found["kind"] == "explicit":
+            replaced = {**target, "text": found["text"], "category": found["category"], "scope": found["scope"],
+                        "source": found["kind"], "evidence": found["evidence"],
+                        "created": today, "last_seen": today, "hits": 1}
+            others = [r for r in rules if r is not target]
+            if len(render_md(others + [replaced]).split()) > MD_WORD_CAP:
+                self.log("replacement skipped, style file would be too long")
+                return False
+            target.update(replaced)
             self.log(f"rule {target['id']} replaced")
             return True
+        # One indirect signal never overturns an established rule; it is counted like any other.
 
         target = same_kind.get(found["same_as"])
         if target is not None:
@@ -366,19 +406,21 @@ class TailorBackground(MatchingCapability):
 
     def add_rule(self, state: dict, found: dict, hits: int, created: str) -> bool:
         rules = state["rules"]
-        if len(rules) >= MAX_RULES:
+        kept = list(rules)
+        if len(kept) >= MAX_RULES:
             # Make room by dropping the stalest learned rule; rules the user added by voice stay.
-            learned = [r for r in rules if r.get("source") != "voice"]
+            learned = [r for r in kept if r.get("source") != "voice"]
             if not learned:
                 self.log("rule limit reached, all rules user-added")
                 return False
-            rules.remove(min(learned, key=lambda r: r.get("last_seen", "")))
+            kept.remove(min(learned, key=lambda r: r.get("last_seen", "")))
         rule = {"id": f"r{state['next_id']}", "text": found["text"], "category": found["category"],
                 "scope": found["scope"], "source": found["kind"], "evidence": found["evidence"],
                 "created": created, "last_seen": _today(), "hits": hits}
-        if len(render_md(rules + [rule]).split()) > MD_WORD_CAP:
+        if len(render_md(kept + [rule]).split()) > MD_WORD_CAP:
             self.log("rule skipped, style file would be too long")
-            return False
+            return False  # nothing was evicted, so a refused rule costs the user nothing
+        rules[:] = kept
         rules.append(rule)
         state["next_id"] += 1
         self.log(f"rule learned total={len(rules)}")
@@ -404,7 +446,9 @@ class TailorBackground(MatchingCapability):
         state = _empty_state()
         try:
             result = self.capability_worker.get_single_key(STATE_KEY)
-            data = result.get("value") if isinstance(result, dict) else None
+            if not isinstance(result, dict) or result.get("error"):
+                raise ValueError("unexpected storage reply")  # a failed read is not an empty state
+            data = result.get("value")
             if isinstance(data, str):
                 data = json.loads(data)
             if not isinstance(data, dict):
@@ -462,6 +506,10 @@ class TailorBackground(MatchingCapability):
         if not self.store_key(state):
             self.log_error("Context save failed")
             return
+        await self.sync_style_file(state)
+
+    async def sync_style_file(self, state: dict):
+        """Make tailor_style.md match the saved rules. Safe to call every poll; it only writes on a difference."""
         content = render_md(state["rules"]) if state["rules"] else ""
         if content == self.last_md:
             return
