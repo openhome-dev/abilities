@@ -2,7 +2,7 @@ import json
 import re
 import secrets
 import time
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 
 from src.agent.capability import MatchingCapability
@@ -30,6 +30,7 @@ MD_FILE = "tailor_style.md"
 OWN_FILES = (MD_FILE,)
 PROFILE_FILES = ("user_profile.md", "user_summary.md")
 
+TZ_NAME = ["UTC"]
 MAX_RULES = 8
 MAX_RULE_CHARS = 110
 MAX_RULE_WORDS = 18
