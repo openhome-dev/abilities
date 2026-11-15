@@ -63,6 +63,7 @@ CHAPTER_LABELS = {c[0]: c[1] for c in CHAPTERS}
 CHAPTER_HINTS = {c[0]: c[2] for c in CHAPTERS}
 
 QUESTIONS_PER_SESSION = 3
+MAX_PICK_STORIES = 40
 MAX_ROUNDS = 3
 MAX_TELLERS = 6
 MAX_STORIES_PER_TELLER = 50
@@ -195,6 +196,20 @@ def _join_names(names: list) -> str:
     if len(names) <= 1:
         return "".join(names)
     return ", ".join(names[:-1]) + " and " + names[-1]
+
+
+def _shortlist(entries: list, query: str, limit: int = MAX_PICK_STORIES) -> list:
+    """Keep the prompt small: with many stories, send the ones sharing the most words with the request."""
+    if len(entries) <= limit:
+        return entries
+    wanted = {w for w in _normalize(query).split() if len(w) > 2}
+
+    def score(entry):
+        teller, story = entry
+        text = _normalize(f"{teller['name']} {story.get('title', '')} {story.get('summary', '')}").split()
+        return len(wanted.intersection(text))
+    ranked = sorted(range(len(entries)), key=lambda i: (-score(entries[i]), i))[:limit]
+    return [entries[i] for i in sorted(ranked)]
 
 
 def _plural(count: int, noun: str) -> str:
@@ -527,7 +542,14 @@ class FamilyStoryKeeperCapability(MatchingCapability):
     async def resolve_name(self, words: str) -> str:
         """Turn the user's words into a storyteller name. Sets self.ending if they asked to leave."""
         if _normalize(words) in QUICK_SELF:
-            return await self.profile_name() or "You"
+            name = await self.profile_name()
+            if name:
+                return name
+            # No name in the profile: ask, rather than recording someone called "You".
+            answer = await self.ask("What name should I use for you?")
+            if not answer or self.ending or _normalize(answer) in QUICK_SELF:
+                return ""
+            return await self.resolve_name(answer)
         known = "; ".join(f"{p['name']} ({p['relation']})" if p["relation"] else p["name"]
                           for p in await self.people_from_social_memory())
         nonce = secrets.token_hex(4)
@@ -863,8 +885,9 @@ class FamilyStoryKeeperCapability(MatchingCapability):
             if not query:
                 return
         self.last_query = query
-        lines = [f"{i}. {t['name']} | {_clean_untrusted(s.get('title', ''))} | {_clean_untrusted(s.get('summary', ''))}"
-                 for i, (t, s) in enumerate(entries, 1)]
+        entries = _shortlist(entries, query)
+        lines = [f"{i}. {t['name']} | {_clean_untrusted(s.get('title', ''))} | "
+                 f"{_clean_untrusted(s.get('summary', ''))[:120]}" for i, (t, s) in enumerate(entries, 1)]
         request = query or "any story they haven't heard yet"
         result = self.llm_json("Stories:\n" + "\n".join(lines) + f"\n\nListener asked: {request[:200]}",
                                PICK_STORY_SYSTEM)
