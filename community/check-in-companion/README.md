@@ -48,7 +48,7 @@ The defaults are a check-in at 9:30 am and the family email at 7 pm, in the devi
 | A fall, chest pain, trouble breathing or a plea for help is mentioned | It says "That sounds serious. If you need help right now, please call ..." and sends an urgent email. This happens at most once every two hours, and never twice for the same words. |
 | The digest time arrives | It sends one email: each check-in answered, missed or not asked, the day's mood, anything worth knowing, the shared notes, a weekly mood trend, and when they were last heard from. |
 
-Between check-ins it also listens for the same worries in everyday conversation. Only phrases that look like a health worry reach the LLM, at most two a minute. It stores the *type* of worry, never the words. The person can turn this off by voice.
+Between check-ins it also listens for the same worries in everyday conversation. Only phrases that look like a health worry reach the LLM, at most two a minute. It stores the *type* of worry, never the words. The person can turn this off by voice, and the first-run introduction says it is on. If a check-in answer can't be understood, any urgent phrase in it is still checked. If the evening email fails to send, it is tried again on the next few polls.
 
 While a check-in question is open, it writes `checkin_context.md`, a short hint that tells the main Agent to reply warmly and briefly and not give medical advice. The hint is removed when the check-in is answered or missed.
 

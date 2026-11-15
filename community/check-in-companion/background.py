@@ -194,6 +194,7 @@ def default_state() -> dict:
         "today": new_day(""),
         "log": [],
         "last_digest": "",
+        "intro_done": False,
     }
 
 
@@ -232,6 +233,7 @@ def normalize_state(data) -> dict:
         state["log"] = [d for d in data["log"] if isinstance(d, dict) and isinstance(d.get("date"), str)][-LOG_DAYS:]
     if isinstance(data.get("last_digest"), str):
         state["last_digest"] = data["last_digest"][:600]
+    state["intro_done"] = data.get("intro_done") is True
     return state
 
 
@@ -308,6 +310,7 @@ class CheckInCompanionBackground(MatchingCapability):
         self.background_daemon_mode = background_daemon_mode  # set BEFORE constructing the worker
         self.capability_worker = CapabilityWorker(self)  # daemon: pass self, not self.worker
         self.tail = []
+        self.digest_tries = {}
         self.name = ""
         self.profile_read = False
         self.tz_name = ""
@@ -569,7 +572,12 @@ class CheckInCompanionBackground(MatchingCapability):
         result = self.llm_json(self.fence(text, nonce), REPLY_SYSTEM.format(nonce=nonce, flags=", ".join(FLAGS)))
         if not result:
             self.log("check-in answered, no detail")
-            return  # an unreadable answer still means they answered; never treat it as missed
+            # An unreadable answer still means they answered, but an urgent phrase must not slip through.
+            if any(CONCERN_HINT_RE.search(t.lower()) for t in turns):
+                await self.passive_scan(state, turns)
+            return
+        if len(turns) > 3 and state["settings"]["passive"]:
+            await self.passive_scan(state, turns[3:])
         apply_reply(today, result)
         self.log(f"check-in answered wellbeing={result.get('wellbeing')}")
         if result.get("wellbeing") == "urgent":
@@ -656,6 +664,10 @@ class CheckInCompanionBackground(MatchingCapability):
         sent = await self.email_family(f"Daily check-in: {name}, {day_text(now)}", body)
         if sent:
             state["last_digest"] = digest_summary(today, settings["slots"])
+        elif self.digest_tries.get(today["date"], 0) < 2:
+            # A failed send is tried again on the next polls instead of silently losing the day's note.
+            self.digest_tries[today["date"]] = self.digest_tries.get(today["date"], 0) + 1
+            today["digest_sent"] = False
         self.log(f"digest sent={sent}")
         return True
 
@@ -766,7 +778,9 @@ class CheckInCompanionBackground(MatchingCapability):
         """
         try:
             result = self.capability_worker.get_single_key(STATE_KEY)
-            data = result.get("value") if isinstance(result, dict) else None
+            if not isinstance(result, dict) or result.get("error"):
+                raise ValueError("unexpected storage reply")  # not the same as a key that was never saved
+            data = result.get("value")
             if isinstance(data, str):
                 data = json.loads(data)
             return normalize_state(data)
