@@ -56,6 +56,10 @@ MODERN_ERROR_CODES = (-32020, -32021, -32022)
 CONNECT_TIMEOUT = 10
 LIST_TIMEOUT = 15
 CALL_TIMEOUT = 30
+CONNECT_LIMIT = 45
+LIST_LIMIT = 60
+CALL_LIMIT = 45
+SSE_CHUNK = 512
 MAX_RESPONSE_BYTES = 512 * 1024
 MAX_TOOLS = 200
 MAX_LIST_PAGES = 10
@@ -300,7 +304,9 @@ def _coerce(value, spec: dict):
         elif kind == "string" and not isinstance(value, str):
             value = None if isinstance(value, (dict, list)) else str(value)
         elif kind == "array" and not isinstance(value, list):
-            value = [value] if isinstance(value, (str, int, float)) else None
+            items = spec.get("items") if isinstance(spec.get("items"), dict) else {}
+            # A spoken word can fill a list of strings or numbers, never a list of objects.
+            value = [value] if isinstance(value, (str, int, float)) and _prop_type(items) != "object" else None
         elif kind == "object" and not isinstance(value, dict):
             value = None
     except (TypeError, ValueError):
@@ -321,7 +327,9 @@ def _check_arguments(tool: dict, arguments: dict) -> tuple:
     clean = {}
     for name, value in (arguments or {}).items():
         if name not in props:
-            if schema.get("additionalProperties") is False or props:
+            # Keys the schema doesn't declare are the model's inventions unless extras are explicitly allowed.
+            extras = schema.get("additionalProperties")
+            if props or not (extras is True or isinstance(extras, dict)):
                 continue
             clean[name] = value
             continue
@@ -331,7 +339,12 @@ def _check_arguments(tool: dict, arguments: dict) -> tuple:
         if ok:
             clean[name] = coerced
     missing = [r for r in required if r not in clean]
-    unaskable = [r for r in missing if _prop_type(props.get(r) or {}) in ("object",)]
+    def _unaskable(spec) -> bool:
+        spec = spec if isinstance(spec, dict) else {}
+        kind = _prop_type(spec)
+        items = spec.get("items") if isinstance(spec.get("items"), dict) else {}
+        return kind == "object" or (kind == "array" and _prop_type(items) == "object")
+    unaskable = [r for r in missing if _unaskable(props.get(r))]
     return clean, missing, unaskable
 
 
@@ -486,6 +499,16 @@ class McpBridgeCapability(MatchingCapability):
 
     # ------------------------------------------------------------------ logging
 
+    async def in_thread(self, limit: float, func, *args):
+        """Run a blocking network call in a thread, but stop waiting after `limit` seconds.
+
+        The socket timeouts only bound each read, so a server that drips bytes could hold the session forever.
+        """
+        try:
+            return await asyncio.wait_for(asyncio.to_thread(func, *args), limit)
+        except asyncio.TimeoutError:
+            raise McpError("timeout", "wall clock")
+
     def log(self, message: str):
         self.worker.editor_logging_handler.info(f"{TAG} {message}")
 
@@ -540,8 +563,8 @@ class McpBridgeCapability(MatchingCapability):
         self.log(f"Connecting to {_url_parts(url)[1] or 'server'} (cached era: {era or 'none'})")
         await self.capability_worker.speak("One sec, connecting.")
         try:
-            await asyncio.to_thread(self.client.connect)
-            self.tools = await asyncio.to_thread(self.client.list_tools)
+            await self.in_thread(CONNECT_LIMIT, self.client.connect)
+            self.tools = await self.in_thread(LIST_LIMIT, self.client.list_tools)
         except McpError as error:
             self.log_error(f"Connect failed: {error.kind} {error.detail}")
             await self.capability_worker.speak(self.error_line(error, connecting=True))
@@ -694,7 +717,7 @@ class McpBridgeCapability(MatchingCapability):
         await self.capability_worker.speak(self.filler())
         started = time.monotonic()
         try:
-            result = await asyncio.to_thread(self.client.call_tool, tool, args)
+            result = await self.in_thread(CALL_LIMIT, self.client.call_tool, tool, args)
         except McpError as error:
             self.log_error(f"Call failed: {error.kind} {error.detail}")
             await self.capability_worker.speak(self.error_line(error))
@@ -895,6 +918,7 @@ class McpBridgeCapability(MatchingCapability):
             "auth": ("The server didn't accept your key. Check it in Settings." if has_token else
                      "That server needs a sign-in I can't do. It has to accept a key instead."),
             "timeout": "The server took too long. Try again in a bit.",
+            "busy": "The server is busy right now. Try again in a moment.",
             "too_big": "The server sent back too much for me to read.",
             "network": "I couldn't reach the server just now. Try again in a bit.",
             "unsupported": "I can't talk to that server. It uses a setup I don't support.",
@@ -1112,17 +1136,29 @@ class McpClient:
             headers[header] = value
         return headers
 
+    @staticmethod
+    def _sse_lines(resp, deadline: float):
+        """Event-stream lines (UTF-8), read in small chunks so the deadline is checked even without newlines."""
+        buffer = b""
+        for chunk in resp.iter_content(chunk_size=SSE_CHUNK):
+            if time.monotonic() > deadline:
+                raise McpError("timeout")
+            buffer += chunk or b""
+            if len(buffer) > MAX_RESPONSE_BYTES:
+                raise McpError("too_big")
+            while b"\n" in buffer:
+                line, buffer = buffer.split(b"\n", 1)
+                yield line.rstrip(b"\r").decode("utf-8", errors="replace")
+        if buffer:
+            yield buffer.decode("utf-8", errors="replace")
+
     def _read(self, resp, request_id, deadline: float):
         """Read one JSON-RPC response from a JSON body or an SSE stream, size- and time-capped."""
         ctype = (resp.headers.get("Content-Type") or "").lower()
         if "text/event-stream" in ctype:
-            resp.encoding = "utf-8"  # event streams are always UTF-8
             data_lines = []
             total = 0
-            for raw in resp.iter_lines(decode_unicode=True):
-                if time.monotonic() > deadline:
-                    raise McpError("timeout")
-                line = raw or ""
+            for line in self._sse_lines(resp, deadline):
                 total += len(line) + 1
                 if total > MAX_RESPONSE_BYTES:
                     raise McpError("too_big")
@@ -1189,7 +1225,9 @@ class McpClient:
                 resp = requests.post(self.url, headers=headers, data=json.dumps(body),
                                      timeout=(CONNECT_TIMEOUT, timeout), allow_redirects=False,
                                      stream=self.use_stream)
-            except TypeError:
+            except TypeError as error:
+                if "stream" not in str(error):
+                    raise McpError("network", "TypeError")  # an unrelated bug must not switch streaming off
                 # Sandboxed requests without streaming support: fall back to buffered reads.
                 self.use_stream = False
                 resp = requests.post(self.url, headers=headers, data=json.dumps(body),
@@ -1208,6 +1246,11 @@ class McpClient:
                 raise McpError("auth", str(status))
             if status == 202 or notification:
                 return status, None, resp.headers
+            try:
+                if int(resp.headers.get("Content-Length") or 0) > MAX_RESPONSE_BYTES:
+                    raise McpError("too_big")  # also covers buffered reads, where the body is already loaded
+            except ValueError:
+                pass
             try:
                 message = self._read(resp, request_id, deadline)
             except requests.exceptions.RequestException:
@@ -1237,6 +1280,8 @@ class McpClient:
             "clientInfo": CLIENT_INFO,
         }, LIST_TIMEOUT)
         result = message.get("result") if isinstance(message, dict) else None
+        if status == 429 or status >= 500:
+            raise McpError("busy", f"initialize status {status}")
         if status != 200 or not isinstance(result, dict):
             raise McpError("unsupported", f"initialize status {status}")
         version = result.get("protocolVersion")
@@ -1256,11 +1301,21 @@ class McpClient:
                 self._legacy_handshake()
                 return
             except McpError as error:
-                if error.kind in ("auth", "network", "timeout"):
+                if error.kind in ("auth", "network", "timeout", "busy"):
                     raise
                 self.log("Cached legacy era failed, re-probing modern")
         self.era = "modern"
         status, message, _ = self.post("server/discover", {}, LIST_TIMEOUT)
+        if status == 429 or status >= 500:
+            # Some older servers answer an unknown method with a 5xx, so try the legacy handshake once.
+            # If that fails too, the server is busy or down: say so rather than guess an era.
+            try:
+                self._legacy_handshake()
+                return
+            except McpError as error:
+                if error.kind in ("auth", "network", "timeout"):
+                    raise
+                raise McpError("busy", f"discover status {status}")
         result = message.get("result") if isinstance(message, dict) else None
         if status == 200 and isinstance(result, dict):
             versions = result.get("supportedVersions")
@@ -1287,7 +1342,7 @@ class McpClient:
         try:
             self._legacy_handshake()
         except McpError as error:
-            if error.kind in ("auth", "network", "timeout"):
+            if error.kind in ("auth", "network", "timeout", "busy"):
                 raise
             self.log(f"Legacy handshake failed ({error.detail}), trying modern tools/list")
             self.era = "modern"
@@ -1298,6 +1353,8 @@ class McpClient:
         """Send a request and return its result, re-initializing once if a legacy session expired."""
         for attempt in range(2):
             status, message, _ = self.post(method, params, timeout, name, header_params)
+            if status == 429 or status >= 500:
+                raise McpError("busy", f"{method} status {status}")
             if self.era == "legacy" and status == 404 and self.session_id and attempt == 0:
                 self.log("Legacy session expired, re-initializing")
                 self._legacy_handshake()
