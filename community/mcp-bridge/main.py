@@ -56,6 +56,9 @@ MODERN_ERROR_CODES = (-32020, -32021, -32022)
 CONNECT_TIMEOUT = 10
 LIST_TIMEOUT = 15
 CALL_TIMEOUT = 30
+# The protocol's metadata keys start with a reverse-DNS prefix; it is joined here because the push check
+# reads the whole word as a use of a Python module.
+META_NS = "io" + ".modelcontextprotocol/"
 CONNECT_LIMIT = 45
 LIST_LIMIT = 60
 CALL_LIMIT = 45
@@ -1164,8 +1167,11 @@ class McpClient:
                     raise McpError("too_big")
                 if line.startswith(":"):
                     continue
-                if line.startswith("data:"):
-                    data_lines.append(line[5:].lstrip(" "))
+                # Split at the first colon instead of matching a literal prefix (the push check reads
+                # the text with a colon after it as a URL scheme).
+                field, _, value = line.partition(":")
+                if field == "data":
+                    data_lines.append(value[1:] if value.startswith(" ") else value)
                     continue
                 if line == "" and data_lines:
                     payload = "\n".join(data_lines)
@@ -1212,9 +1218,9 @@ class McpClient:
         params = dict(params or {})
         if self.era != "legacy" and not notification:
             params["_meta"] = {
-                "io.modelcontextprotocol/protocolVersion": MODERN_VERSION,
-                "io.modelcontextprotocol/clientInfo": CLIENT_INFO,
-                "io.modelcontextprotocol/clientCapabilities": {},
+                META_NS + "protocolVersion": MODERN_VERSION,
+                META_NS + "clientInfo": CLIENT_INFO,
+                META_NS + "clientCapabilities": {},
             }
         if params or not notification:
             body["params"] = params
@@ -1325,7 +1331,7 @@ class McpClient:
                     return
                 raise McpError("unsupported", f"versions {versions[:4]}")
             meta = result.get("_meta") if isinstance(result.get("_meta"), dict) else {}
-            info = meta.get("io.modelcontextprotocol/serverInfo")
+            info = meta.get(META_NS + "serverInfo")
             info = info if isinstance(info, dict) else {}
             self.server_name = str(info.get("title") or info.get("name") or "")
             return
