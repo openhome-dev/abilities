@@ -59,12 +59,12 @@ A tool runs straight away only when **all three** are true:
 - Neither its name nor the start of its description has a write word such as send, create, add, update, delete, pay, book, cancel, publish or run.
 - None of its values came from your stored details (see above).
 
-Everything else asks for confirmation first. That includes any tool the server hasn't marked at all, such as DeepWiki's tools and most Zapier actions. Tools that aren't marked read-only also get a "this might not be undoable" warning, unless the server explicitly marks them non-destructive. MCP treats unmarked tools as possibly destructive.
+Everything else asks for confirmation first. That includes any tool the server hasn't marked at all, such as DeepWiki's tools and most Zapier actions. Tools that aren't marked read-only, or whose name reads like a write even though the server marked them read-only, also get a "this might not be undoable" warning, unless the server explicitly marks them non-destructive. The confirmation always names the tool in code, so the spoken wording can't hide which tool will run. MCP treats unmarked tools as possibly destructive.
 
 ### Safety and privacy
 - **Untrusted server content.** Tool descriptions and tool output come from a third party. They are passed to the language model as clearly marked data, with instructions never to follow anything written inside them. MCP Bridge makes exactly one tool call per request you make, and output from one call never triggers another.
-- **Address checks.** Only `https://` addresses are accepted. Redirects are never followed. Addresses on private, local or cloud-metadata networks are refused as typed.
-- **Limits on replies.** Replies are capped at 512 KB. Only the first 6,000 characters are summarized.
+- **Address checks.** Only `https://` addresses are accepted. Redirects are never followed. Addresses on private, local or cloud-metadata networks are refused as typed, including number-style forms such as `2130706433` or `127.1`. A name that a DNS record points at a private address is not checked, because the platform doesn't allow DNS lookups here, so only add servers you trust.
+- **Limits on replies.** Replies are capped at 512 KB, including when the server states a larger size up front. Only the first 6,000 characters are summarized.
 - **Spoken output.** Answers are plain spoken English, at most two sentences and under 30 words, with no links, lists or markdown. Email addresses, phone numbers and long ids are never read out.
 - **What's stored.** One Context Storage key, `mcp_bridge_state`, holds a short fingerprint of the server address (a hash, without any query string), whether the server uses the new or older MCP protocol, and the server's display name. Tokens, tool lists and tool output are never stored. Logs show the server address without its query string and never show the token.
 
@@ -84,7 +84,7 @@ Everything else asks for confirmation first. That includes any tool the server h
   - long-running task tools
   - change subscriptions
 - **Images and audio.** If a tool returns them, MCP Bridge says it got them but can't share them here.
-- **Timeouts.** A tool call times out after 30 seconds. Real servers usually answer in 5 to 10 seconds, so MCP Bridge says a short filler first ("Checking with Zapier", then varied ones like "One sec").
+- **Timeouts.** A tool call times out after 30 seconds of waiting, and MCP Bridge stops waiting after 45 seconds in total even if a server keeps sending a trickle of data (connecting and listing tools have their own total limits of 45 and 60 seconds). A busy server (429 or a 5xx reply) is reported as busy, and is not mistaken for an older kind of server. Real servers usually answer in 5 to 10 seconds, so MCP Bridge says a short filler first ("Checking with Zapier", then varied ones like "One sec").
 
 ### How it differs from existing options
 - **n8n Commander:** you build and wire a webhook for each workflow. MCP Bridge finds the server's tools on its own, through the MCP standard.
