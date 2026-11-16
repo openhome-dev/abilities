@@ -44,6 +44,10 @@ It reads, and never writes, what the household has already shared, so it asks le
 All of it is fenced off as untrusted data in prompts, never read aloud verbatim and never logged. Voice Journal and other private notes are deliberately not read.
 
 ### The assistant learns the family
+**Google permissions.** Recording needs your linked Google account to let the ability create folders and files in your Google Drive, download them for playback and delete them. It only touches the "Family Story Keeper" folder it creates. Without Google linked, no audio is kept and only transcripts are saved.
+
+**Safety of your saved stories.** If saved stories can't be read for a moment (a storage hiccup), the ability says so and saves nothing instead of treating them as empty. Deleting someone says if any recordings could not be removed from Drive. A "tell me a little more" answer keeps both recordings and plays them in order. After two silent questions in a row the interview stops. A family member's queued question is only cleared once the answer is saved. When a storyteller is first added the ability tells them that short highlights are shared with the assistant, and how to turn that off.
+
 Unless you say "keep the stories private", the skill writes a short `family_story_keeper.md` note: who has been recorded and the 5 newest one-line highlights. The note stays under 180 words. OpenHome adds it to the assistant's context, so everyday conversation can reflect the family's history.
 
 ### Safety and privacy
