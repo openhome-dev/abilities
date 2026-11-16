@@ -156,6 +156,18 @@ def _login_refusal(exc: ApiError) -> str:
     return str(exc)
 
 
+def _check_session() -> None:
+    """Before a command that sends only the API key (voice, Local Link, DevKit),
+    make sure this terminal is still logged in. A logged-out session raises
+    SessionRevokedError, which main() handles."""
+    try:
+        OpenHomeClient().verify_api_key()
+    except SessionRevokedError:
+        raise
+    except OpenHomeError:
+        pass  # the command itself reports key or connection problems
+
+
 def _logged_out(exc: SessionRevokedError, args: argparse.Namespace) -> int:
     """The server logged this terminal out: forget the login, then offer a new one."""
     clear_login(exc.sid)
@@ -529,6 +541,7 @@ def _build_call_logger():
 
 
 def cmd_call(args: argparse.Namespace) -> int:
+    _check_session()
     client = OpenHomeClient()
     # Default to agent "0" (the account's default agent) when none is given.
     agent_id = args.agent or client.config.agent_id or "0"
@@ -567,6 +580,7 @@ def cmd_call(args: argparse.Namespace) -> int:
 
 
 def cmd_chat(args: argparse.Namespace) -> int:
+    _check_session()
     client = OpenHomeClient()
     agent_id = args.agent or client.config.agent_id
     if not agent_id:
@@ -619,6 +633,8 @@ def cmd_chat(args: argparse.Namespace) -> int:
 
 def cmd_local(args: argparse.Namespace) -> int:
     action = args.local_action
+    if action in ("run", "start"):
+        _check_session()
     if action == "run":
         return local.run_worker(
             OpenHomeClient().config,
@@ -1068,6 +1084,9 @@ async def _devkit_wifi(kit) -> str | None:
         return net.ssid
 
 
+_LOGGED_OUT = "This computer was logged out."
+
+
 def _lookup_account(api_key: str):
     """Return ``(user, None)``, or ``(None, reason)`` with a reason safe to show."""
     from .client import OpenHomeClient
@@ -1075,8 +1094,11 @@ def _lookup_account(api_key: str):
     try:
         client = OpenHomeClient(Config.from_env(api_key=api_key))
         return client.get_user(), None
-    except SessionRevokedError:
-        raise  # this terminal was logged out; main() handles it
+    except SessionRevokedError as exc:
+        # DevKit onboarding doesn't need this computer's login: forget it and
+        # let the caller ask for a key instead.
+        clear_login(exc.sid)
+        return None, _LOGGED_OUT
     except ApiError as exc:
         if str(exc.code) in ("401", "403"):
             return None, "That API key wasn't recognised."
@@ -1114,12 +1136,15 @@ async def _devkit_api_key(
     elif saved:
         async with _spinner("Checking your saved account"):
             user, error = await _lookup_account_bounded(saved)
-        print(f"  Key       : {_mask(saved)}")
-        if user:
+        if error == _LOGGED_OUT:
+            print(f"  {_LOGGED_OUT} Paste a key below.")
+        elif user:
+            print(f"  Key       : {_mask(saved)}")
             print(f"  Account   : {user.describe()}")
             if await _ask(_confirm, "\n  Use this account?"):
                 key = saved
         else:
+            print(f"  Key       : {_mask(saved)}")
             print(f"  Account   : {error}")
             if await _ask(_confirm, "\n  Use the saved key anyway?"):
                 key = saved
@@ -1401,6 +1426,8 @@ def cmd_devkit(args: argparse.Namespace) -> int:
         devkit.enable_trace(lambda line: print(line, file=sys.stderr, flush=True))
     saved_tty = _save_terminal()
     try:
+        if action == "status":
+            _check_session()
         if action == "onboard":
             return asyncio.run(_devkit_onboard(args))
         if action == "status":
