@@ -195,6 +195,7 @@ def default_state() -> dict:
         "today": new_day(""),
         "log": [],
         "last_digest": "",
+        "intro_done": False,
     }
 
 
@@ -224,6 +225,7 @@ def normalize_state(data) -> dict:
         state["log"] = [d for d in data["log"] if isinstance(d, dict) and isinstance(d.get("date"), str)][-21:]
     if isinstance(data.get("last_digest"), str):
         state["last_digest"] = data["last_digest"][:600]
+    state["intro_done"] = data.get("intro_done") is True
     return state
 
 
@@ -295,7 +297,8 @@ class CheckInCompanionCapability(MatchingCapability):
                     await self.capability_worker.speak("Still there? Say that's all when you're finished.")
                     continue
                 idle = 0
-                if self.is_exit(reply):
+                # "No" or "nothing" is the natural answer to "Anything else?"
+                if self.is_exit(reply) or _normalize(reply) in QUICK_NO | {"nothing", "nothing else"}:
                     await self.capability_worker.speak("Okay. Take care.")
                     return
                 if not await self.handle(reply):
@@ -315,6 +318,12 @@ class CheckInCompanionCapability(MatchingCapability):
             f"Hi{self.name_suffix()}. I'm your check-in companion. I'll check in at {when} "
             "and send your family a short evening note. I'm not an emergency service."
         )
+        if self.state["settings"]["passive"]:
+            await self.capability_worker.speak(
+                "I also listen out for anything worrying you mention between check-ins. "
+                "Say stop listening for worries any time to turn that off.")
+        self.state["intro_done"] = True
+        self.save_state()
 
     async def handle(self, text: str) -> bool:
         """Route one request. Returns False when the conversation should end."""
@@ -376,6 +385,11 @@ class CheckInCompanionCapability(MatchingCapability):
                 return
             if answer:
                 answers.append(answer)
+        if not answers:
+            # Nobody answered (a mishear or a TV): don't record a check-in or close open ones.
+            await self.capability_worker.speak("No problem. Just say check in whenever you like.")
+            self.ending = True
+            return
         today["manual_at"] = int(time.time())
         today["last_heard"] = int(time.time())
         for entry in today["slots"].values():
@@ -466,7 +480,8 @@ class CheckInCompanionCapability(MatchingCapability):
                 await self.speak_saved("Done.")
                 return
             if decision != "change":
-                await self.capability_worker.speak("Okay, I'll keep the times as they are.")
+                if not self.ending:
+                    await self.capability_worker.speak("Okay, I'll keep the times as they are.")
                 return
             route = self.route(change)
         await self.capability_worker.speak("Let's leave the times as they are for now.")
@@ -518,7 +533,8 @@ class CheckInCompanionCapability(MatchingCapability):
             sent = await self.email_family(
                 f"Check-ins paused: {name}",
                 f"{name} has paused their daily check-ins until the end of {end.strftime('%A')} "
-                f"{end.day} {end.strftime('%B')}. You won't get alerts or digests until then.\n\n"
+                f"{end.day} {end.strftime('%B')}. You won't get check-in questions, missed-check-in alerts or "
+                f"evening emails until then. If they say something that sounds urgent, you will still be emailed.\n\n"
                 "Sent by the Check-In Companion ability on OpenHome.",
             )
             self.log(f"pause notice sent={sent}")
@@ -766,14 +782,17 @@ class CheckInCompanionCapability(MatchingCapability):
         """Load saved state. False means storage couldn't be read, and nothing may be saved this session."""
         try:
             result = self.capability_worker.get_single_key(STATE_KEY)
-            data = result.get("value") if isinstance(result, dict) else None
+            if not isinstance(result, dict) or result.get("error"):
+                raise ValueError("unexpected storage reply")  # not the same as a key that was never saved
+            data = result.get("value")
             if isinstance(data, str):
                 data = json.loads(data)
         except Exception as error:
             self.log_error(f"State unreadable: {type(error).__name__}")
             return False
-        self.first_run = not isinstance(data, dict)
         self.state = normalize_state(data)
+        # The daemon may have saved state long before the skill is first opened, so the intro has its own flag.
+        self.first_run = not self.state["intro_done"]
         return True
 
     def store_key(self, value: dict, key: str) -> bool:

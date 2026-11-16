@@ -48,7 +48,7 @@ The defaults are a check-in at 9:30 am and the family email at 7 pm, in the devi
 | A fall, chest pain, trouble breathing or a plea for help is mentioned | It says "That sounds serious. If you need help right now, please call ..." and sends an urgent email. This happens at most once every two hours, and never twice for the same words. |
 | The digest time arrives | It sends one email: each check-in answered, missed or not asked, the day's mood, anything worth knowing, the shared notes, a weekly mood trend, and when they were last heard from. |
 
-Between check-ins it also listens for the same worries in everyday conversation. Only phrases that look like a health worry reach the LLM, at most two a minute. It stores the *type* of worry, never the words. The person can turn this off by voice.
+Between check-ins it also listens for the same worries in everyday conversation. Only phrases that look like a health worry reach the LLM, at most two a minute. It stores the *type* of worry, never the words. The person can turn this off by voice, and the first-run introduction says it is on. If a check-in answer can't be understood, any urgent phrase in it is still checked. If an email to family fails to send (evening note, urgent or missed-check-in alert), it is tried again on the next polls, up to three times. If the skill opens while the daemon is saving, the two sets of changes are merged instead of one overwriting the other. Reminders are read as things still ahead today, so the question asks what is planned, never how a reminder went.
 
 While a check-in question is open, it writes `checkin_context.md`, a short hint that tells the main Agent to reply warmly and briefly and not give medical advice. The hint is removed when the check-in is answered or missed.
 
@@ -59,7 +59,7 @@ While a check-in question is open, it writes `checkin_context.md`, a short hint 
 | "Check in" | Asks three short questions: how you are, food and plans, anything for family. It records them like a scheduled check-in, so a scheduled one within the next two hours is skipped. If a dose isn't marked as taken yet, it mentions that at the end. |
 | "Check in at 9 and 7" / "stop the evening one" | Confirms, then changes the times (up to 3 a day). You can answer the confirmation with a change ("no, make it 10"). |
 | "Send the family email at 8" | Changes the digest time after you confirm. |
-| "I'm at my daughter's until Sunday" | Pauses check-ins, alerts and digests after you confirm, and emails family that check-ins are paused. They restart by themselves after the pause. |
+| "I'm at my daughter's until Sunday" | Pauses check-ins, missed-check-in alerts and evening emails after you confirm, and emails family that check-ins are paused. Urgent alerts still go out if the person says something that sounds urgent. They restart by themselves after the pause. |
 | "Start check-ins again" | Ends a pause early. |
 | "Keep today private" | Family hear only that you checked in and how you seemed, never what you said. |
 | "What have you told my family?" | Reads back a short summary of the last evening email. |
