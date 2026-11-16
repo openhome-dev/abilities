@@ -81,6 +81,10 @@ class OpenHomeClient:
             return bool(result["valid"])
         return True
 
+    def create_session(self) -> str:
+        """Log this terminal in: create its CLI session and return the sid."""
+        return self.transport.create_session()
+
     def get_user(self) -> User:
         """Resolve the account the configured API key belongs to."""
         result = self.transport.request("GET", endpoints.GET_USER, auth="xapikey")

@@ -19,6 +19,9 @@ GET_PERSONALITIES = "/api/sdk/get_personalities"
 # key the user has just typed, not only the saved one.
 GET_USER = "/api/accounts/get-user/"
 VERIFY_API_KEY = "/api/sdk/verify_apikey"
+# POST, api_key in the body: creates this terminal's CLI session and returns
+# its sid, which every later API-key request sends as X-Session-Id.
+CREATE_SESSION = "/api/accounts/sessions/devkit/"
 
 ADD_CAPABILITY = "/api/capabilities/add-capability/"
 LIST_CAPABILITIES = "/api/capabilities/get-all-capabilities/"

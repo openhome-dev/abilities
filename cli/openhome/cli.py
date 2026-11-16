@@ -34,8 +34,9 @@ from typing import Any
 
 from .abilities import VALID_CATEGORIES
 from .client import OpenHomeClient
-from .config import Config
+from .config import Config, clear_login
 from .errors import (
+    ApiError,
     ApiKeyRejected,
     ConnectionLost,
     DeviceNotFound,
@@ -45,6 +46,7 @@ from .errors import (
     OpenHomeError,
     ScanFailed,
     SessionExpiredError,
+    SessionRevokedError,
     WifiFailed,
 )
 from . import local
@@ -128,20 +130,47 @@ def cmd_login(args: argparse.Namespace) -> int:
     cfg = Config.from_env(api_key=api_key, jwt=args.jwt)
     client = OpenHomeClient(cfg)
     try:
-        client.verify_api_key()
+        # Creating the session checks the key; get_user then proves the new
+        # session works before anything is saved.
+        client.create_session()
+        user = client.get_user()
+    except ApiError as exc:
+        _err(f"Could not log in: {_login_refusal(exc)}")
+        return 1
     except OpenHomeError as exc:
-        _err(f"Could not verify API key: {exc}")
+        _err(f"Could not log in: {exc}")
         return 1
     path = cfg.save()
-    print(f"✓ API key verified and saved to {path}")
+    print(f"✓ Logged in as {user.describe()}")
+    print(f"  Saved to {path}")
     if args.jwt:
         print("✓ Session token (JWT) saved.")
-    else:
-        print(
-            "note: no JWT set. Saving/uploading abilities currently needs one — "
-            "set OPENHOME_JWT or pass --jwt until the backend accepts the API key."
-        )
     return 0
+
+
+def _login_refusal(exc: ApiError) -> str:
+    if str(exc.code) == "403":
+        if "not active" in exc.message.lower():
+            return "this account is disabled."
+        return "that API key wasn't recognised."
+    return str(exc)
+
+
+def _logged_out(exc: SessionRevokedError, args: argparse.Namespace) -> int:
+    """The server logged this terminal out: forget the login, then offer a new one."""
+    clear_login(exc.sid)
+    _err("This terminal was logged out.")
+    interactive = sys.stdin.isatty() and sys.stdout.isatty()
+    if args.command == "login" or not interactive:
+        _err("Run `openhome login` to sign in again.")
+        return 2
+    print("Log in again to keep using the OpenHome CLI.")
+    try:
+        if cmd_login(argparse.Namespace(api_key=None, jwt=None)) == 0:
+            print("Now run your command again.")
+    except (KeyboardInterrupt, EOFError):
+        print()
+    return 2
 
 
 def cmd_agents(args: argparse.Namespace) -> int:
@@ -1042,11 +1071,12 @@ async def _devkit_wifi(kit) -> str | None:
 def _lookup_account(api_key: str):
     """Return ``(user, None)``, or ``(None, reason)`` with a reason safe to show."""
     from .client import OpenHomeClient
-    from .errors import ApiError
 
     try:
         client = OpenHomeClient(Config.from_env(api_key=api_key))
         return client.get_user(), None
+    except SessionRevokedError:
+        raise  # this terminal was logged out; main() handles it
     except ApiError as exc:
         if str(exc.code) in ("401", "403"):
             return None, "That API key wasn't recognised."
@@ -1392,7 +1422,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     sub = parser.add_subparsers(dest="command", required=True)
 
-    p_login = sub.add_parser("login", help="Save and verify your API key")
+    p_login = sub.add_parser("login", help="Log this terminal in with your API key")
     p_login.add_argument("--api-key", help="API key (else prompted)")
     p_login.add_argument("--jwt", help="Browser session token for save/upload endpoints")
     p_login.set_defaults(func=cmd_login)
@@ -1580,6 +1610,8 @@ def main(argv: list[str] | None = None) -> int:
         _err(str(exc))
         _err("Re-grab your JWT: copy(localStorage.getItem('access_token')) on app.openhome.com")
         return 2
+    except SessionRevokedError as exc:
+        return _logged_out(exc, args)
     except OpenHomeError as exc:
         _err(str(exc))
         return 1

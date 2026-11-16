@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import os
+import uuid
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -95,6 +96,28 @@ def _read_config_file() -> dict:
         return {}
 
 
+def _write_config_file(data: dict) -> Path:
+    CONFIG_DIR.mkdir(parents=True, exist_ok=True, mode=0o700)
+    CONFIG_FILE.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    try:
+        CONFIG_FILE.chmod(0o600)
+    except OSError:
+        pass  # best-effort (Windows)
+    return CONFIG_FILE
+
+
+def clear_login(revoked_sid: str) -> None:
+    """Forget the saved API key and session after the server revoked ``revoked_sid``.
+
+    Skipped if another ``openhome login`` has already replaced that session.
+    """
+    data = _read_config_file()
+    if data.get("sid") == revoked_sid:
+        data.pop("sid", None)
+        data.pop("api_key", None)
+        _write_config_file(data)
+
+
 @dataclass
 class Config:
     """Resolved credentials + endpoint settings."""
@@ -103,6 +126,13 @@ class Config:
     jwt: str | None = None
     api_base: str = DEFAULT_API_BASE
     agent_id: str | None = None
+    # This terminal's CLI session. Only ever used with the API key it was
+    # created for: the one saved next to it in config.json.
+    sid: str | None = None
+    machine_id: str | None = None
+    # The saved key has no session yet (logged in before sessions existed):
+    # the transport creates one before its first API-key request.
+    needs_session: bool = False
 
     @classmethod
     def from_env(
@@ -130,10 +160,19 @@ class Config:
                 f"API base URL must use HTTPS. Got: {resolved_base}"
             )
 
+        resolved_key = _clean_token(
+            api_key or os.environ.get(ENV_API_KEY) or file_cfg.get("api_key")
+        )
+        # The saved session belongs to the saved key. Any other key (a .env, or
+        # one passed in for another account) runs without it, so a request
+        # for someone else's account can never log this terminal out.
+        saved_key = resolved_key is not None and resolved_key == _clean_token(
+            file_cfg.get("api_key")
+        )
+        sid = (file_cfg.get("sid") or None) if saved_key else None
+
         return cls(
-            api_key=_clean_token(
-                api_key or os.environ.get(ENV_API_KEY) or file_cfg.get("api_key")
-            ),
+            api_key=resolved_key,
             jwt=_clean_token(
                 jwt or os.environ.get(ENV_JWT) or file_cfg.get("jwt")
             ),
@@ -141,12 +180,14 @@ class Config:
             agent_id=agent_id
             or os.environ.get(ENV_AGENT_ID)
             or file_cfg.get("agent_id"),
+            sid=sid,
+            machine_id=file_cfg.get("machine_id") or None,
+            needs_session=saved_key and not sid,
         )
 
     # ── persistence (used by `openhome login`) ──────────────────────────
     def save(self) -> Path:
         """Persist non-secret-aware credentials to ``~/.openhome/config.json``."""
-        CONFIG_DIR.mkdir(parents=True, exist_ok=True, mode=0o700)
         data = _read_config_file()
         if self.api_key:
             data["api_key"] = self.api_key
@@ -156,12 +197,30 @@ class Config:
             data["agent_id"] = self.agent_id
         if self.api_base and self.api_base != DEFAULT_API_BASE:
             data["api_base"] = self.api_base
-        CONFIG_FILE.write_text(json.dumps(data, indent=2), encoding="utf-8")
-        try:
-            CONFIG_FILE.chmod(0o600)
-        except OSError:
-            pass  # best-effort (Windows)
-        return CONFIG_FILE
+        if self.machine_id:
+            data["machine_id"] = self.machine_id
+        if self.sid:
+            data["sid"] = self.sid
+        else:
+            data.pop("sid", None)
+        return _write_config_file(data)
+
+    def save_sid(self) -> None:
+        """Save only the session (for a key already saved), nothing else."""
+        data = _read_config_file()
+        data["sid"] = self.sid
+        data["machine_id"] = self.machine_id
+        _write_config_file(data)
+
+    def ensure_machine_id(self) -> str:
+        """This computer's ID for its CLI session: a random UUID, made once.
+
+        Logging in again with the same ID replaces the old session instead of
+        adding another. It is saved with the session, not here.
+        """
+        if not self.machine_id:
+            self.machine_id = str(uuid.uuid4())
+        return self.machine_id
 
     @property
     def ws_base(self) -> str:

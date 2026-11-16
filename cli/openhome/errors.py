@@ -18,6 +18,14 @@ class SessionExpiredError(OpenHomeError):
         super().__init__(message)
 
 
+class SessionRevokedError(OpenHomeError):
+    """This terminal's CLI session was logged out (from the dashboard or elsewhere)."""
+
+    def __init__(self, sid: str):
+        super().__init__("This terminal was logged out.")
+        self.sid = sid
+
+
 class ApiError(OpenHomeError):
     """A non-2xx HTTP response from the OpenHome API."""
 
